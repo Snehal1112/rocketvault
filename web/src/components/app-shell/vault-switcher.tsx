@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
 import { ChevronsUpDownIcon, VaultIcon } from "lucide-react"
 
-import { request } from "@/api/client"
+import { listVaults } from "@/api/vaults"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,18 +20,13 @@ import {
 import { useAuth } from "@/lib/auth/auth-context"
 import { getRecentVaults } from "@/lib/auth/session-storage"
 
-interface VaultListResponse {
-  vaults: Array<{ name: string }>
-}
-
 /**
  * Merges the client-side MRU vault list (session-storage.ts) with a live
- * GET /vaults call for admin-tier sessions. Mitigates a real backend gap
- * (design doc §Deferred): GET /vaults only returns vaults the caller can
- * *manage*, not every vault they hold a data-plane role in, so a plain
- * Secrets User has no API-driven way to discover their own vault list --
- * the MRU list is the only source for them. Epic 01's src/api/vaults.ts
- * supersedes this inline request() call once it lands.
+ * GET /vaults call (src/api/vaults.ts) for admin-tier sessions. Mitigates a
+ * real backend gap (design doc §Deferred): GET /vaults only returns vaults
+ * the caller can *manage*, not every vault they hold a data-plane role in,
+ * so a plain Secrets User has no API-driven way to discover their own
+ * vault list -- the MRU list is the only source for them.
  */
 export function VaultSwitcher() {
   const { vaultName } = useParams({ strict: false })
@@ -39,13 +34,13 @@ export function VaultSwitcher() {
 
   const { data } = useQuery({
     queryKey: ["vaults", "switcher"],
-    queryFn: () => request<VaultListResponse>("/vaults"),
+    queryFn: () => listVaults(),
     enabled: isGlobalAdmin,
   })
 
   const vaultNames = useMemo(() => {
     const recent = getRecentVaults()
-    const managed = data?.vaults.map((vault) => vault.name) ?? []
+    const managed = data?.map((vault) => vault.name) ?? []
     return Array.from(new Set([...recent, ...managed]))
   }, [data])
 
