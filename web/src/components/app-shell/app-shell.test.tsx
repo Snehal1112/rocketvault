@@ -6,7 +6,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 
 import { AppShell } from "@/components/app-shell/app-shell"
@@ -55,26 +55,60 @@ function renderAt(path: string) {
   )
 }
 
+/**
+ * Scoped to the sidebar: since the TopBar breadcrumb also renders the
+ * current section (and shadcn's BreadcrumbPage carries role="link"), an
+ * unscoped byRole("link") query would match both.
+ */
+async function findSidebarNav() {
+  await screen.findAllByRole("link")
+  const content = document.querySelector<HTMLElement>(
+    '[data-slot="sidebar-content"]'
+  )
+  if (!content) {
+    throw new Error("sidebar content did not render")
+  }
+  return within(content)
+}
+
 describe("AppShell", () => {
   it("shows vault-mode nav and hides admin-mode nav at a vault route", async () => {
     renderAt("/app/vaults/prod/secrets")
+    const nav = await findSidebarNav()
 
+    expect(nav.getByRole("link", { name: /secrets/i })).toBeInTheDocument()
     expect(
-      await screen.findByRole("link", { name: /secrets/i })
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("link", { name: /overview/i })
+      nav.queryByRole("link", { name: /overview/i })
     ).not.toBeInTheDocument()
   })
 
   it("shows admin-mode nav and hides vault-mode nav at an admin route", async () => {
     renderAt("/app/admin/users")
+    const nav = await findSidebarNav()
 
+    expect(nav.getByRole("link", { name: /overview/i })).toBeInTheDocument()
     expect(
-      await screen.findByRole("link", { name: /overview/i })
-    ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("link", { name: /secrets/i })
+      nav.queryByRole("link", { name: /secrets/i })
     ).not.toBeInTheDocument()
+  })
+
+  it("renders the full breadcrumb path for the current vault page", async () => {
+    renderAt("/app/vaults/prod/secrets")
+
+    const breadcrumb = within(
+      await screen.findByRole("navigation", { name: /breadcrumb/i })
+    )
+    expect(breadcrumb.getByRole("link", { name: "Vaults" })).toHaveAttribute(
+      "href",
+      "/app/vaults"
+    )
+    expect(breadcrumb.getByRole("link", { name: "prod" })).toHaveAttribute(
+      "href",
+      "/app/vaults/prod/secrets"
+    )
+    expect(breadcrumb.getByText("Secrets")).toHaveAttribute(
+      "aria-current",
+      "page"
+    )
   })
 })

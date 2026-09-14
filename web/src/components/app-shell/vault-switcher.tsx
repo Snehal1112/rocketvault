@@ -4,6 +4,7 @@ import { Link, useParams } from "@tanstack/react-router"
 import { ChevronsUpDownIcon, VaultIcon } from "lucide-react"
 
 import { listVaults } from "@/api/vaults"
+import { VaultStatus } from "@/components/status-dot"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,10 +39,20 @@ export function VaultSwitcher() {
     enabled: isGlobalAdmin,
   })
 
-  const vaultNames = useMemo(() => {
-    const recent = getRecentVaults()
-    const managed = data?.map((vault) => vault.name) ?? []
-    return Array.from(new Set([...recent, ...managed]))
+  /**
+   * The MRU half of this list carries names only -- nothing tells us
+   * whether those vaults are enabled -- so a status dot is rendered only
+   * for entries the API actually described. Showing a hollow "Disabled"
+   * dot for an unknown vault would be a claim we cannot make.
+   */
+  const vaults = useMemo(() => {
+    const enabledByName = new Map(
+      (data ?? []).map((vault) => [vault.name, vault.enabled])
+    )
+    const names = Array.from(
+      new Set([...getRecentVaults(), ...enabledByName.keys()])
+    )
+    return names.map((name) => ({ name, enabled: enabledByName.get(name) }))
   }, [data])
 
   return (
@@ -50,26 +61,31 @@ export function VaultSwitcher() {
         <DropdownMenu>
           <DropdownMenuTrigger render={<SidebarMenuButton size="lg" />}>
             <VaultIcon />
-            <span className="truncate">{vaultName ?? "Select a vault"}</span>
+            <span className="truncate font-heading">
+              {vaultName ?? "Select a vault"}
+            </span>
             <ChevronsUpDownIcon className="ml-auto" />
           </DropdownMenuTrigger>
           <DropdownMenuContent>
             <DropdownMenuLabel>Vaults</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {vaultNames.length === 0 && (
+            {vaults.length === 0 && (
               <DropdownMenuItem disabled>No recent vaults</DropdownMenuItem>
             )}
-            {vaultNames.map((name) => (
+            {vaults.map((vault) => (
               <DropdownMenuItem
-                key={name}
+                key={vault.name}
                 render={
                   <Link
                     to="/vaults/$vaultName/secrets"
-                    params={{ vaultName: name }}
+                    params={{ vaultName: vault.name }}
                   />
                 }
               >
-                {name}
+                <span className="truncate font-heading">{vault.name}</span>
+                {vault.enabled !== undefined && (
+                  <VaultStatus enabled={vault.enabled} className="ml-auto" />
+                )}
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />

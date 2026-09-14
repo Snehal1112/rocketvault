@@ -3,6 +3,7 @@ import { useLocation } from "@tanstack/react-router"
 
 import { AccountMenu } from "@/components/app-shell/account-menu"
 import { AdminNav } from "@/components/app-shell/admin-nav"
+import { buildBreadcrumbs } from "@/components/app-shell/breadcrumbs"
 import { TopBar } from "@/components/app-shell/top-bar"
 import { VaultNav } from "@/components/app-shell/vault-nav"
 import { VaultSwitcher } from "@/components/app-shell/vault-switcher"
@@ -49,7 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
-        <TopBar title={isAdminMode ? "Admin" : "Vault"} />
+        <TopBar segments={buildBreadcrumbs(location.pathname)} />
         <div className="flex flex-1 flex-col gap-4 p-4">{children}</div>
       </SidebarInset>
     </SidebarProvider>

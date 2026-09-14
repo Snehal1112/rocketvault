@@ -16,6 +16,14 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import { Separator } from "@/components/ui/separator"
 
 // The backend never lets the default vault be deleted (it always refuses
 // with a 400) -- disabling the button here is a UX nicety, not the actual
@@ -77,70 +85,133 @@ export function VaultDangerZone({ vaultName }: { vaultName: string }) {
   })
 
   return (
-    <div className="flex flex-col gap-4 rounded-2xl border border-destructive/30 p-4">
-      <div>
-        <h3 className="font-heading text-sm font-medium">Danger zone</h3>
-        <p className="text-sm text-muted-foreground">
-          Delete and purge require different permissions -- holding one does not
-          imply the other.
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-          <AlertDialogTrigger
-            render={<Button variant="destructive" disabled={isDefaultVault} />}
-          >
-            Delete vault
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete {vaultName}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This soft-deletes the vault. It can be recovered by an
-                administrator within the retention window.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                render={<Button variant="destructive" />}
-                onClick={() => deleteMutation.mutate()}
-              >
-                Confirm
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+    <Card className="border border-destructive/30 ring-destructive/10 dark:ring-destructive/20">
+      <CardHeader>
+        <CardTitle className="text-destructive">Danger zone</CardTitle>
+        <CardDescription>
+          Delete and purge are granted separately — holding one does not imply
+          the other.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        <DangerAction
+          title="Delete vault"
+          description={
+            <>
+              Soft-deletes{" "}
+              <span className="font-heading text-foreground">{vaultName}</span>{" "}
+              and everything in it. An administrator can recover it within the
+              retention window; after that it is purged automatically.
+              {isDefaultVault &&
+                " The default vault cannot be deleted, so this is disabled."}
+            </>
+          }
+          error={deleteError}
+        >
+          <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <AlertDialogTrigger
+              render={
+                <Button variant="destructive" disabled={isDefaultVault} />
+              }
+            >
+              Delete vault
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete {vaultName}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Every secret, key, and certificate in this vault stops
+                  answering immediately. An administrator can recover it within
+                  the retention window; once that window passes it is purged
+                  automatically and cannot be brought back.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  render={<Button variant="destructive" />}
+                  onClick={() => deleteMutation.mutate()}
+                >
+                  Confirm
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </DangerAction>
 
-        <AlertDialog open={purgeOpen} onOpenChange={setPurgeOpen}>
-          <AlertDialogTrigger render={<Button variant="destructive" />}>
-            Purge vault
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                Permanently purge {vaultName}?
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                This cannot be undone. Requires a Purge Operator or Purge
-                Administrator role on this specific vault -- a separate
-                permission from delete.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                render={<Button variant="destructive" />}
-                onClick={() => purgeMutation.mutate()}
-              >
-                Confirm
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <Separator className="bg-destructive/20" />
+
+        <DangerAction
+          title="Purge vault"
+          description={
+            <>
+              Permanently destroys{" "}
+              <span className="font-heading text-foreground">{vaultName}</span>{" "}
+              and every secret, key, and certificate in it. This cannot be
+              undone. Requires a Purge Operator or Purge Administrator role on
+              this vault.
+            </>
+          }
+          error={purgeError}
+        >
+          <AlertDialog open={purgeOpen} onOpenChange={setPurgeOpen}>
+            <AlertDialogTrigger render={<Button variant="destructive" />}>
+              Purge vault
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  Permanently purge {vaultName}?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  This destroys the vault and every secret, key, and certificate
+                  in it outright. There is no recovery window and no backup
+                  taken on your behalf — this cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  render={<Button variant="destructive" />}
+                  onClick={() => purgeMutation.mutate()}
+                >
+                  Confirm
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </DangerAction>
+      </CardContent>
+    </Card>
+  )
+}
+
+/** One labelled destructive action: consequence copy left, trigger right. */
+function DangerAction({
+  title,
+  description,
+  error,
+  children,
+}: {
+  title: string
+  description: React.ReactNode
+  error: string | null
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-[60ch]">
+          <h3 className="font-heading text-sm font-medium">{title}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        </div>
+        {children}
       </div>
-      {deleteError && <p className="text-sm text-destructive">{deleteError}</p>}
-      {purgeError && <p className="text-sm text-destructive">{purgeError}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   )
 }
