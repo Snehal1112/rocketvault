@@ -4,7 +4,9 @@ import { CpuIcon, ShieldAlertIcon } from "lucide-react"
 import { getKey, type Key, updateKey } from "@/api/keys"
 import { ApiError } from "@/api/types"
 import { CopyValue } from "@/components/keys/copy-value"
+import { KeyRotationPolicyCard } from "@/components/keys/key-rotation-policy"
 import { KeyStatus } from "@/components/keys/key-status"
+import { KeyVersions } from "@/components/keys/key-versions"
 import { describeKeyMaterial, isHsmBacked } from "@/components/keys/key-type"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -309,6 +311,8 @@ export function KeyDetail({
       <OverviewCard keyRecord={data} />
       <PublicKeyCard keyRecord={data} />
       <AvailabilityCard vaultName={vaultName} keyRecord={data} />
+      <KeyVersions vaultName={vaultName} keyId={data.id} />
+      <KeyRotationPolicyCard vaultName={vaultName} keyId={data.id} />
     </div>
   )
 }
