@@ -1,6 +1,14 @@
-import { cleanup } from "@testing-library/react"
+import { cleanup, configure } from "@testing-library/react"
 import "@testing-library/jest-dom/vitest"
 import { afterEach } from "vitest"
+
+// findBy*/waitFor default to 1s, which is separate from vitest's own
+// testTimeout and is not raised by it. Under the parallelism of a full run
+// a first render plus its query resolution regularly crossed that second,
+// so component tests failed while still showing their loading skeleton --
+// and passed when run file by file. Five seconds is still short enough that
+// a genuinely stuck query fails the test rather than hanging the suite.
+configure({ asyncUtilTimeout: 5000 })
 
 // vitest.config.ts runs with `globals: false`, so React Testing Library's
 // own auto-cleanup (which relies on detecting a global `afterEach`) never
