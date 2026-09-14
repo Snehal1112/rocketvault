@@ -15,3 +15,18 @@ afterEach(() => {
 if (!document.elementFromPoint) {
   document.elementFromPoint = () => null
 }
+
+// jsdom does not implement matchMedia, which theme-provider.tsx (and any
+// component using useTheme()) calls to resolve the "system" theme.
+if (!window.matchMedia) {
+  window.matchMedia = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })
+}
