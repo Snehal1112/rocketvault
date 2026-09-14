@@ -10,12 +10,14 @@ import { vaultsRoute } from "@/routes/vaults"
 import { vaultLayoutRoute } from "@/routes/vaults.$vaultName"
 import { vaultIndexRoute } from "@/routes/vaults.$vaultName.index"
 import { vaultSecretsRoute } from "@/routes/vaults.$vaultName.secrets"
+import { vaultSettingsRoute } from "@/routes/vaults.$vaultName.settings"
 import { vaultsIndexRoute } from "@/routes/vaults.index"
 import { rootRoute } from "@/routes/__root"
 
 const vaultLayoutWithChildren = vaultLayoutRoute.addChildren([
   vaultIndexRoute,
   vaultSecretsRoute,
+  vaultSettingsRoute,
 ])
 
 const vaultsWithChildren = vaultsRoute.addChildren([

@@ -1,5 +1,5 @@
 import { Link, useParams } from "@tanstack/react-router"
-import { KeyRoundIcon } from "lucide-react"
+import { KeyRoundIcon, SettingsIcon } from "lucide-react"
 
 import {
   SidebarGroup,
@@ -11,8 +11,7 @@ import {
 } from "@/components/ui/sidebar"
 
 // Nav items reflect only what's actually built (Epics 01-06 land these
-// incrementally) -- Epic 01's vault-settings page adds a "Settings" item
-// here once it lands.
+// incrementally) -- "Settings" was added by Epic 01's vault-settings page.
 export function VaultNav() {
   const { vaultName } = useParams({ strict: false })
 
@@ -33,6 +32,16 @@ export function VaultNav() {
             >
               <KeyRoundIcon />
               <span>Secrets</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={
+                <Link to="/vaults/$vaultName/settings" params={{ vaultName }} />
+              }
+            >
+              <SettingsIcon />
+              <span>Settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
