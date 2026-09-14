@@ -11,7 +11,21 @@ export interface BreadcrumbSegment {
 
 const VAULT_SECTION_LABELS: Record<string, string> = {
   secrets: "Secrets",
+  keys: "Keys",
   settings: "Settings",
+}
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Keys and certificates are addressed by UUID, not by name, so a raw
+ * identifier crumb would be 36 characters of noise. The first block is
+ * already enough to recognise which item you are on; the full id is on the
+ * page itself.
+ */
+function abbreviateIdentifier(segment: string): string {
+  return UUID_PATTERN.test(segment) ? `${segment.slice(0, 8)}…` : segment
 }
 
 /**
@@ -26,6 +40,9 @@ function vaultSectionLink(
 ): LinkProps | undefined {
   if (section === "secrets") {
     return { to: "/vaults/$vaultName/secrets", params: { vaultName } }
+  }
+  if (section === "keys") {
+    return { to: "/vaults/$vaultName/keys", params: { vaultName } }
   }
   if (section === "settings") {
     return { to: "/vaults/$vaultName/settings", params: { vaultName } }
@@ -70,7 +87,16 @@ export function buildBreadcrumbs(pathname: string): BreadcrumbSegment[] {
       // Anything deeper is a resource identifier (a secret name, a key
       // version), so it follows the monospace rule.
       for (const part of parts.slice(3)) {
-        segments.push({ label: decodeURIComponent(part), mono: true })
+        // "deleted" is a sub-tab of a section, not a resource identifier, so
+        // it stays in prose rather than being rendered as a monospace name.
+        if (part === "deleted") {
+          segments.push({ label: "Deleted" })
+          continue
+        }
+        segments.push({
+          label: abbreviateIdentifier(decodeURIComponent(part)),
+          mono: true,
+        })
       }
     }
   } else if (parts[0] === "admin") {

@@ -51,9 +51,42 @@ describe("buildBreadcrumbs", () => {
   })
 
   it("leaves an unbuilt vault section readable but unlinked", () => {
+    const segments = buildBreadcrumbs("/vaults/payments/certificates")
+
+    expect(segments[2]).toEqual({ label: "Certificates" })
+  })
+
+  it("links the keys section once a key id follows it", () => {
     const segments = buildBreadcrumbs("/vaults/payments/keys")
 
     expect(segments[2]).toEqual({ label: "Keys" })
+    expect(buildBreadcrumbs("/vaults/payments/keys/deleted")[2]).toEqual({
+      label: "Keys",
+      link: {
+        to: "/vaults/$vaultName/keys",
+        params: { vaultName: "payments" },
+      },
+    })
+  })
+
+  it("treats a deleted-items tab as prose, not as an identifier", () => {
+    expect(buildBreadcrumbs("/vaults/payments/keys/deleted")[3]).toEqual({
+      label: "Deleted",
+    })
+  })
+
+  it("abbreviates a uuid identifier so the trail stays readable", () => {
+    const segments = buildBreadcrumbs(
+      "/vaults/payments/keys/11111111-2222-3333-4444-555555555555"
+    )
+
+    expect(segments[3]).toEqual({ label: "11111111…", mono: true })
+  })
+
+  it("leaves a non-uuid identifier in full", () => {
+    const segments = buildBreadcrumbs("/vaults/payments/secrets/db-password")
+
+    expect(segments[3]).toEqual({ label: "db-password", mono: true })
   })
 
   it("handles admin paths", () => {

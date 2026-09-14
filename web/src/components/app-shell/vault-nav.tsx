@@ -1,5 +1,5 @@
 import { Link, useParams } from "@tanstack/react-router"
-import { KeyRoundIcon, SettingsIcon } from "lucide-react"
+import { KeyRoundIcon, KeySquareIcon, SettingsIcon } from "lucide-react"
 
 import {
   SidebarGroup,
@@ -32,6 +32,16 @@ export function VaultNav() {
             >
               <KeyRoundIcon />
               <span>Secrets</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={
+                <Link to="/vaults/$vaultName/keys" params={{ vaultName }} />
+              }
+            >
+              <KeySquareIcon />
+              <span>Keys</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

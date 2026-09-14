@@ -1,0 +1,183 @@
+import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
+import { CpuIcon, KeySquareIcon, ShieldAlertIcon } from "lucide-react"
+
+import { type Key, listKeys } from "@/api/keys"
+import { ApiError } from "@/api/types"
+import { KeyCreateDialog } from "@/components/keys/key-create-dialog"
+import { KeyStatus } from "@/components/keys/key-status"
+import { summarizeKeys, type KeysSummary } from "@/components/keys/key-summary"
+import { describeKeyMaterial, isHsmBacked } from "@/components/keys/key-type"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty"
+import { Skeleton } from "@/components/ui/skeleton"
+import { formatRelativeTime } from "@/lib/format"
+
+// Duplicated from vault-list.tsx on purpose for now: Epic 02 is building the
+// secrets list in parallel and would collide with an extracted shared tile.
+// Worth consolidating into one <StatTile> once both epics have landed.
+function StatTile({ value, label }: { value: number; label: string }) {
+  return (
+    <Card size="sm" className="gap-0">
+      <CardContent>
+        <p className="font-heading text-2xl leading-none font-medium tabular-nums">
+          {value}
+        </p>
+        <p className="mt-1.5 text-xs text-muted-foreground">{label}</p>
+      </CardContent>
+    </Card>
+  )
+}
+
+function KeyStatRow({ summary }: { summary: KeysSummary }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <StatTile value={summary.total} label="Total" />
+      <StatTile value={summary.hsmBacked} label="HSM-backed" />
+      <StatTile value={summary.expiringSoon} label="Expiring soon" />
+      <StatTile value={summary.unavailable} label="Unavailable" />
+    </div>
+  )
+}
+
+function KeyCard({
+  vaultName,
+  keyRecord,
+}: {
+  vaultName: string
+  keyRecord: Key
+}) {
+  return (
+    <Link
+      to="/vaults/$vaultName/keys/$keyId"
+      params={{ vaultName, keyId: keyRecord.id }}
+      className="group block h-full rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+    >
+      <Card
+        size="sm"
+        className="h-full gap-3 transition-shadow duration-150 group-hover:ring-foreground/15 dark:group-hover:ring-foreground/25"
+      >
+        <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <CardTitle className="truncate">{keyRecord.name}</CardTitle>
+          <KeyStatus keyRecord={keyRecord} />
+        </CardHeader>
+        <CardContent className="flex flex-col gap-1 text-xs text-muted-foreground">
+          <span className="font-heading text-foreground">
+            {describeKeyMaterial(keyRecord)}
+          </span>
+          <span>Created {formatRelativeTime(keyRecord.createdAt)}</span>
+          {isHsmBacked(keyRecord.type) && (
+            <span className="mt-1 inline-flex items-center gap-1.5 text-foreground">
+              <CpuIcon className="size-3.5" />
+              Stored in HSM
+            </span>
+          )}
+          {keyRecord.tags.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {keyRecord.tags.slice(0, 3).map((tag) => (
+                <Badge key={tag} variant="secondary" className="font-heading">
+                  {tag}
+                </Badge>
+              ))}
+              {keyRecord.tags.length > 3 && (
+                <Badge variant="secondary">+{keyRecord.tags.length - 3}</Badge>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </Link>
+  )
+}
+
+function KeyListSkeleton() {
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((tile) => (
+          <Skeleton key={tile} className="h-20 rounded-4xl" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2].map((card) => (
+          <Skeleton key={card} className="h-40 rounded-4xl" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function KeyList({ vaultName }: { vaultName: string }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["keys", vaultName, "list"],
+    queryFn: () => listKeys(vaultName),
+  })
+
+  if (isLoading) {
+    return <KeyListSkeleton />
+  }
+
+  // A denied read and an empty vault look identical if the error is swallowed,
+  // and they call for opposite responses from the operator -- so the server's
+  // own message is shown rather than an empty state.
+  if (error) {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <ShieldAlertIcon />
+          </EmptyMedia>
+          <EmptyTitle>Keys unavailable</EmptyTitle>
+          <EmptyDescription>
+            {error instanceof ApiError
+              ? error.message
+              : "Could not load keys for this vault."}
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
+  }
+
+  if (!data || data.length === 0) {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <KeySquareIcon />
+          </EmptyMedia>
+          <EmptyTitle>No keys yet</EmptyTitle>
+          <EmptyDescription>
+            Generate an RSA or EC key to start signing, or import one you
+            already hold.
+          </EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent>
+          <KeyCreateDialog vaultName={vaultName} />
+        </EmptyContent>
+      </Empty>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <KeyStatRow summary={summarizeKeys(data)} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {data.map((keyRecord) => (
+          <KeyCard
+            key={keyRecord.id}
+            vaultName={vaultName}
+            keyRecord={keyRecord}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
