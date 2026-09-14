@@ -67,6 +67,24 @@ function mapSecret(body: SecretResponseBody): Secret {
   }
 }
 
+/**
+ * The content types the backend accepts, verbatim from its allowlist
+ * (internal/services/secrets/secret_service.go:73-81). Anything else is a
+ * 400, so the UI offers exactly these and nothing more.
+ */
+export const SECRET_CONTENT_TYPES: ReadonlyArray<{
+  value: string
+  label: string
+}> = [
+  { value: "", label: "None" },
+  { value: "text/plain", label: "text/plain" },
+  { value: "application/json", label: "application/json" },
+  { value: "application/xml", label: "application/xml" },
+  { value: "application/x-pem-file", label: "application/x-pem-file" },
+  { value: "application/x-pkcs12", label: "application/x-pkcs12" },
+  { value: "application/octet-stream", label: "application/octet-stream" },
+]
+
 export interface ListSecretsOptions {
   tags?: string[]
   /** 0-based -- the backend computes offset as page * per_page. */
