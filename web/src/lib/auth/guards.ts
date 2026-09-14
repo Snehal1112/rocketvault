@@ -42,3 +42,30 @@ export function requireGlobalAdmin(): void {
     throw redirect({ to: "/" })
   }
 }
+
+/**
+ * Route `beforeLoad` guard for the public "/" landing route. An anonymous
+ * visitor sees the marketing page -- this returns without throwing -- but an
+ * already-authenticated session is redirected straight past it, into the
+ * vault named in `vaultName` (an explicit `?vault=` search param or the
+ * stored last-used vault, resolved by the caller) or the vault picker if
+ * neither exists. Mirrors the real Azure Portal's behavior: a signed-in
+ * session never sees marketing content.
+ */
+export function redirectAuthenticatedFromLanding(
+  vaultName: string | null
+): void {
+  const { status } = getAuthSnapshot()
+  if (status !== "authenticated") {
+    return
+  }
+
+  if (vaultName) {
+    throw redirect({
+      to: "/vaults/$vaultName/secrets",
+      params: { vaultName },
+      replace: true,
+    })
+  }
+  throw redirect({ to: "/vaults", replace: true })
+}

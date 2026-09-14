@@ -2,7 +2,11 @@ import { isRedirect } from "@tanstack/react-router"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { resetAuthStateForTests, setSession } from "@/lib/auth/auth-context"
-import { requireAuth, requireGlobalAdmin } from "@/lib/auth/guards"
+import {
+  redirectAuthenticatedFromLanding,
+  requireAuth,
+  requireGlobalAdmin,
+} from "@/lib/auth/guards"
 import { toast } from "@/components/ui/toast"
 
 beforeEach(() => {
@@ -75,5 +79,48 @@ describe("requireGlobalAdmin", () => {
     })
 
     expect(() => requireGlobalAdmin()).not.toThrow()
+  })
+})
+
+describe("redirectAuthenticatedFromLanding", () => {
+  it("does not throw when anonymous, so the landing page renders", () => {
+    expect(() => redirectAuthenticatedFromLanding(null)).not.toThrow()
+  })
+
+  it("redirects to the given vault's secrets when authenticated", () => {
+    setSession("token", "refresh", {
+      id: "u1",
+      username: "alice",
+      roles: ["user"],
+    })
+    expect.assertions(3)
+
+    try {
+      redirectAuthenticatedFromLanding("prod")
+    } catch (error) {
+      expect(isRedirect(error)).toBe(true)
+      if (isRedirect(error)) {
+        expect(error.options.to).toBe("/vaults/$vaultName/secrets")
+        expect(error.options.params).toEqual({ vaultName: "prod" })
+      }
+    }
+  })
+
+  it("redirects to the vault picker when authenticated with no vault", () => {
+    setSession("token", "refresh", {
+      id: "u1",
+      username: "alice",
+      roles: ["user"],
+    })
+    expect.assertions(2)
+
+    try {
+      redirectAuthenticatedFromLanding(null)
+    } catch (error) {
+      expect(isRedirect(error)).toBe(true)
+      if (isRedirect(error)) {
+        expect(error.options.to).toBe("/vaults")
+      }
+    }
   })
 })
