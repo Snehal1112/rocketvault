@@ -1,7 +1,10 @@
-import { createRoute } from "@tanstack/react-router"
+import { createRoute, Link } from "@tanstack/react-router"
+import { ArchiveIcon } from "lucide-react"
 
 import { KeyCreateDialog } from "@/components/keys/key-create-dialog"
 import { KeyList } from "@/components/keys/key-list"
+import { KeyRestoreDialog } from "@/components/keys/key-restore-dialog"
+import { Button } from "@/components/ui/button"
 import { vaultLayoutRoute } from "@/routes/vaults.$vaultName"
 
 function VaultKeysPage() {
@@ -20,7 +23,22 @@ function VaultKeysPage() {
             <span className="font-heading text-foreground">{vaultName}</span>.
           </p>
         </div>
-        <KeyCreateDialog vaultName={vaultName} />
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="ghost"
+            render={
+              <Link
+                to="/vaults/$vaultName/keys/deleted"
+                params={{ vaultName }}
+              />
+            }
+          >
+            <ArchiveIcon />
+            Deleted
+          </Button>
+          <KeyRestoreDialog vaultName={vaultName} />
+          <KeyCreateDialog vaultName={vaultName} />
+        </div>
       </header>
       <KeyList vaultName={vaultName} />
     </div>

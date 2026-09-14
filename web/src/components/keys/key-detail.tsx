@@ -4,7 +4,9 @@ import { CpuIcon, ShieldAlertIcon } from "lucide-react"
 import { getKey, type Key, updateKey } from "@/api/keys"
 import { ApiError } from "@/api/types"
 import { CopyValue } from "@/components/keys/copy-value"
+import { KeyBackupCard } from "@/components/keys/key-backup-card"
 import { KeyCryptoPlayground } from "@/components/keys/key-crypto-playground"
+import { KeyDangerZone } from "@/components/keys/key-danger-zone"
 import { KeyRotationPolicyCard } from "@/components/keys/key-rotation-policy"
 import { KeyStatus } from "@/components/keys/key-status"
 import { KeyVersions } from "@/components/keys/key-versions"
@@ -315,6 +317,16 @@ export function KeyDetail({
       <KeyCryptoPlayground vaultName={vaultName} keyRecord={data} />
       <KeyVersions vaultName={vaultName} keyId={data.id} />
       <KeyRotationPolicyCard vaultName={vaultName} keyId={data.id} />
+      <KeyBackupCard
+        vaultName={vaultName}
+        keyId={data.id}
+        keyName={data.name}
+      />
+      <KeyDangerZone
+        vaultName={vaultName}
+        keyId={data.id}
+        keyName={data.name}
+      />
     </div>
   )
 }

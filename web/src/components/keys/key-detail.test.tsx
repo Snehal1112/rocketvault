@@ -96,7 +96,9 @@ describe("KeyDetail", () => {
 
     renderDetail()
 
-    expect(await screen.findByText("signing-key")).toBeInTheDocument()
+    expect(
+      await screen.findByRole("heading", { name: "signing-key" })
+    ).toBeInTheDocument()
     // Once in the page header, once in the overview card.
     expect(screen.getAllByText("RSA 2048")).toHaveLength(2)
     expect(

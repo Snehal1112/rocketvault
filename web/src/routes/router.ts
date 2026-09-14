@@ -11,6 +11,7 @@ import { vaultLayoutRoute } from "@/routes/vaults.$vaultName"
 import { vaultIndexRoute } from "@/routes/vaults.$vaultName.index"
 import { vaultKeysRoute } from "@/routes/vaults.$vaultName.keys"
 import { vaultKeyDetailRoute } from "@/routes/vaults.$vaultName.keys.$keyId"
+import { vaultKeysDeletedRoute } from "@/routes/vaults.$vaultName.keys.deleted"
 import { vaultSecretsRoute } from "@/routes/vaults.$vaultName.secrets"
 import { vaultSecretDetailRoute } from "@/routes/vaults.$vaultName.secrets.$secretId"
 import { vaultSecretsDeletedRoute } from "@/routes/vaults.$vaultName.secrets.deleted"
@@ -32,6 +33,8 @@ const vaultLayoutWithChildren = vaultLayoutRoute.addChildren([
   vaultIndexRoute,
   vaultSecretsWithChildren,
   vaultKeysRoute,
+  // Static before dynamic: /keys/deleted must not be read as a key id.
+  vaultKeysDeletedRoute,
   vaultKeyDetailRoute,
   vaultSettingsRoute,
 ])
