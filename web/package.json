@@ -22,6 +22,8 @@
     "@shadcn/helpers": "^0.2.0",
     "@shadcn/react": "^0.3.1",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.102.8",
+    "@tanstack/react-router": "^1.170.36",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -42,6 +44,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
+    "@tanstack/router-plugin": "^1.168.38",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",

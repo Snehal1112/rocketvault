@@ -1,8 +1,9 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
+import { RouterProvider } from "@tanstack/react-router"
 
 import "./index.css"
-import App from "./App.tsx"
+import { router } from "@/routes/router"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
@@ -15,7 +16,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <ThemeProvider>
       <TooltipProvider>
-        <App />
+        <RouterProvider router={router} />
       </TooltipProvider>
     </ThemeProvider>
   </StrictMode>
