@@ -1,31 +1,13 @@
 import { createRoute } from "@tanstack/react-router"
-import { VaultIcon } from "lucide-react"
 
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
+import { VaultList } from "@/components/vaults/vault-list"
 import { vaultsRoute } from "@/routes/vaults"
 
-// Placeholder -- replaced by the real vault picker/landing page (VaultList +
-// VaultCreateDialog) in Epic 01's plan, Task 3.
 function VaultsIndexPage() {
   return (
-    <div className="flex min-h-svh items-center justify-center p-6">
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <VaultIcon />
-          </EmptyMedia>
-          <EmptyTitle>Vault picker coming in Epic 01</EmptyTitle>
-          <EmptyDescription>
-            Vault list, create, and settings screens land in Epic 01.
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+    <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6">
+      <h1 className="font-heading text-2xl font-medium">Vaults</h1>
+      <VaultList />
     </div>
   )
 }
