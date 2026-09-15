@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { ScrollTextIcon, ShieldAlertIcon } from "lucide-react"
+import { ScrollTextIcon } from "lucide-react"
 
 import { type Certificate, listCertificates } from "@/api/certificates"
-import { ApiError } from "@/api/types"
+import { CertificateAccessDenied } from "@/components/certificates/certificate-access-denied"
 import { CertificateCreateDialog } from "@/components/certificates/certificate-create-dialog"
 import { CertificateStatusDot } from "@/components/certificates/certificate-status-dot"
 import {
@@ -114,19 +114,12 @@ export function CertificateList({ vaultName }: { vaultName: string }) {
   // own message is shown rather than an empty state.
   if (error) {
     return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <ShieldAlertIcon />
-          </EmptyMedia>
-          <EmptyTitle>Certificates unavailable</EmptyTitle>
-          <EmptyDescription>
-            {error instanceof ApiError
-              ? error.message
-              : "Could not load certificates for this vault."}
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      <CertificateAccessDenied
+        error={error}
+        intent="read"
+        title="Certificates unavailable"
+        fallback="Could not load certificates for this vault."
+      />
     )
   }
 

@@ -1,10 +1,10 @@
 import type { ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { ArrowLeftIcon, ClockAlertIcon, ShieldAlertIcon } from "lucide-react"
+import { ArrowLeftIcon, ClockAlertIcon } from "lucide-react"
 
 import { type Certificate, getCertificate } from "@/api/certificates"
-import { ApiError } from "@/api/types"
+import { CertificateAccessDenied } from "@/components/certificates/certificate-access-denied"
 import { CertificateAttributesForm } from "@/components/certificates/certificate-attributes-form"
 import { CertificateBackupCard } from "@/components/certificates/certificate-backup-card"
 import { CertificateDangerZone } from "@/components/certificates/certificate-danger-zone"
@@ -214,30 +214,35 @@ function CertificateUnavailable({
   vaultName: string
   error: unknown
 }) {
-  const lifecycle = isLifecycleDenial(error)
-
   return (
     <>
       <BackToCertificates vaultName={vaultName} />
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            {lifecycle ? <ClockAlertIcon /> : <ShieldAlertIcon />}
-          </EmptyMedia>
-          <EmptyTitle>
-            {lifecycle
-              ? "This certificate is not readable right now"
-              : "Certificate unavailable"}
-          </EmptyTitle>
-          <EmptyDescription>
-            {lifecycle
-              ? "The server reports that this certificate is disabled or outside its valid time window. That is a state of the certificate, not of your access — re-enable it, or wait until its valid-from date, and it will open."
-              : error instanceof ApiError
-                ? error.message
-                : "Could not load this certificate."}
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      {isLifecycleDenial(error) ? (
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <ClockAlertIcon />
+            </EmptyMedia>
+            <EmptyTitle>This certificate is not readable right now</EmptyTitle>
+            <EmptyDescription>
+              The server reports that this certificate is disabled or outside
+              its valid time window. That is a state of the certificate, not of
+              your access — re-enable it, or wait until its valid-from date, and
+              it will open.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        // Anything else, including a genuine role denial. The detail page is
+        // where an operator goes to modify a certificate, so the write roles
+        // are the useful ones to name here.
+        <CertificateAccessDenied
+          error={error}
+          intent="write"
+          title="Certificate unavailable"
+          fallback="Could not load this certificate."
+        />
+      )}
     </>
   )
 }
