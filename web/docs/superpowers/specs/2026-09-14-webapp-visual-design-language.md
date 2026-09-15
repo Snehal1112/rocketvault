@@ -18,6 +18,20 @@ same decisions.
 - **shadcn/ui only.** Every primitive comes from the 61 already-vendored
   components in `src/components/ui/`. Never add a different component
   library, never hand-roll a primitive shadcn already provides.
+- **Check `src/components/patterns/` before writing a new presentational
+  component.** This is the app's own internal component layer, built on top
+  of the shadcn primitives: `StatTile`/`StatGrid` (summary-row tiles),
+  `CardGrid`/`RESOURCE_CARD_LINK_CLASS` (the responsive card-grid list
+  layout), `ResourceCardShell` (the title+status+metadata card shell),
+  `ResourceListSkeleton` (loading state matching a resource list's real
+  proportions), `DangerZoneCard`/`DangerAction` (the red-bordered
+  destructive-actions section). Epics 00-03 each defined several of these
+  independently before the duplication was caught and consolidated
+  (2026-09-14) — the pattern to avoid is writing a fourth copy of something
+  that already exists here for three other resource types. If a genuinely
+  new presentational pattern emerges in a later epic and looks reusable
+  (i.e., a fourth resource type would want it too), add it here rather than
+  inlining it in that epic's own component file.
 - **Reuse existing tokens, invent nothing new.** Primary teal
   (`#0A6B62` light / `#0FA89A` dark), `font-heading` = JetBrains Mono
   Variable, `font-sans` = Noto Sans Variable, `--radius-4xl` rounded
