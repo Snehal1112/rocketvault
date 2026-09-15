@@ -6,6 +6,8 @@ import { ArrowLeftIcon, ClockAlertIcon, ShieldAlertIcon } from "lucide-react"
 import { type Certificate, getCertificate } from "@/api/certificates"
 import { ApiError } from "@/api/types"
 import { CertificateAttributesForm } from "@/components/certificates/certificate-attributes-form"
+import { CertificateBackupCard } from "@/components/certificates/certificate-backup-card"
+import { CertificateDangerZone } from "@/components/certificates/certificate-danger-zone"
 import { isLifecycleDenial } from "@/components/certificates/certificate-errors"
 import { CertificatePolicyForm } from "@/components/certificates/certificate-policy-form"
 import { CertificateRenewalCard } from "@/components/certificates/certificate-renewal-card"
@@ -160,6 +162,16 @@ export function CertificateDetail({
         <TabsContent value="overview" className="flex flex-col gap-6 pt-6">
           <OverviewCard certificate={data} />
           <CertificateAttributesForm vaultName={vaultName} certificate={data} />
+          <CertificateBackupCard
+            vaultName={vaultName}
+            certificateId={data.id}
+            certificateName={data.name}
+          />
+          <CertificateDangerZone
+            vaultName={vaultName}
+            certificateId={data.id}
+            certificateName={data.name}
+          />
         </TabsContent>
         {/* The two renewal surfaces sit side by side on purpose: the split
             between them is the single most confusable thing about

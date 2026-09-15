@@ -10,6 +10,7 @@ import { vaultsRoute } from "@/routes/vaults"
 import { vaultLayoutRoute } from "@/routes/vaults.$vaultName"
 import { vaultCertificatesRoute } from "@/routes/vaults.$vaultName.certificates"
 import { vaultCertificateDetailRoute } from "@/routes/vaults.$vaultName.certificates.$certificateId"
+import { vaultCertificatesDeletedRoute } from "@/routes/vaults.$vaultName.certificates.deleted"
 import { vaultCertificatesIndexRoute } from "@/routes/vaults.$vaultName.certificates.index"
 import { vaultIndexRoute } from "@/routes/vaults.$vaultName.index"
 import { vaultKeysRoute } from "@/routes/vaults.$vaultName.keys"
@@ -36,6 +37,7 @@ const vaultSecretsWithChildren = vaultSecretsRoute.addChildren([
 // not be read as a certificate id.
 const vaultCertificatesWithChildren = vaultCertificatesRoute.addChildren([
   vaultCertificatesIndexRoute,
+  vaultCertificatesDeletedRoute,
   vaultCertificateDetailRoute,
 ])
 

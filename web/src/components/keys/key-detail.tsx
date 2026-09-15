@@ -3,7 +3,7 @@ import { CpuIcon, ShieldAlertIcon } from "lucide-react"
 
 import { getKey, type Key, updateKey } from "@/api/keys"
 import { ApiError } from "@/api/types"
-import { CopyValue } from "@/components/keys/copy-value"
+import { CopyValue } from "@/components/patterns/copy-value"
 import { KeyBackupCard } from "@/components/keys/key-backup-card"
 import { KeyCryptoPlayground } from "@/components/keys/key-crypto-playground"
 import { KeyDangerZone } from "@/components/keys/key-danger-zone"

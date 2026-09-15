@@ -1,7 +1,10 @@
-import { createRoute } from "@tanstack/react-router"
+import { createRoute, Link } from "@tanstack/react-router"
+import { ArchiveIcon } from "lucide-react"
 
 import { CertificateCreateDialog } from "@/components/certificates/certificate-create-dialog"
 import { CertificateList } from "@/components/certificates/certificate-list"
+import { CertificateRestoreDialog } from "@/components/certificates/certificate-restore-dialog"
+import { Button } from "@/components/ui/button"
 import { vaultCertificatesRoute } from "@/routes/vaults.$vaultName.certificates"
 
 function VaultCertificatesPage() {
@@ -22,6 +25,19 @@ function VaultCertificatesPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="ghost"
+            render={
+              <Link
+                to="/vaults/$vaultName/certificates/deleted"
+                params={{ vaultName }}
+              />
+            }
+          >
+            <ArchiveIcon />
+            Deleted
+          </Button>
+          <CertificateRestoreDialog vaultName={vaultName} />
           <CertificateCreateDialog vaultName={vaultName} />
         </div>
       </header>

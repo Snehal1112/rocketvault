@@ -4,7 +4,7 @@ import { RotateCwIcon } from "lucide-react"
 
 import { getKeyVersion, listKeyVersions, rotateKey } from "@/api/keys"
 import { ApiError } from "@/api/types"
-import { CopyValue } from "@/components/keys/copy-value"
+import { CopyValue } from "@/components/patterns/copy-value"
 import {
   AlertDialog,
   AlertDialogAction,

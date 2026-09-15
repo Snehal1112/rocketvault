@@ -20,7 +20,7 @@ import {
   supportedOperations,
   usesNonce,
 } from "@/components/keys/key-algorithms"
-import { CopyValue } from "@/components/keys/copy-value"
+import { CopyValue } from "@/components/patterns/copy-value"
 import { StatusDot } from "@/components/status-dot"
 import { Button } from "@/components/ui/button"
 import {
