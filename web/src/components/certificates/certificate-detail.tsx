@@ -7,6 +7,8 @@ import { type Certificate, getCertificate } from "@/api/certificates"
 import { ApiError } from "@/api/types"
 import { CertificateAttributesForm } from "@/components/certificates/certificate-attributes-form"
 import { isLifecycleDenial } from "@/components/certificates/certificate-errors"
+import { CertificatePolicyForm } from "@/components/certificates/certificate-policy-form"
+import { CertificateRenewalCard } from "@/components/certificates/certificate-renewal-card"
 import { CertificateStatusDot } from "@/components/certificates/certificate-status-dot"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -24,6 +26,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatRelativeTime } from "@/lib/format"
 
 /** Absolute timestamps are rendered in UTC on purpose: an operator comparing
@@ -149,8 +152,23 @@ export function CertificateDetail({
         <CertificateStatusDot certificate={data} />
       </header>
 
-      <OverviewCard certificate={data} />
-      <CertificateAttributesForm vaultName={vaultName} certificate={data} />
+      <Tabs defaultValue="overview">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="renewal">Renewal &amp; policy</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" className="flex flex-col gap-6 pt-6">
+          <OverviewCard certificate={data} />
+          <CertificateAttributesForm vaultName={vaultName} certificate={data} />
+        </TabsContent>
+        {/* The two renewal surfaces sit side by side on purpose: the split
+            between them is the single most confusable thing about
+            certificates, and separating them across tabs would hide it. */}
+        <TabsContent value="renewal" className="flex flex-col gap-6 pt-6">
+          <CertificateRenewalCard vaultName={vaultName} certificate={data} />
+          <CertificatePolicyForm vaultName={vaultName} certificate={data} />
+        </TabsContent>
+      </Tabs>
     </>
   )
 }
