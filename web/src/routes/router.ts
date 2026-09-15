@@ -8,6 +8,9 @@ import { loginRoute } from "@/routes/login"
 import { oidcCallbackRoute } from "@/routes/oidc.callback"
 import { vaultsRoute } from "@/routes/vaults"
 import { vaultLayoutRoute } from "@/routes/vaults.$vaultName"
+import { vaultCertificatesRoute } from "@/routes/vaults.$vaultName.certificates"
+import { vaultCertificateDetailRoute } from "@/routes/vaults.$vaultName.certificates.$certificateId"
+import { vaultCertificatesIndexRoute } from "@/routes/vaults.$vaultName.certificates.index"
 import { vaultIndexRoute } from "@/routes/vaults.$vaultName.index"
 import { vaultKeysRoute } from "@/routes/vaults.$vaultName.keys"
 import { vaultKeyDetailRoute } from "@/routes/vaults.$vaultName.keys.$keyId"
@@ -29,6 +32,13 @@ const vaultSecretsWithChildren = vaultSecretsRoute.addChildren([
   vaultSecretDetailRoute,
 ])
 
+// Same static-before-dynamic ordering as secrets: /certificates/deleted must
+// not be read as a certificate id.
+const vaultCertificatesWithChildren = vaultCertificatesRoute.addChildren([
+  vaultCertificatesIndexRoute,
+  vaultCertificateDetailRoute,
+])
+
 const vaultLayoutWithChildren = vaultLayoutRoute.addChildren([
   vaultIndexRoute,
   vaultSecretsWithChildren,
@@ -36,6 +46,7 @@ const vaultLayoutWithChildren = vaultLayoutRoute.addChildren([
   // Static before dynamic: /keys/deleted must not be read as a key id.
   vaultKeysDeletedRoute,
   vaultKeyDetailRoute,
+  vaultCertificatesWithChildren,
   vaultSettingsRoute,
 ])
 
