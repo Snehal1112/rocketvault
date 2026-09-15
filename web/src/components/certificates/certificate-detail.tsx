@@ -1,9 +1,12 @@
 import type { ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { ShieldAlertIcon } from "lucide-react"
+import { Link } from "@tanstack/react-router"
+import { ArrowLeftIcon, ClockAlertIcon, ShieldAlertIcon } from "lucide-react"
 
 import { type Certificate, getCertificate } from "@/api/certificates"
 import { ApiError } from "@/api/types"
+import { CertificateAttributesForm } from "@/components/certificates/certificate-attributes-form"
+import { isLifecycleDenial } from "@/components/certificates/certificate-errors"
 import { CertificateStatusDot } from "@/components/certificates/certificate-status-dot"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -128,25 +131,12 @@ export function CertificateDetail({
   }
 
   if (error || !data) {
-    return (
-      <Empty>
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <ShieldAlertIcon />
-          </EmptyMedia>
-          <EmptyTitle>Certificate unavailable</EmptyTitle>
-          <EmptyDescription>
-            {error instanceof ApiError
-              ? error.message
-              : "Could not load this certificate."}
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
+    return <CertificateUnavailable vaultName={vaultName} error={error} />
   }
 
   return (
     <>
+      <BackToCertificates vaultName={vaultName} />
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="font-heading text-2xl font-medium tracking-tight">
@@ -160,6 +150,64 @@ export function CertificateDetail({
       </header>
 
       <OverviewCard certificate={data} />
+      <CertificateAttributesForm vaultName={vaultName} certificate={data} />
+    </>
+  )
+}
+
+/** Always rendered on the detail screen, error state included -- a 403 here
+ * is routine (a disabled certificate 403s on read), so the operator must
+ * never be stranded on a dead end. */
+function BackToCertificates({ vaultName }: { vaultName: string }) {
+  return (
+    <Link
+      to="/vaults/$vaultName/certificates"
+      params={{ vaultName }}
+      className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+    >
+      <ArrowLeftIcon className="size-4" />
+      All certificates
+    </Link>
+  )
+}
+
+/**
+ * Distinguishes the certificate's own lifecycle state from a role denial.
+ * Both arrive as a 403 with the same status code, and conflating them tells a
+ * Certificates Officer they lack permission when the certificate is simply
+ * disabled or expired.
+ */
+function CertificateUnavailable({
+  vaultName,
+  error,
+}: {
+  vaultName: string
+  error: unknown
+}) {
+  const lifecycle = isLifecycleDenial(error)
+
+  return (
+    <>
+      <BackToCertificates vaultName={vaultName} />
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            {lifecycle ? <ClockAlertIcon /> : <ShieldAlertIcon />}
+          </EmptyMedia>
+          <EmptyTitle>
+            {lifecycle
+              ? "This certificate is not readable right now"
+              : "Certificate unavailable"}
+          </EmptyTitle>
+          <EmptyDescription>
+            {lifecycle
+              ? "The server reports that this certificate is disabled or outside its valid time window. That is a state of the certificate, not of your access — re-enable it, or wait until its valid-from date, and it will open."
+              : error instanceof ApiError
+                ? error.message
+                : "Could not load this certificate."}
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     </>
   )
 }
