@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router"
 import { ShieldCheckIcon, VaultIcon } from "lucide-react"
 
 import { listVaults, type Vault } from "@/api/vaults"
+import { StatGrid, StatTile } from "@/components/patterns/stat-tile"
 import { VaultStatus } from "@/components/status-dot"
 import { VaultCreateDialog } from "@/components/vaults/vault-create-dialog"
 import {
@@ -21,26 +22,13 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatRelativeTime } from "@/lib/format"
 
-function StatTile({ value, label }: { value: number; label: string }) {
-  return (
-    <Card size="sm" className="gap-0">
-      <CardContent>
-        <p className="font-heading text-2xl leading-none font-medium tabular-nums">
-          {value}
-        </p>
-        <p className="mt-1.5 text-xs text-muted-foreground">{label}</p>
-      </CardContent>
-    </Card>
-  )
-}
-
 function VaultStatRow({ summary }: { summary: VaultSummary }) {
   return (
-    <div className="grid grid-cols-3 gap-3 sm:gap-4">
+    <StatGrid aria-label="Vault counts">
       <StatTile value={summary.total} label="Total" />
       <StatTile value={summary.enabled} label="Enabled" />
       <StatTile value={summary.disabled} label="Disabled" />
-    </div>
+    </StatGrid>
   )
 }
 

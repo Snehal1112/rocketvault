@@ -9,6 +9,7 @@ import {
   MAX_SECRETS_PER_PAGE,
   type Secret,
 } from "@/api/secrets"
+import { StatGrid, StatTile } from "@/components/patterns/stat-tile"
 import { SecretCreateDialog } from "@/components/secrets/secret-create-dialog"
 import {
   filterSecrets,
@@ -30,19 +31,6 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatRelativeTime } from "@/lib/format"
 
-function StatTile({ value, label }: { value: number | string; label: string }) {
-  return (
-    <Card size="sm" className="gap-0">
-      <CardContent>
-        <p className="font-heading text-2xl leading-none font-medium tabular-nums">
-          {value}
-        </p>
-        <p className="mt-1.5 text-xs text-muted-foreground">{label}</p>
-      </CardContent>
-    </Card>
-  )
-}
-
 function SecretStatRow({
   summary,
   vaultName,
@@ -51,10 +39,7 @@ function SecretStatRow({
   vaultName: string
 }) {
   return (
-    <section
-      aria-label="Secret counts"
-      className="grid grid-cols-3 gap-3 sm:gap-4"
-    >
+    <StatGrid aria-label="Secret counts">
       <StatTile value={summary.total} label="Total" />
       <StatTile value={summary.enabled} label="Enabled" />
       {summary.deleted === null ? (
@@ -68,7 +53,7 @@ function SecretStatRow({
           <StatTile value={summary.deleted} label="Deleted" />
         </Link>
       )}
-    </section>
+    </StatGrid>
   )
 }
 

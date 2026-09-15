@@ -8,6 +8,7 @@ import { KeyCreateDialog } from "@/components/keys/key-create-dialog"
 import { KeyStatus } from "@/components/keys/key-status"
 import { summarizeKeys, type KeysSummary } from "@/components/keys/key-summary"
 import { describeKeyMaterial, isHsmBacked } from "@/components/keys/key-type"
+import { StatGrid, StatTile } from "@/components/patterns/stat-tile"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
@@ -21,30 +22,14 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatRelativeTime } from "@/lib/format"
 
-// Duplicated from vault-list.tsx on purpose for now: Epic 02 is building the
-// secrets list in parallel and would collide with an extracted shared tile.
-// Worth consolidating into one <StatTile> once both epics have landed.
-function StatTile({ value, label }: { value: number; label: string }) {
-  return (
-    <Card size="sm" className="gap-0">
-      <CardContent>
-        <p className="font-heading text-2xl leading-none font-medium tabular-nums">
-          {value}
-        </p>
-        <p className="mt-1.5 text-xs text-muted-foreground">{label}</p>
-      </CardContent>
-    </Card>
-  )
-}
-
 function KeyStatRow({ summary }: { summary: KeysSummary }) {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+    <StatGrid aria-label="Key counts" className="grid-cols-2 lg:grid-cols-4">
       <StatTile value={summary.total} label="Total" />
       <StatTile value={summary.hsmBacked} label="HSM-backed" />
       <StatTile value={summary.expiringSoon} label="Expiring soon" />
       <StatTile value={summary.unavailable} label="Unavailable" />
-    </div>
+    </StatGrid>
   )
 }
 
