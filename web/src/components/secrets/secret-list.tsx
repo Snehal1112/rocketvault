@@ -9,6 +9,10 @@ import {
   MAX_SECRETS_PER_PAGE,
   type Secret,
 } from "@/api/secrets"
+import { RESOURCE_CARD_LINK_CLASS } from "@/components/patterns/card-link-class"
+import { CardGrid } from "@/components/patterns/card-grid"
+import { ResourceListSkeleton } from "@/components/patterns/list-skeleton"
+import { ResourceCardShell } from "@/components/patterns/resource-card"
 import { StatGrid, StatTile } from "@/components/patterns/stat-tile"
 import { SecretCreateDialog } from "@/components/secrets/secret-create-dialog"
 import {
@@ -18,7 +22,6 @@ import {
 } from "@/components/secrets/secret-summary"
 import { StatusDot } from "@/components/status-dot"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Empty,
   EmptyContent,
@@ -28,7 +31,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
 import { formatRelativeTime } from "@/lib/format"
 
 function SecretStatRow({
@@ -70,53 +72,32 @@ function SecretCard({
     <Link
       to="/vaults/$vaultName/secrets/$secretId"
       params={{ vaultName, secretId: secret.id }}
-      className="group block h-full rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+      className={RESOURCE_CARD_LINK_CLASS}
     >
-      <Card
-        size="sm"
-        className="h-full gap-3 transition-shadow duration-150 group-hover:ring-foreground/15 dark:group-hover:ring-foreground/25"
-      >
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle className="truncate">{secret.name}</CardTitle>
+      <ResourceCardShell
+        title={secret.name}
+        status={
           <StatusDot
             tone={secret.enabled ? "on" : "off"}
             label={secret.enabled ? "Enabled" : "Disabled"}
           />
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2 text-xs text-muted-foreground">
-          <span>
-            <span className="font-heading">v{secret.version}</span> · created{" "}
-            {formatRelativeTime(secret.createdAt)}
-          </span>
-          {secret.tags && secret.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {secret.tags.map((tag) => (
-                <Badge key={tag} variant="secondary" className="font-heading">
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        }
+      >
+        <span>
+          <span className="font-heading">v{secret.version}</span> · created{" "}
+          {formatRelativeTime(secret.createdAt)}
+        </span>
+        {secret.tags && secret.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {secret.tags.map((tag) => (
+              <Badge key={tag} variant="secondary" className="font-heading">
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </ResourceCardShell>
     </Link>
-  )
-}
-
-function SecretListSkeleton() {
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-3 gap-3 sm:gap-4">
-        {[0, 1, 2].map((tile) => (
-          <Skeleton key={tile} className="h-20 rounded-4xl" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {[0, 1, 2, 3, 4, 5].map((card) => (
-          <Skeleton key={card} className="h-32 rounded-4xl" />
-        ))}
-      </div>
-    </div>
   )
 }
 
@@ -140,7 +121,13 @@ export function SecretList({ vaultName }: { vaultName: string }) {
   })
 
   if (isLoading) {
-    return <SecretListSkeleton />
+    return (
+      <ResourceListSkeleton
+        statCount={3}
+        cardCount={6}
+        cardHeightClassName="h-32"
+      />
+    )
   }
 
   if (error) {
@@ -220,11 +207,11 @@ export function SecretList({ vaultName }: { vaultName: string }) {
           </EmptyHeader>
         </Empty>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <CardGrid>
           {visible.map((secret) => (
             <SecretCard key={secret.id} secret={secret} vaultName={vaultName} />
           ))}
-        </div>
+        </CardGrid>
       )}
 
       {secrets.length === MAX_SECRETS_PER_PAGE && (

@@ -8,9 +8,12 @@ import { KeyCreateDialog } from "@/components/keys/key-create-dialog"
 import { KeyStatus } from "@/components/keys/key-status"
 import { summarizeKeys, type KeysSummary } from "@/components/keys/key-summary"
 import { describeKeyMaterial, isHsmBacked } from "@/components/keys/key-type"
+import { RESOURCE_CARD_LINK_CLASS } from "@/components/patterns/card-link-class"
+import { CardGrid } from "@/components/patterns/card-grid"
+import { ResourceListSkeleton } from "@/components/patterns/list-skeleton"
+import { ResourceCardShell } from "@/components/patterns/resource-card"
 import { StatGrid, StatTile } from "@/components/patterns/stat-tile"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Empty,
   EmptyContent,
@@ -19,7 +22,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
-import { Skeleton } from "@/components/ui/skeleton"
 import { formatRelativeTime } from "@/lib/format"
 
 function KeyStatRow({ summary }: { summary: KeysSummary }) {
@@ -44,59 +46,36 @@ function KeyCard({
     <Link
       to="/vaults/$vaultName/keys/$keyId"
       params={{ vaultName, keyId: keyRecord.id }}
-      className="group block h-full rounded-4xl outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+      className={RESOURCE_CARD_LINK_CLASS}
     >
-      <Card
-        size="sm"
-        className="h-full gap-3 transition-shadow duration-150 group-hover:ring-foreground/15 dark:group-hover:ring-foreground/25"
+      <ResourceCardShell
+        title={keyRecord.name}
+        status={<KeyStatus keyRecord={keyRecord} />}
       >
-        <CardHeader className="flex flex-row items-center justify-between gap-3">
-          <CardTitle className="truncate">{keyRecord.name}</CardTitle>
-          <KeyStatus keyRecord={keyRecord} />
-        </CardHeader>
-        <CardContent className="flex flex-col gap-1 text-xs text-muted-foreground">
-          <span className="font-heading text-foreground">
-            {describeKeyMaterial(keyRecord)}
+        <span className="font-heading text-foreground">
+          {describeKeyMaterial(keyRecord)}
+        </span>
+        <span>Created {formatRelativeTime(keyRecord.createdAt)}</span>
+        {isHsmBacked(keyRecord.type) && (
+          <span className="mt-1 inline-flex items-center gap-1.5 text-foreground">
+            <CpuIcon className="size-3.5" />
+            Stored in HSM
           </span>
-          <span>Created {formatRelativeTime(keyRecord.createdAt)}</span>
-          {isHsmBacked(keyRecord.type) && (
-            <span className="mt-1 inline-flex items-center gap-1.5 text-foreground">
-              <CpuIcon className="size-3.5" />
-              Stored in HSM
-            </span>
-          )}
-          {keyRecord.tags.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {keyRecord.tags.slice(0, 3).map((tag) => (
-                <Badge key={tag} variant="secondary" className="font-heading">
-                  {tag}
-                </Badge>
-              ))}
-              {keyRecord.tags.length > 3 && (
-                <Badge variant="secondary">+{keyRecord.tags.length - 3}</Badge>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        )}
+        {keyRecord.tags.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {keyRecord.tags.slice(0, 3).map((tag) => (
+              <Badge key={tag} variant="secondary" className="font-heading">
+                {tag}
+              </Badge>
+            ))}
+            {keyRecord.tags.length > 3 && (
+              <Badge variant="secondary">+{keyRecord.tags.length - 3}</Badge>
+            )}
+          </div>
+        )}
+      </ResourceCardShell>
     </Link>
-  )
-}
-
-function KeyListSkeleton() {
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((tile) => (
-          <Skeleton key={tile} className="h-20 rounded-4xl" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {[0, 1, 2].map((card) => (
-          <Skeleton key={card} className="h-40 rounded-4xl" />
-        ))}
-      </div>
-    </div>
   )
 }
 
@@ -107,7 +86,14 @@ export function KeyList({ vaultName }: { vaultName: string }) {
   })
 
   if (isLoading) {
-    return <KeyListSkeleton />
+    return (
+      <ResourceListSkeleton
+        statCount={4}
+        statGridClassName="grid-cols-2 lg:grid-cols-4"
+        cardCount={3}
+        cardHeightClassName="h-40"
+      />
+    )
   }
 
   // A denied read and an empty vault look identical if the error is swallowed,
@@ -154,7 +140,7 @@ export function KeyList({ vaultName }: { vaultName: string }) {
   return (
     <div className="flex flex-col gap-6">
       <KeyStatRow summary={summarizeKeys(data)} />
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <CardGrid>
         {data.map((keyRecord) => (
           <KeyCard
             key={keyRecord.id}
@@ -162,7 +148,7 @@ export function KeyList({ vaultName }: { vaultName: string }) {
             keyRecord={keyRecord}
           />
         ))}
-      </div>
+      </CardGrid>
     </div>
   )
 }

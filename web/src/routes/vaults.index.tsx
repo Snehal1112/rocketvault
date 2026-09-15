@@ -19,8 +19,8 @@ function VaultsIndexPage() {
               Vaults
             </h1>
             <p className="mt-1 max-w-[60ch] text-sm text-muted-foreground">
-              Isolated security boundaries you operate in. Open one to work
-              with its secrets, keys, and certificates.
+              Isolated security boundaries you operate in. Open one to work with
+              its secrets, keys, and certificates.
             </p>
           </div>
           <VaultCreateDialog />

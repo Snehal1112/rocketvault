@@ -27,8 +27,8 @@ function AccountPage() {
           </EmptyMedia>
           <EmptyTitle>Account & sessions coming in Epic 13</EmptyTitle>
           <EmptyDescription>
-            Your session list, profile, and sign-out-everywhere controls land
-            in Epic 13.
+            Your session list, profile, and sign-out-everywhere controls land in
+            Epic 13.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
