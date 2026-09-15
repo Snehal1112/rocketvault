@@ -189,10 +189,9 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          railway up \
+          scripts/railway-deploy-and-wait.sh \
             --service rocketvault \
             --environment production \
-            --ci \
             -m "Release ${{ github.ref_name }}"
 
       - name: Set up Bun
@@ -211,9 +210,8 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: |
-          railway up web/dist \
-            --path-as-root \
+          scripts/railway-deploy-and-wait.sh \
+            web/dist --path-as-root \
             --service rocketvault-web \
             --environment production \
-            --ci \
             -m "Release ${{ github.ref_name }}"
