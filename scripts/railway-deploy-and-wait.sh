@@ -40,12 +40,25 @@ fi
 
 echo "Waiting for deployment ${deployment_id} (service=${service}, environment=${environment}) to reach a terminal state..."
 
-attempts=60
+# A cold Dockerfile build (e.g. the Go/CGO backend with no warm layer cache)
+# has been observed to spend 10+ minutes in BUILDING before the healthcheck
+# even starts, so this needs real headroom, not just enough for a quick
+# Railpack static build. interval=15s * attempts=160 = 40 minutes.
+interval=15
+attempts=160
+last_status=""
 for ((i = 1; i <= attempts; i++)); do
   status=$(railway deployment list --service "$service" --environment "$environment" --json \
     | jq -r --arg id "$deployment_id" '.[] | select(.id == $id) | .status // empty')
+  status="${status:-unknown}"
 
-  echo "[${i}/${attempts}] status: ${status:-unknown}"
+  # Only log on a status change or every ~5 minutes, so a long BUILDING
+  # phase doesn't spam hundreds of identical lines into the CI log.
+  if [[ "$status" != "$last_status" || $((i % 20)) -eq 0 ]]; then
+    elapsed=$((i * interval))
+    echo "[${elapsed}s elapsed] status: ${status}"
+    last_status="$status"
+  fi
 
   case "$status" in
     SUCCESS)
@@ -58,8 +71,8 @@ for ((i = 1; i <= attempts; i++)); do
       ;;
   esac
 
-  sleep 10
+  sleep "$interval"
 done
 
-echo "Timed out waiting for deployment ${deployment_id} to finish" >&2
+echo "Timed out after $((attempts * interval))s waiting for deployment ${deployment_id} to finish" >&2
 exit 1
