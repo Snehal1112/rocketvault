@@ -174,3 +174,46 @@ jobs:
             --notes "${CHANGELOG_BODY}" \
             dist/*.tar.gz dist/*.tar.gz.sha256 \
             dist/*.zip dist/*.zip.sha256
+
+  deploy-railway:
+    name: Deploy to Railway
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy backend (rocketvault)
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway up \
+            --service rocketvault \
+            --environment production \
+            --ci \
+            -m "Release ${{ github.ref_name }}"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build web dashboard
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          # base=/ (not the vite.config.ts default of /app/, which is only
+          # correct for local dev behind a Caddy reverse proxy) — Railway
+          # serves this service at its own domain root.
+          bunx vite build --base=/ --outDir dist --emptyOutDir
+
+      - name: Deploy web dashboard (rocketvault-web)
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          railway up web/dist \
+            --path-as-root \
+            --service rocketvault-web \
+            --environment production \
+            --ci \
+            -m "Release ${{ github.ref_name }}"
