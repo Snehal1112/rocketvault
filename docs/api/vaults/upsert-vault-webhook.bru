@@ -1,0 +1,23 @@
+meta {
+  name: Upsert Vault Webhook
+  type: http
+  seq: 9
+}
+
+put {
+  url: {{base_url}}/api/v1/vaults/{{vault_name}}/webhook
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "url": "https://example.com/webhooks/rocketvault",
+    "rotate_secret": false,
+    "enabled": true
+  }
+}

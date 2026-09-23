@@ -1,0 +1,21 @@
+meta {
+  name: Upsert Vault Provisioning Grant
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{base_url}}/api/v1/vault-provisioning-grants/{{principal_id}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "quota": 5
+  }
+}
