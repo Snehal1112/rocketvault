@@ -12,6 +12,7 @@ export interface BreadcrumbSegment {
 const VAULT_SECTION_LABELS: Record<string, string> = {
   secrets: "Secrets",
   keys: "Keys",
+  certificates: "Certificates",
   settings: "Settings",
 }
 
@@ -43,6 +44,9 @@ function vaultSectionLink(
   }
   if (section === "keys") {
     return { to: "/vaults/$vaultName/keys", params: { vaultName } }
+  }
+  if (section === "certificates") {
+    return { to: "/vaults/$vaultName/certificates", params: { vaultName } }
   }
   if (section === "settings") {
     return { to: "/vaults/$vaultName/settings", params: { vaultName } }

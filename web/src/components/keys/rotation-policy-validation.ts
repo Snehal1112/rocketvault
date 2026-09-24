@@ -21,7 +21,7 @@ export function validateRotationPolicy(
   if (values.some((value) => Number.isNaN(value))) {
     return "Every interval must be a whole number of days."
   }
-  if (values.some((value) => value < 0)) {
+  if (input.notifyBeforeExpiryDays < 0 || input.expiryDays < 0) {
     return "Intervals cannot be negative."
   }
   if (input.enabled && input.rotateAfterDays < MIN_ROTATION_DAYS) {

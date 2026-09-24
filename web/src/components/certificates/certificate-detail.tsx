@@ -233,12 +233,14 @@ function CertificateUnavailable({
           </EmptyHeader>
         </Empty>
       ) : (
-        // Anything else, including a genuine role denial. The detail page is
-        // where an operator goes to modify a certificate, so the write roles
-        // are the useful ones to name here.
+        // Anything else, including a genuine role denial. This is the
+        // initial GET that failed, which only requires a read-capable role,
+        // so those are the roles worth naming here -- not the write-tier
+        // ones (this page's other actions surface their own write-role
+        // denials independently, via the forms/cards that issue them).
         <CertificateAccessDenied
           error={error}
-          intent="write"
+          intent="read"
           title="Certificate unavailable"
           fallback="Could not load this certificate."
         />

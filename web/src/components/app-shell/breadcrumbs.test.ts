@@ -50,10 +50,19 @@ describe("buildBreadcrumbs", () => {
     ])
   })
 
-  it("leaves an unbuilt vault section readable but unlinked", () => {
+  it("links the certificates section once an identifier follows it", () => {
     const segments = buildBreadcrumbs("/vaults/payments/certificates")
 
     expect(segments[2]).toEqual({ label: "Certificates" })
+    expect(
+      buildBreadcrumbs("/vaults/payments/certificates/deleted")[2]
+    ).toEqual({
+      label: "Certificates",
+      link: {
+        to: "/vaults/$vaultName/certificates",
+        params: { vaultName: "payments" },
+      },
+    })
   })
 
   it("links the keys section once a key id follows it", () => {

@@ -124,7 +124,7 @@ describe("role-aware denial on the list", () => {
 })
 
 describe("role-aware denial on the detail page", () => {
-  it("names the write roles when a role denial blocks the read", async () => {
+  it("names the read roles when a role denial blocks the read", async () => {
     getCertificateMock.mockRejectedValue(
       new ApiError({
         status_code: 403,
@@ -134,10 +134,12 @@ describe("role-aware denial on the detail page", () => {
 
     renderIn(<CertificateDetail vaultName="payments" certificateId={CERT_ID} />)
 
+    // This is the initial GET, gated by ActionCertificatesRead -- so the
+    // read-capable roles are what actually fix it, not the write-tier ones.
     expect(
-      await screen.findByText(/Key Vault Certificates Officer/)
+      await screen.findByText(/Key Vault Certificate User/)
     ).toBeInTheDocument()
-    expect(screen.getByText(/Key Vault Administrator/)).toBeInTheDocument()
+    expect(screen.getByText(/Key Vault Reader/)).toBeInTheDocument()
   })
 
   it("never confuses a lifecycle 403 with a role denial", async () => {

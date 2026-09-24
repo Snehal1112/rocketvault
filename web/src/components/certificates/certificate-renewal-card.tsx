@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import {
@@ -52,6 +52,13 @@ export function CertificateRenewalCard({
   const queryClient = useQueryClient()
   const [renewalDays, setRenewalDays] = useState(certificate.renewalDays)
   const [error, setError] = useState<string | null>(null)
+
+  // Re-seeded whenever the server's value changes, so a save elsewhere (a
+  // second tab, another operator) is not silently overwritten by a stale
+  // draft -- mirrors <CertificatePolicyForm>'s same guard.
+  useEffect(() => {
+    setRenewalDays(certificate.renewalDays)
+  }, [certificate.renewalDays])
 
   const save = useMutation({
     mutationFn: (patch: UpdateCertificateInput) =>
