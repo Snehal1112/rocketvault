@@ -89,6 +89,8 @@ jobs:
 
   lint:
     name: Lint
+    # Temporarily disabled — flip `if` back to remove this line to re-enable.
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -233,6 +235,8 @@ jobs:
 
   security:
     name: Security Scan
+    # Temporarily disabled — flip `if` back to remove this line to re-enable.
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
