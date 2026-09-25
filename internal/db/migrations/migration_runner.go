@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+
+	"rocketvault/internal/db"
 )
 
 //go:embed *.sql
@@ -132,6 +134,17 @@ func (r *MigrationRunner) LoadMigrations() ([]Migration, error) {
 }
 
 // ApplyMigration applies a single migration.
+//
+// A database bootstrapped the normal way (serve's startup path, via
+// createOptimizedSchema in internal/db/db.go) already has every column these
+// migration files ALTER TABLE ... ADD COLUMN in their CREATE TABLE
+// statements, since db.go is kept current for fresh installs; only upgrades
+// of pre-existing databases actually need the ALTER TABLE to do anything.
+// schema_migrations is never populated by that boot path, so the first
+// `rocketvault migrate` run against such a database used to fail outright on
+// the resulting "duplicate column" error (B47). Statements run one at a time
+// so a harmless duplicate-column error on one ALTER TABLE doesn't abort
+// later statements in the same file that do need to run.
 func (r *MigrationRunner) ApplyMigration(ctx context.Context, migration Migration) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -139,9 +152,17 @@ func (r *MigrationRunner) ApplyMigration(ctx context.Context, migration Migratio
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	// Execute the migration SQL
-	if _, err := tx.ExecContext(ctx, migration.UpSQL); err != nil {
-		return fmt.Errorf("failed to execute migration %s: %w", migration.Version, err)
+	for _, stmt := range splitStatements(migration.UpSQL) {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			if db.SQLite.IsDuplicateColumnErr(err) {
+				r.logger.WithFields(logrus.Fields{
+					"version":   migration.Version,
+					"statement": stmt,
+				}).Warn("Column already exists, skipping statement (schema was already current from bootstrap)")
+				continue
+			}
+			return fmt.Errorf("failed to execute migration %s: %w", migration.Version, err)
+		}
 	}
 
 	// Record the migration as applied
@@ -161,6 +182,78 @@ func (r *MigrationRunner) ApplyMigration(ctx context.Context, migration Migratio
 	}).Info("Migration applied successfully")
 
 	return nil
+}
+
+// splitStatements splits a migration file's SQL into individual statements
+// on ";" boundaries, dropping empty/comment-only fragments. It is not a
+// general-purpose SQL parser, but it does track "--" line comments and
+// single-quoted string literals so a ";" inside either of those (e.g. the
+// comment prose in 20260308000002_add_access_policies.sql) does not split a
+// statement in two.
+func splitStatements(sql string) []string {
+	var statements []string
+	var current strings.Builder
+	inLineComment := false
+	inString := false
+
+	runes := []rune(sql)
+	for i := 0; i < len(runes); i++ {
+		c := runes[i]
+
+		if inLineComment {
+			current.WriteRune(c)
+			if c == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+
+		if inString {
+			current.WriteRune(c)
+			if c == '\'' {
+				inString = false
+			}
+			continue
+		}
+
+		switch {
+		case c == '-' && i+1 < len(runes) && runes[i+1] == '-':
+			inLineComment = true
+			current.WriteRune(c)
+		case c == '\'':
+			inString = true
+			current.WriteRune(c)
+		case c == ';':
+			statements = append(statements, current.String())
+			current.Reset()
+		default:
+			current.WriteRune(c)
+		}
+	}
+	if strings.TrimSpace(current.String()) != "" {
+		statements = append(statements, current.String())
+	}
+
+	result := make([]string, 0, len(statements))
+	for _, stmt := range statements {
+		trimmed := strings.TrimSpace(stmt)
+		if trimmed == "" {
+			continue
+		}
+		isCommentOnly := true
+		for _, line := range strings.Split(trimmed, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "--") {
+				isCommentOnly = false
+				break
+			}
+		}
+		if isCommentOnly {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
 }
 
 // MigrateUp applies all pending migrations.
