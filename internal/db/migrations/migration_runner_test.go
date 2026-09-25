@@ -10,6 +10,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"rocketvault/internal/db"
+	"rocketvault/internal/logging"
 )
 
 func TestParseVersionNumber_NumericNotLexicographic(t *testing.T) {
@@ -94,6 +97,33 @@ func allRealVersions(t *testing.T, runner *MigrationRunner) []string {
 		versions[i] = m.Version
 	}
 	return versions
+}
+
+// TestMigrateUp_NormallyBootstrappedDatabase is the headline B47 regression
+// test: reproduces the exact repro from .claude/known-bugs.md § B47 by
+// seeding an in-memory database through the same SetupSchema path a normal
+// `serve` boot uses (which never populates schema_migrations), then running
+// MigrateUp against it. Before the fix this failed on the first ALTER TABLE
+// ... ADD COLUMN that collided with a column createOptimizedSchema's CREATE
+// TABLE already declares (e.g. secrets.deleted_at).
+func TestMigrateUp_NormallyBootstrappedDatabase(t *testing.T) {
+	t.Parallel()
+	conn, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() }) //nolint:errcheck,gosec
+
+	repo := db.NewRepository(logging.WrapLogrus(silentLogger()))
+	require.NoError(t, repo.SetupSchema(conn, db.SQLite))
+
+	runner := NewMigrationRunner(conn, silentLogger())
+	err = runner.MigrateUp(context.Background())
+	require.NoError(t, err, "migrate must succeed against a normally-bootstrapped database")
+
+	applied, err := runner.GetAppliedMigrations(context.Background())
+	require.NoError(t, err)
+	for _, version := range allRealVersions(t, runner) {
+		assert.True(t, applied[version], "migration %s must be recorded as applied", version)
+	}
 }
 
 // TestMigrateToVersion_RefusesDownwardTarget is the headline B39 test: with

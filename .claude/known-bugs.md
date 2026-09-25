@@ -2584,7 +2584,7 @@ cannot pass if either half of the fix is missing.
 
 ### B47 — `rocketvault migrate` fails on any freshly-initialized database with a duplicate-column error
 
-**Status**: Open, found 2026-08-21
+**Status**: Fixed 2026-09-25
 **Severity**: Medium — the explicit `rocketvault migrate` CLI command is
 unusable against a normally-bootstrapped database; the app itself still
 starts and serves traffic fine, since its own boot-time schema setup never
@@ -2592,7 +2592,9 @@ hits this path
 **Files**: `internal/db/db.go` (`createOptimizedSchema`, l.330 — the `secrets`
 table's `CREATE TABLE IF NOT EXISTS` at l.369-385 already declares `deleted_at
 TIMESTAMP NULL` at l.377), `internal/db/migrations/20241025000001_add_soft_delete.sql`
-(l.5 — `ALTER TABLE secrets ADD COLUMN deleted_at TIMESTAMP DEFAULT NULL;`)
+(l.5 — `ALTER TABLE secrets ADD COLUMN deleted_at TIMESTAMP DEFAULT NULL;`),
+`internal/db/migrations/migration_runner.go` (`ApplyMigration`, fixed here),
+`internal/db/migrations/migration_runner_test.go` (new regression test)
 
 **Symptom**: on a database that was bootstrapped the normal way (`serve`'s
 startup path, which calls `InitializeDB` → `SetupSchema` →
@@ -2631,10 +2633,42 @@ internal/db/db.go") applies fine, and then `20241025000001` fails outright on
 the column collision. `rocketvault migrate` is effectively unusable on any
 database this project's own normal boot path created.
 
-**Not fixed here**: this is unrelated to B39 (a schema-initialization
-mechanism conflict, not a version-comparison bug) and reproduces on any fresh
-database, not just ones affected by B39. Filed for a future fix wave — no
-production code was changed to investigate or confirm it.
+**Not the same as**: B39 (a schema-initialization mechanism conflict, not a
+version-comparison bug), and reproduces on any fresh database, not just ones
+affected by B39.
+
+**Broader than originally filed**: the same collision isn't unique to
+`secrets.deleted_at`. `createOptimizedSchema` also pre-declares `keys` and
+`certificates`' `deleted_at`/`purge_protection` (both added again by the same
+`20241025000001` migration) and their `scheduled_purge_at`
+(re-added by `20260308000001_add_soft_delete_keys_certs.sql`), plus most other
+`ALTER TABLE ... ADD COLUMN` migrations in `internal/db/migrations/` target a
+column `createOptimizedSchema`'s `CREATE TABLE` already declares for a fresh
+install (e.g. `secrets.expires_at`/`not_before`/`enabled`,
+`vaults.tags`/`updated_at`/`updated_by`, `secrets/keys/certificates.vault_id`,
+`access_policies.vault_id`/`assignment_id`). Any of these would have hit the
+same fatal error on the first pending migration after `deleted_at`, so a
+migration-specific guard (e.g. only on `20241025000001`) would not have been
+a real fix — the fix had to be in `ApplyMigration` itself.
+
+**What was fixed**: `MigrationRunner.ApplyMigration`
+(`internal/db/migrations/migration_runner.go`) now splits each migration
+file's SQL into individual statements (a new `splitStatements` helper that
+tracks `--` line comments and `'...'` string literals so an embedded `;`
+doesn't split a statement in two — one migration's own comment prose
+contains a semicolon) and executes them one at a time inside the transaction
+instead of one `Exec` call for the whole file. A statement that fails with
+`db.SQLite.IsDuplicateColumnErr` (the same dialect-agnostic check
+`migrateSchema` already used to stay idempotent, reused here rather than
+duplicated) is logged and skipped instead of aborting the migration; any
+other error still fails it. `schema_migrations` still gets a row for the
+migration either way, so a real upgrade of a pre-existing database (where the
+columns are genuinely missing) is unaffected — every `ALTER TABLE` actually
+runs there, exactly as before. Regression test:
+`TestMigrateUp_NormallyBootstrappedDatabase` in
+`internal/db/migrations/migration_runner_test.go`, which reproduces the
+exact repro above (`SetupSchema` then `MigrateUp`) and asserts every real
+migration ends up recorded as applied.
 
 ---
 
