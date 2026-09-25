@@ -3,6 +3,14 @@
 This file tracks open bugs and intentionally deferred items with root-cause analysis
 and fix recipes for each entry.
 
+**Convention**: every new entry here also gets a matching GitHub issue (title
+`B<N>: <summary>`, `bug` label), with the issue body carrying the same
+Severity/Files/Symptom/Root cause detail as the entry itself (see any issue
+from B52 onward, e.g. #17, for the format) plus a `Full detail:
+.claude/known-bugs.md § B<N>` pointer. When an entry's status moves to
+Fixed, close its issue (a PR's `Fixes #<N>` footer does this automatically
+on merge).
+
 ---
 
 ## Open Bugs
