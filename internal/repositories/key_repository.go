@@ -38,9 +38,12 @@ type KeyRepositoryInterface interface {
 	RecoverKey(ctx context.Context, id uuid.UUID) error
 	PurgeKey(ctx context.Context, id uuid.UUID) error
 	SetPurgeProtection(ctx context.Context, id uuid.UUID, enabled bool) error
-	// ReadDeleted retrieves a key by ID regardless of soft-deletion state.
-	// Used to return deletion metadata after a soft-delete operation.
-	ReadDeleted(ctx context.Context, id uuid.UUID) (*model.Key, error)
+	// ReadDeletedScoped retrieves a key by ID regardless of soft-deletion
+	// state, authorized by scope. Used to return deletion metadata after a
+	// soft-delete operation; the scope predicate is what makes this safe to
+	// call from more than the one already-authorized call site it was
+	// originally written for (see known-bugs B64).
+	ReadDeletedScoped(ctx context.Context, id uuid.UUID, scope model.Scope) (*model.Key, error)
 	// CreateVersion persists a versioned snapshot of a key's raw material.
 	// Performs no authorization; see ReadVersionValue for the contract.
 	CreateVersion(ctx context.Context, keyID uuid.UUID, version int, value string) error
@@ -397,50 +400,55 @@ func (r *KeyRepository) insertKeyAndTags(ctx context.Context, ex db.DBTX, key *m
 	return nil
 }
 
-// ReadDeleted retrieves a key by ID regardless of whether it has been soft-deleted.
-// This is used after SoftDelete to return deletion metadata to callers.
-// It follows the same scan pattern as Read but omits the "deleted_at IS NULL" filter.
+// ReadDeletedScoped retrieves a key by ID regardless of whether it has been
+// soft-deleted, authorized by scope. This is used after SoftDelete to return
+// deletion metadata to callers. It follows the same scan pattern as Read but
+// omits the "deleted_at IS NULL" filter.
 //
 // Parameters:
 //   - ctx: The context for the database operation.
 //   - id: The key's unique identifier.
+//   - scope: The authorization predicate. A row outside the scope is
+//     indistinguishable from a row that does not exist.
 //
 // Returns:
 //
 //	The key entity (including deleted_at/scheduled_purge_at) or an error if not found.
-func (r *KeyRepository) ReadDeleted(ctx context.Context, id uuid.UUID) (*model.Key, error) {
-	var key model.Key
-	var idStr, userIDStr, vaultIDStr string
+func (r *KeyRepository) ReadDeletedScoped(ctx context.Context, id uuid.UUID, scope model.Scope) (*model.Key, error) {
+	query := "SELECT id, user_id, vault_id, name, value, type, revoked, created_at, enabled, expires_at, not_before, bits, curve, updated_at, deleted_at, scheduled_purge_at FROM keys WHERE id = ?"
+	key, err := ScopedGet(ctx, r.db, query, []any{id.String()}, scope, func(row *sql.Row) (model.Key, error) {
+		var key model.Key
+		var idStr, userIDStr, vaultIDStr string
 
-	err := r.db.QueryRowContext(
-		ctx,
-		"SELECT id, user_id, vault_id, name, value, type, revoked, created_at, enabled, expires_at, not_before, bits, curve, updated_at, deleted_at, scheduled_purge_at FROM keys WHERE id = ?",
-		id.String(),
-	).Scan(&idStr, &userIDStr, &vaultIDStr, &key.Name, &key.Value, &key.Type, &key.Revoked, &key.CreatedAt,
-		&key.Enabled, &key.ExpiresAt, &key.NotBefore, &key.Bits, &key.Curve, &key.UpdatedAt,
-		&key.DeletedAt, &key.ScheduledPurgeAt)
+		if err := row.Scan(&idStr, &userIDStr, &vaultIDStr, &key.Name, &key.Value, &key.Type, &key.Revoked, &key.CreatedAt,
+			&key.Enabled, &key.ExpiresAt, &key.NotBefore, &key.Bits, &key.Curve, &key.UpdatedAt,
+			&key.DeletedAt, &key.ScheduledPurgeAt); err != nil {
+			return key, err
+		}
 
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("key not found")
-	}
-	if err != nil {
+		var err error
+		if key.ID, err = uuid.Parse(idStr); err != nil {
+			return key, fmt.Errorf("failed to parse key ID: %w", err)
+		}
+		if key.UserID, err = uuid.Parse(userIDStr); err != nil {
+			return key, fmt.Errorf("failed to parse user ID: %w", err)
+		}
+		if key.VaultID, err = uuid.Parse(vaultIDStr); err != nil {
+			return key, fmt.Errorf("failed to parse vault ID: %w", err)
+		}
+		return key, nil
+	})
+	switch {
+	case errors.Is(err, ErrInvalidScope):
+		return nil, err
+	case errors.Is(err, sql.ErrNoRows):
+		if scope.Kind() == model.ScopeAdmin {
+			return nil, fmt.Errorf("key not found")
+		}
+		return nil, fmt.Errorf("key not found or access denied")
+	case err != nil:
 		r.log.LogAuditError(uuid.Nil.String(), "read_deleted_key", "failed", "Failed to query key", err)
 		return nil, fmt.Errorf("failed to query key: %w", err)
-	}
-
-	key.ID, err = uuid.Parse(idStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse key ID: %w", err)
-	}
-
-	key.UserID, err = uuid.Parse(userIDStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse user ID: %w", err)
-	}
-
-	key.VaultID, err = uuid.Parse(vaultIDStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse vault ID: %w", err)
 	}
 
 	// Tags are not strictly needed for deletion metadata but kept for consistency.

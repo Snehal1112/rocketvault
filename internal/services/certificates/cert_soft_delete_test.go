@@ -163,7 +163,7 @@ func (m *mockKeyRepo) RecoverKey(ctx context.Context, id uuid.UUID) error {
 	return m.Called(ctx, id).Error(0)
 }
 
-func (m *mockKeyRepo) ReadDeleted(ctx context.Context, id uuid.UUID) (*model.Key, error) {
+func (m *mockKeyRepo) ReadDeletedScoped(ctx context.Context, id uuid.UUID, scope model.Scope) (*model.Key, error) {
 	return nil, nil
 }
 

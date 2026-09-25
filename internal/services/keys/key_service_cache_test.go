@@ -80,7 +80,7 @@ func TestKeyService_DeleteKey_InvalidatesCache(t *testing.T) {
 	repo := &mockKeyRepository{}
 	repo.On("Read", mock.Anything, keyID, model.NewOwnerScope(uuid.Nil, userID)).Return(existingKey, nil)
 	repo.On("SoftDelete", mock.Anything, keyID).Return(nil)
-	repo.On("ReadDeleted", mock.Anything, keyID).Return(deletedKey, nil)
+	repo.On("ReadDeletedScoped", mock.Anything, keyID, model.NewOwnerScope(uuid.Nil, userID)).Return(deletedKey, nil)
 
 	cache := &mockCacheForKeyService{}
 	cache.On("Invalidate", keyID).Return()

@@ -328,7 +328,7 @@ func (r *stubKeyRepo) SetPurgeProtection(_ context.Context, id uuid.UUID, enable
 	return nil
 }
 
-func (r *stubKeyRepo) ReadDeleted(_ context.Context, _ uuid.UUID) (*model.Key, error) {
+func (r *stubKeyRepo) ReadDeletedScoped(_ context.Context, _ uuid.UUID, _ model.Scope) (*model.Key, error) {
 	return nil, nil
 }
 

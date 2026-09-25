@@ -53,8 +53,8 @@ func (m *mockKeyRepository) RecoverKey(ctx context.Context, id uuid.UUID) error 
 	return m.Called(ctx, id).Error(0)
 }
 
-func (m *mockKeyRepository) ReadDeleted(ctx context.Context, id uuid.UUID) (*model.Key, error) {
-	args := m.Called(ctx, id)
+func (m *mockKeyRepository) ReadDeletedScoped(ctx context.Context, id uuid.UUID, scope model.Scope) (*model.Key, error) {
+	args := m.Called(ctx, id, scope)
 	if v := args.Get(0); v != nil {
 		return v.(*model.Key), args.Error(1)
 	}
@@ -180,8 +180,8 @@ func TestDeleteKeySoftDeletes(t *testing.T) {
 	// SoftDelete must be called once.
 	repo.On("SoftDelete", mock.Anything, keyID).Return(nil)
 
-	// ReadDeleted is called after SoftDelete to fetch metadata.
-	repo.On("ReadDeleted", mock.Anything, keyID).Return(deletedKey, nil)
+	// ReadDeletedScoped is called after SoftDelete to fetch metadata.
+	repo.On("ReadDeletedScoped", mock.Anything, keyID, model.NewOwnerScope(uuid.Nil, userID)).Return(deletedKey, nil)
 
 	// Delete must NOT be called — we register no expectation, and AssertNotCalled
 	// below will confirm this.
@@ -197,7 +197,7 @@ func TestDeleteKeySoftDeletes(t *testing.T) {
 	assert.NotNil(t, result)
 
 	repo.AssertCalled(t, "SoftDelete", mock.Anything, keyID)
-	repo.AssertCalled(t, "ReadDeleted", mock.Anything, keyID)
+	repo.AssertCalled(t, "ReadDeletedScoped", mock.Anything, keyID, model.NewOwnerScope(uuid.Nil, userID))
 	repo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
 	repo.AssertExpectations(t)
 }
@@ -230,7 +230,7 @@ func TestDeleteKey_ReturnsDeletedRecord(t *testing.T) {
 	repo := &mockKeyRepository{}
 	repo.On("Read", mock.Anything, keyID, model.NewOwnerScope(uuid.Nil, userID)).Return(existingKey, nil)
 	repo.On("SoftDelete", mock.Anything, keyID).Return(nil)
-	repo.On("ReadDeleted", mock.Anything, keyID).Return(deletedKey, nil)
+	repo.On("ReadDeletedScoped", mock.Anything, keyID, model.NewOwnerScope(uuid.Nil, userID)).Return(deletedKey, nil)
 
 	logger := &logging.Logger{Logger: logrus.New()}
 	svc := NewKeyService(KeyServiceConfig{

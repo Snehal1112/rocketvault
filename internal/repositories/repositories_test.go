@@ -366,7 +366,7 @@ func TestKeyRepository_RecoverKey_NotDeleted(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found in deleted state")
 }
 
-func TestKeyRepository_ReadDeleted(t *testing.T) {
+func TestKeyRepository_ReadDeletedScoped(t *testing.T) {
 	t.Parallel()
 	db := setupFullKeyDB(t)
 	log := logging.InitLogger()
@@ -377,21 +377,36 @@ func TestKeyRepository_ReadDeleted(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, k))
 	require.NoError(t, repo.SoftDelete(ctx, k.ID))
 
-	got, err := repo.ReadDeleted(ctx, k.ID)
+	got, err := repo.ReadDeletedScoped(ctx, k.ID, model.NewAdminScope(uuid.Nil))
 	require.NoError(t, err)
 	assert.Equal(t, k.ID, got.ID)
 	assert.NotNil(t, got.DeletedAt)
 }
 
-func TestKeyRepository_ReadDeleted_NotFound(t *testing.T) {
+func TestKeyRepository_ReadDeletedScoped_NotFound(t *testing.T) {
 	t.Parallel()
 	db := setupFullKeyDB(t)
 	log := logging.InitLogger()
 	repo := repositories.NewKeyRepository(rvdb.NewConn(db, rvdb.SQLite), log)
 	ctx := context.Background()
 
-	_, err := repo.ReadDeleted(ctx, uuid.New())
+	_, err := repo.ReadDeletedScoped(ctx, uuid.New(), model.NewAdminScope(uuid.Nil))
 	assert.Error(t, err)
+}
+
+func TestKeyRepository_ReadDeletedScoped_WrongVaultDenied(t *testing.T) {
+	t.Parallel()
+	db := setupFullKeyDB(t)
+	log := logging.InitLogger()
+	repo := repositories.NewKeyRepository(rvdb.NewConn(db, rvdb.SQLite), log)
+	ctx := context.Background()
+
+	k := newKey(uuid.New(), uuid.New(), "cross-vault-deleted-key")
+	require.NoError(t, repo.Create(ctx, k))
+	require.NoError(t, repo.SoftDelete(ctx, k.ID))
+
+	_, err := repo.ReadDeletedScoped(ctx, k.ID, model.NewVaultScope(uuid.New(), uuid.Nil))
+	assert.Error(t, err, "a key outside the scoped vault must not be readable")
 }
 
 func TestKeyRepository_SoftDeleteVaultContents(t *testing.T) {

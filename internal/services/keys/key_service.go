@@ -937,7 +937,7 @@ func (s *keyService) DeleteKey(ctx context.Context, keyID uuid.UUID, scope model
 		s.keyCache.Invalidate(keyID)
 	}
 
-	deleted, err := s.keyRepo.ReadDeleted(ctx, keyID)
+	deleted, err := s.keyRepo.ReadDeletedScoped(ctx, keyID, scope)
 	if err != nil {
 		s.logger.LogAuditInfo(actor, "delete_key", "success", "Key deleted (metadata unavailable)")
 		return key, nil

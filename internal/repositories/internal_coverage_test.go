@@ -858,15 +858,15 @@ func TestKeyRepo_ReadInVault_DBError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestKeyRepo_ReadDeleted_DBError drops the table to force a query error.
-func TestKeyRepo_ReadDeleted_DBError(t *testing.T) {
+// TestKeyRepo_ReadDeletedScoped_DBError drops the table to force a query error.
+func TestKeyRepo_ReadDeletedScoped_DBError(t *testing.T) {
 	db := openMemDB(t)
 	makeKeysTable(t, db)
 	_, err := db.Exec("DROP TABLE keys")
 	require.NoError(t, err)
 
 	repo := &KeyRepository{db: rvdb.NewConn(db, rvdb.SQLite), log: newInternalLogger()}
-	_, err = repo.ReadDeleted(context.Background(), uuid.New())
+	_, err = repo.ReadDeletedScoped(context.Background(), uuid.New(), model.NewAdminScope(uuid.Nil))
 	assert.Error(t, err)
 }
 

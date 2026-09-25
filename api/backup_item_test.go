@@ -678,7 +678,7 @@ func (m *mockKeyRepo) SoftDelete(_ context.Context, _ uuid.UUID) error          
 func (m *mockKeyRepo) RecoverKey(_ context.Context, _ uuid.UUID) error                 { return nil }
 func (m *mockKeyRepo) PurgeKey(_ context.Context, _ uuid.UUID) error                   { return nil }
 func (m *mockKeyRepo) SetPurgeProtection(_ context.Context, _ uuid.UUID, _ bool) error { return nil }
-func (m *mockKeyRepo) ReadDeleted(_ context.Context, _ uuid.UUID) (*model.Key, error) {
+func (m *mockKeyRepo) ReadDeletedScoped(_ context.Context, _ uuid.UUID, _ model.Scope) (*model.Key, error) {
 	return nil, nil
 }
 func (m *mockKeyRepo) CreateVersion(_ context.Context, _ uuid.UUID, _ int, _ string) error {

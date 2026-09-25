@@ -101,7 +101,7 @@ func (m *mockKeyRepo) SetPurgeProtection(_ context.Context, _ uuid.UUID, _ bool)
 	return fmt.Errorf("not implemented")
 }
 
-func (m *mockKeyRepo) ReadDeleted(_ context.Context, _ uuid.UUID) (*model.Key, error) {
+func (m *mockKeyRepo) ReadDeletedScoped(_ context.Context, _ uuid.UUID, _ model.Scope) (*model.Key, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 

@@ -571,29 +571,29 @@ func (_c *MockKeyRepositoryInterface_Read_Call) RunAndReturn(run func(context.Co
 	return _c
 }
 
-// ReadDeleted provides a mock function with given fields: ctx, id
-func (_m *MockKeyRepositoryInterface) ReadDeleted(ctx context.Context, id uuid.UUID) (*model.Key, error) {
-	ret := _m.Called(ctx, id)
+// ReadDeletedScoped provides a mock function with given fields: ctx, id, scope
+func (_m *MockKeyRepositoryInterface) ReadDeletedScoped(ctx context.Context, id uuid.UUID, scope model.Scope) (*model.Key, error) {
+	ret := _m.Called(ctx, id, scope)
 
 	if len(ret) == 0 {
-		panic("no return value specified for ReadDeleted")
+		panic("no return value specified for ReadDeletedScoped")
 	}
 
 	var r0 *model.Key
 	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) (*model.Key, error)); ok {
-		return rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, model.Scope) (*model.Key, error)); ok {
+		return rf(ctx, id, scope)
 	}
-	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) *model.Key); ok {
-		r0 = rf(ctx, id)
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, model.Scope) *model.Key); ok {
+		r0 = rf(ctx, id, scope)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*model.Key)
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
-		r1 = rf(ctx, id)
+	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID, model.Scope) error); ok {
+		r1 = rf(ctx, id, scope)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -601,31 +601,32 @@ func (_m *MockKeyRepositoryInterface) ReadDeleted(ctx context.Context, id uuid.U
 	return r0, r1
 }
 
-// MockKeyRepositoryInterface_ReadDeleted_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReadDeleted'
-type MockKeyRepositoryInterface_ReadDeleted_Call struct {
+// MockKeyRepositoryInterface_ReadDeletedScoped_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ReadDeletedScoped'
+type MockKeyRepositoryInterface_ReadDeletedScoped_Call struct {
 	*mock.Call
 }
 
-// ReadDeleted is a helper method to define mock.On call
+// ReadDeletedScoped is a helper method to define mock.On call
 //   - ctx context.Context
 //   - id uuid.UUID
-func (_e *MockKeyRepositoryInterface_Expecter) ReadDeleted(ctx interface{}, id interface{}) *MockKeyRepositoryInterface_ReadDeleted_Call {
-	return &MockKeyRepositoryInterface_ReadDeleted_Call{Call: _e.mock.On("ReadDeleted", ctx, id)}
+//   - scope model.Scope
+func (_e *MockKeyRepositoryInterface_Expecter) ReadDeletedScoped(ctx interface{}, id interface{}, scope interface{}) *MockKeyRepositoryInterface_ReadDeletedScoped_Call {
+	return &MockKeyRepositoryInterface_ReadDeletedScoped_Call{Call: _e.mock.On("ReadDeletedScoped", ctx, id, scope)}
 }
 
-func (_c *MockKeyRepositoryInterface_ReadDeleted_Call) Run(run func(ctx context.Context, id uuid.UUID)) *MockKeyRepositoryInterface_ReadDeleted_Call {
+func (_c *MockKeyRepositoryInterface_ReadDeletedScoped_Call) Run(run func(ctx context.Context, id uuid.UUID, scope model.Scope)) *MockKeyRepositoryInterface_ReadDeletedScoped_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(uuid.UUID))
+		run(args[0].(context.Context), args[1].(uuid.UUID), args[2].(model.Scope))
 	})
 	return _c
 }
 
-func (_c *MockKeyRepositoryInterface_ReadDeleted_Call) Return(_a0 *model.Key, _a1 error) *MockKeyRepositoryInterface_ReadDeleted_Call {
+func (_c *MockKeyRepositoryInterface_ReadDeletedScoped_Call) Return(_a0 *model.Key, _a1 error) *MockKeyRepositoryInterface_ReadDeletedScoped_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockKeyRepositoryInterface_ReadDeleted_Call) RunAndReturn(run func(context.Context, uuid.UUID) (*model.Key, error)) *MockKeyRepositoryInterface_ReadDeleted_Call {
+func (_c *MockKeyRepositoryInterface_ReadDeletedScoped_Call) RunAndReturn(run func(context.Context, uuid.UUID, model.Scope) (*model.Key, error)) *MockKeyRepositoryInterface_ReadDeletedScoped_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -127,7 +127,7 @@ func TestDeleteKey_ReadDeletedFails_ReturnsSnapshot(t *testing.T) {
 		&model.Key{ID: keyID, UserID: ownerID, Enabled: true}, nil,
 	)
 	repo.On("SoftDelete", mock.Anything, keyID).Return(nil)
-	repo.On("ReadDeleted", mock.Anything, keyID).Return(nil, errors.New("metadata unavailable"))
+	repo.On("ReadDeletedScoped", mock.Anything, keyID, model.NewOwnerScope(uuid.Nil, ownerID)).Return(nil, errors.New("metadata unavailable"))
 
 	svc := &keyService{keyRepo: repo, logger: testLogger()}
 	got, err := svc.DeleteKey(context.Background(), keyID, model.NewOwnerScope(uuid.Nil, ownerID))
@@ -144,7 +144,7 @@ func TestDeleteKey_CacheInvalidated(t *testing.T) {
 		&model.Key{ID: keyID, UserID: ownerID, Enabled: true}, nil,
 	)
 	repo.On("SoftDelete", mock.Anything, keyID).Return(nil)
-	repo.On("ReadDeleted", mock.Anything, keyID).Return(
+	repo.On("ReadDeletedScoped", mock.Anything, keyID, model.NewOwnerScope(uuid.Nil, ownerID)).Return(
 		&model.Key{ID: keyID, DeletedAt: &now}, nil,
 	)
 

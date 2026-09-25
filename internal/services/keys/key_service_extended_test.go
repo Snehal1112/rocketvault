@@ -967,7 +967,7 @@ func (m *mockKeyRepoForExtendedCrypto) PurgeKey(ctx context.Context, id uuid.UUI
 func (m *mockKeyRepoForExtendedCrypto) SetPurgeProtection(ctx context.Context, id uuid.UUID, enabled bool) error {
 	return nil
 }
-func (m *mockKeyRepoForExtendedCrypto) ReadDeleted(ctx context.Context, id uuid.UUID) (*model.Key, error) {
+func (m *mockKeyRepoForExtendedCrypto) ReadDeletedScoped(ctx context.Context, id uuid.UUID, scope model.Scope) (*model.Key, error) {
 	return nil, nil
 }
 func (m *mockKeyRepoForExtendedCrypto) CreateVersion(ctx context.Context, keyID uuid.UUID, version int, value string) error {

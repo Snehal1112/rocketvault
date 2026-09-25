@@ -116,7 +116,7 @@ func TestDeleteKeySoftDeletesInScope(t *testing.T) {
 	repo.On("Read", ctx, keyID, scope).
 		Return(&model.Key{ID: keyID, VaultID: vaultID, Enabled: true}, nil).Once()
 	repo.On("SoftDelete", ctx, keyID).Return(nil).Once()
-	repo.On("ReadDeleted", ctx, keyID).Return(&model.Key{ID: keyID}, nil).Once()
+	repo.On("ReadDeletedScoped", ctx, keyID, scope).Return(&model.Key{ID: keyID}, nil).Once()
 
 	deleted, err := svc.DeleteKey(ctx, keyID, scope)
 	require.NoError(t, err)
