@@ -44,7 +44,7 @@ type Target struct {
 // Targets returns every table column encrypted with the master key. Derived by
 // mapping every caller of common.EncryptSecret to the column it writes:
 // secrets and their version history, software (non-HSM) key PEMs and their
-// version history, and certificate private-key PEMs. The JWT signing key used
+// version history, and certificate private-key PEMs and their version history. The JWT signing key used
 // by internal/signing.SelfPKIProvider is an ordinary "keys" row and is covered
 // by that entry.
 //
@@ -58,6 +58,7 @@ func Targets() []Target {
 		{Table: "keys", Column: "value", KeyColumns: []string{"id"}},
 		{Table: "key_versions", Column: "value", KeyColumns: []string{"key_id", "version"}},
 		{Table: "certificates", Column: "private_key", KeyColumns: []string{"id"}},
+		{Table: "certificate_versions", Column: "private_key", KeyColumns: []string{"certificate_id", "version"}},
 	}
 }
 

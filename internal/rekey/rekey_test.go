@@ -38,6 +38,12 @@ func newTestDB(t *testing.T) *rvdb.Conn {
 			PRIMARY KEY (key_id, version)
 		);
 		CREATE TABLE certificates (id TEXT PRIMARY KEY, private_key TEXT NOT NULL);
+		CREATE TABLE certificate_versions (
+			certificate_id TEXT NOT NULL,
+			version        INTEGER NOT NULL,
+			private_key    TEXT NOT NULL,
+			PRIMARY KEY (certificate_id, version)
+		);
 	`)
 	require.NoError(t, err)
 
@@ -79,6 +85,7 @@ func seedAllTargets(t *testing.T, conn *rvdb.Conn, key []byte) {
 	exec(t, conn, "INSERT INTO keys (id, value) VALUES (?, ?)", "k1", seal(t, "key-pem", key))
 	exec(t, conn, "INSERT INTO key_versions (key_id, version, value) VALUES (?, ?, ?)", "k1", 1, seal(t, "key-pem-v1", key))
 	exec(t, conn, "INSERT INTO certificates (id, private_key) VALUES (?, ?)", "c1", seal(t, "cert-pem", key))
+	exec(t, conn, "INSERT INTO certificate_versions (certificate_id, version, private_key) VALUES (?, ?, ?)", "c1", 1, seal(t, "cert-pem-v1", key))
 }
 
 func TestRun_ReEncryptsEveryTarget(t *testing.T) {
@@ -88,15 +95,16 @@ func TestRun_ReEncryptsEveryTarget(t *testing.T) {
 
 	report, err := New(conn, testLogger()).Run(context.Background(), Options{OldKey: oldKey, NewKey: newKey})
 	require.NoError(t, err)
-	assert.Equal(t, 5, report.TotalReEncrypted())
-	assert.Len(t, report.Targets, 5)
+	assert.Equal(t, 6, report.TotalReEncrypted())
+	assert.Len(t, report.Targets, 6)
 
 	for query, want := range map[string]string{
-		"SELECT value FROM secrets WHERE id = 's1'":                          "secret-one",
-		"SELECT value FROM secret_versions WHERE id = 'sv1'":                 "secret-one-v1",
-		"SELECT value FROM keys WHERE id = 'k1'":                             "key-pem",
-		"SELECT value FROM key_versions WHERE key_id = 'k1' AND version = 1": "key-pem-v1",
-		"SELECT private_key FROM certificates WHERE id = 'c1'":               "cert-pem",
+		"SELECT value FROM secrets WHERE id = 's1'":                                                "secret-one",
+		"SELECT value FROM secret_versions WHERE id = 'sv1'":                                       "secret-one-v1",
+		"SELECT value FROM keys WHERE id = 'k1'":                                                   "key-pem",
+		"SELECT value FROM key_versions WHERE key_id = 'k1' AND version = 1":                       "key-pem-v1",
+		"SELECT private_key FROM certificates WHERE id = 'c1'":                                     "cert-pem",
+		"SELECT private_key FROM certificate_versions WHERE certificate_id = 'c1' AND version = 1": "cert-pem-v1",
 	} {
 		stored := readValue(t, conn, query)
 
@@ -120,7 +128,7 @@ func TestRun_DryRunReportsWithoutWriting(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, report.DryRun)
-	assert.Equal(t, 5, report.TotalReEncrypted())
+	assert.Equal(t, 6, report.TotalReEncrypted())
 
 	assert.Equal(t, before, readValue(t, conn, "SELECT value FROM secrets WHERE id = 's1'"),
 		"dry run must not modify any row")

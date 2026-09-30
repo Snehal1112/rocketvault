@@ -98,11 +98,12 @@ func TestTargets_CoverEveryMasterKeyColumn(t *testing.T) {
 	}
 
 	assert.Equal(t, map[string]string{
-		"secrets":         "value",
-		"secret_versions": "value",
-		"keys":            "value",
-		"key_versions":    "value",
-		"certificates":    "private_key",
+		"secrets":              "value",
+		"secret_versions":      "value",
+		"keys":                 "value",
+		"key_versions":         "value",
+		"certificates":         "private_key",
+		"certificate_versions": "private_key",
 	}, got)
 }
 
