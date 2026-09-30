@@ -59,15 +59,22 @@ type txCapableCertRepo interface {
 	SetPurgeProtectionTx(ctx context.Context, ex db.DBTX, id uuid.UUID, enabled bool) error
 }
 
+// txCapableCertVersionRepo is CertificateVersionRepositoryInterface's
+// Tx-scoped counterpart. See txCapableSecretRepo.
+type txCapableCertVersionRepo interface {
+	CreateVersionTx(ctx context.Context, ex db.DBTX, rec *model.CertificateVersionRecord) error
+}
+
 // ItemBackupService provides per-item backup and restore for secrets, keys,
 // and certificates. Each backup is a base64url-encoded JSON envelope that is
 // opaque to the caller.
 type ItemBackupService struct {
-	secretRepo  repositories.SecretRepositoryInterface
-	keyRepo     repositories.KeyRepositoryInterface
-	certRepo    repositories.CertificateRepositoryInterface
-	versionRepo repositories.SecretVersionRepositoryInterface
-	txBeginner  TxBeginner
+	secretRepo      repositories.SecretRepositoryInterface
+	keyRepo         repositories.KeyRepositoryInterface
+	certRepo        repositories.CertificateRepositoryInterface
+	versionRepo     repositories.SecretVersionRepositoryInterface
+	certVersionRepo repositories.CertificateVersionRepositoryInterface
+	txBeginner      TxBeginner
 }
 
 // NewItemBackupService creates an ItemBackupService wired to the given repos.
@@ -96,6 +103,14 @@ func NewItemBackupService(
 // non-transactional sequence.
 func (s *ItemBackupService) SetTxBeginner(tb TxBeginner) { s.txBeginner = tb }
 
+// SetCertificateVersionRepository attaches the certificate version store.
+// Without it, BackupCertificate refuses a certificate that has history and
+// RestoreCertificate refuses a blob that carries history, rather than
+// silently dropping either.
+func (s *ItemBackupService) SetCertificateVersionRepository(repo repositories.CertificateVersionRepositoryInterface) {
+	s.certVersionRepo = repo
+}
+
 // withTx runs fn inside a transaction begun via txBeginner, committing on
 // success and rolling back on error. Mirrors vault_service.go's withTx.
 func (s *ItemBackupService) withTx(ctx context.Context, fn func(tx *db.Tx) error) error {
@@ -112,27 +127,29 @@ func (s *ItemBackupService) withTx(ctx context.Context, fn func(tx *db.Tx) error
 	return tx.Commit()
 }
 
-// blobVersions carries whatever version history a resource type has. Both
-// fields are optional: a key blob populates Key, a secret blob populates
-// Secret, and a certificate blob populates neither (certificates have no
-// version table).
+// blobVersions carries whatever version history a resource type has. Every
+// field is optional: a key blob populates Key, a secret blob Secret, and a
+// certificate blob Certificate.
 type blobVersions struct {
-	Key    []model.KeyVersionRecord
-	Secret []model.SecretVersion
+	Key         []model.KeyVersionRecord
+	Secret      []model.SecretVersion
+	Certificate []model.CertificateVersionRecord
 }
 
 // backupEnvelope is the internal structure stored inside the opaque blob.
 //
-// Both version fields are omitempty and additive: a blob written before a
+// Every version field is omitempty and additive: a blob written before a
 // given field existed simply decodes it as nil. That is what lets pre-2026-08
-// key blobs and pre-2026-08-20 secret blobs still restore. Never rename or
-// retype an existing field here — it is a wire format.
+// key blobs, pre-2026-08-20 secret blobs and pre-2026-10-01 certificate blobs
+// still restore. Never rename or retype an existing field here, it is a wire
+// format.
 type backupEnvelope struct {
-	ResourceType   string                   `json:"resource_type"`
-	ResourceID     string                   `json:"resource_id"`
-	Data           json.RawMessage          `json:"data"`
-	Versions       []model.KeyVersionRecord `json:"versions,omitempty"`        // keys only
-	SecretVersions []model.SecretVersion    `json:"secret_versions,omitempty"` // secrets only
+	ResourceType        string                           `json:"resource_type"`
+	ResourceID          string                           `json:"resource_id"`
+	Data                json.RawMessage                  `json:"data"`
+	Versions            []model.KeyVersionRecord         `json:"versions,omitempty"`             // keys only
+	SecretVersions      []model.SecretVersion            `json:"secret_versions,omitempty"`      // secrets only
+	CertificateVersions []model.CertificateVersionRecord `json:"certificate_versions,omitempty"` // certificates only
 }
 
 // BackupSecret creates a base64url-encoded backup blob for the given secret.
@@ -352,7 +369,7 @@ func (s *ItemBackupService) restoreKeyWith(
 }
 
 // BackupCertificate creates a base64url-encoded backup blob for the given
-// certificate.
+// certificate, archived versions included.
 //
 // vaultID is the vault the caller's request was authorized against. See
 // BackupKey for why the scoped read replaces the previous unscoped read plus
@@ -362,53 +379,107 @@ func (s *ItemBackupService) BackupCertificate(ctx context.Context, id, userID, v
 	if err != nil {
 		return "", fmt.Errorf("backup certificate: %w", err)
 	}
-	return encodeBlob("certificate", id.String(), cert, blobVersions{})
+
+	// Version rows are fetched by certificate ID; the scoped read above is
+	// their authorization. A certificate with history and no version store
+	// fails closed: a blob without its history would restore a single
+	// version and silently discard the rest (the loss B26 closed for keys).
+	var versions []model.CertificateVersionRecord
+	switch {
+	case s.certVersionRepo != nil:
+		versions, err = s.certVersionRepo.ListVersionRecords(ctx, id)
+		if err != nil {
+			return "", fmt.Errorf("backup certificate: list versions: %w", err)
+		}
+	case cert.CurrentVersion() > 1:
+		return "", fmt.Errorf("backup certificate: %s is at version %d but no version repository is configured", id, cert.CurrentVersion())
+	}
+	return encodeBlob("certificate", id.String(), cert, blobVersions{Certificate: versions})
+}
+
+// validateCertificateVersions refuses a blob whose archived versions do not
+// sit strictly below the current one, or repeat a number. A forged or
+// corrupt blob is rejected before anything is written.
+func validateCertificateVersions(current int, versions []model.CertificateVersionRecord) error {
+	seen := make(map[int]bool, len(versions))
+	for _, v := range versions {
+		if v.Version < 1 || v.Version >= current || seen[v.Version] {
+			return fmt.Errorf("%w: certificate version %d is inconsistent with current version %d", ErrInvalidBlob, v.Version, current)
+		}
+		seen[v.Version] = true
+	}
+	return nil
 }
 
 // RestoreCertificate decodes blob and re-inserts it as newID, owned by
-// userID, into vaultID — the vault authorized by the caller's request. See
+// userID, into vaultID, the vault authorized by the caller's request. The
+// blob's archived versions are replayed under their own numbers. See
 // RestoreSecret.
 func (s *ItemBackupService) RestoreCertificate(ctx context.Context, blob string, userID, vaultID, newID uuid.UUID) error {
 	var cert model.Certificate
-	if _, err := decodeBlob(blob, "certificate", &cert); err != nil {
+	versions, err := decodeBlob(blob, "certificate", &cert)
+	if err != nil {
 		return err
+	}
+	if err := validateCertificateVersions(cert.CurrentVersion(), versions.Certificate); err != nil {
+		return err
+	}
+	if len(versions.Certificate) > 0 && s.certVersionRepo == nil {
+		return fmt.Errorf("restore certificate: blob carries %d versions but no version repository is configured", len(versions.Certificate))
 	}
 	cert.ID = newID
 	cert.UserID = userID
 	cert.VaultID = vaultID
 
 	if txCertRepo, repoOK := s.certRepo.(txCapableCertRepo); repoOK && s.txBeginner != nil {
-		return s.withTx(ctx, func(tx *db.Tx) error {
-			return s.restoreCertificateWith(ctx, &cert, newID,
-				func(ctx context.Context, c *model.Certificate) error { return txCertRepo.CreateTx(ctx, tx, c) },
-				func(ctx context.Context, id uuid.UUID, enabled bool) error {
-					return txCertRepo.SetPurgeProtectionTx(ctx, tx, id, enabled)
-				},
-			)
-		})
+		txVersionRepo, versionOK := s.certVersionRepo.(txCapableCertVersionRepo)
+		if len(versions.Certificate) == 0 || versionOK {
+			return s.withTx(ctx, func(tx *db.Tx) error {
+				return s.restoreCertificateWith(ctx, &cert, versions.Certificate, newID,
+					func(ctx context.Context, c *model.Certificate) error { return txCertRepo.CreateTx(ctx, tx, c) },
+					func(ctx context.Context, rec *model.CertificateVersionRecord) error {
+						return txVersionRepo.CreateVersionTx(ctx, tx, rec)
+					},
+					func(ctx context.Context, id uuid.UUID, enabled bool) error {
+						return txCertRepo.SetPurgeProtectionTx(ctx, tx, id, enabled)
+					},
+				)
+			})
+		}
 	}
 	// See RestoreSecret for why these are closures, not bare method values.
-	return s.restoreCertificateWith(ctx, &cert, newID,
+	return s.restoreCertificateWith(ctx, &cert, versions.Certificate, newID,
 		func(ctx context.Context, c *model.Certificate) error { return s.certRepo.Create(ctx, c) },
+		func(ctx context.Context, rec *model.CertificateVersionRecord) error {
+			return s.certVersionRepo.CreateVersion(ctx, rec)
+		},
 		func(ctx context.Context, id uuid.UUID, enabled bool) error {
 			return s.certRepo.SetPurgeProtection(ctx, id, enabled)
 		},
 	)
 }
 
-// restoreCertificateWith is RestoreCertificate's write sequence,
-// parameterized the same way restoreSecretWith is. Certificates have no
-// version history, so this is just the create-then-purge-protection pair —
-// see restoreSecretWith for why this shape exists.
+// restoreCertificateWith is RestoreCertificate's write sequence: create,
+// replay versions, re-apply purge protection, parameterized the same way
+// restoreSecretWith is. See restoreSecretWith for why this shape exists and
+// why versions are replayed before purge protection.
 func (s *ItemBackupService) restoreCertificateWith(
 	ctx context.Context,
 	cert *model.Certificate,
+	versions []model.CertificateVersionRecord,
 	newID uuid.UUID,
 	create func(context.Context, *model.Certificate) error,
+	createVersion func(context.Context, *model.CertificateVersionRecord) error,
 	setPurgeProtection func(context.Context, uuid.UUID, bool) error,
 ) error {
 	if err := create(ctx, cert); err != nil {
 		return err
+	}
+	for _, v := range versions {
+		v.CertificateID = newID
+		if err := createVersion(ctx, &v); err != nil {
+			return fmt.Errorf("restore certificate: create version %d: %w", v.Version, err)
+		}
 	}
 	// See restoreSecretWith: Create does not write purge_protection.
 	if cert.PurgeProtection {
@@ -428,11 +499,12 @@ func encodeBlob(resourceType, resourceID string, data interface{}, versions blob
 		return "", fmt.Errorf("marshal data: %w", err)
 	}
 	envelope, err := json.Marshal(backupEnvelope{
-		ResourceType:   resourceType,
-		ResourceID:     resourceID,
-		Data:           raw,
-		Versions:       versions.Key,
-		SecretVersions: versions.Secret,
+		ResourceType:        resourceType,
+		ResourceID:          resourceID,
+		Data:                raw,
+		Versions:            versions.Key,
+		SecretVersions:      versions.Secret,
+		CertificateVersions: versions.Certificate,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal envelope: %w", err)
@@ -461,5 +533,5 @@ func decodeBlob(blob, expectedType string, out interface{}) (blobVersions, error
 	if err := json.Unmarshal(envelope.Data, out); err != nil {
 		return none, err
 	}
-	return blobVersions{Key: envelope.Versions, Secret: envelope.SecretVersions}, nil
+	return blobVersions{Key: envelope.Versions, Secret: envelope.SecretVersions, Certificate: envelope.CertificateVersions}, nil
 }

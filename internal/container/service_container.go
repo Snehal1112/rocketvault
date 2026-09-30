@@ -742,6 +742,9 @@ func (c *ServiceContainer) initializeServices() error {
 	// never received. See vaultService.SetTxBeginner above for the same
 	// pattern.
 	c.itemBackupService.SetTxBeginner(c.conn)
+	// Certificate backups carry their archived versions, and restores
+	// replay them in the same transaction.
+	c.itemBackupService.SetCertificateVersionRepository(c.certificateVersionRepository)
 
 	return nil
 }
