@@ -253,7 +253,7 @@ rocketvault vaults update staging --purge-protection
 </blockquote>
 <p><strong>Now the surprise.</strong> Priya tries to use the vault she just created:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault keys list --vault prod
-# Error: forbidden: no role grants Microsoft.KeyVault/vaults/keys/read/action in this vault
+# Error: forbidden: no role grants Microsoft.KeyVault/vaults/keys/read in this vault
 
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/vaults/prod/secrets \
   -H &quot;Authorization: Bearer $ADMIN_TOKEN&quot;
@@ -449,7 +449,7 @@ rocketvault keys rotation-policy delete &lt;key-id&gt; --vault prod
 rocketvault vault-access grant ci-payments-svc --role &quot;Key Vault Crypto User&quot; \
   --principal-type service_account --vault prod
 
-rocketvault vault-access list --vault prod --output json
+rocketvault vault-access list --vault prod
 </pre></div>
 <p>The pipeline itself:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">SVC_TOKEN=$(curl -s -X POST $BASE/oauth2/token \
@@ -555,7 +555,7 @@ rocketvault users login --username wren --password '&lt;pw&gt;' --totp-code &quo
 rocketvault vault-access grant marcus --role &quot;Key Vault Secrets User&quot; --vault prod
 # granted Key Vault Secrets User to marcus in vault (assignment 8516e7fd-...)
 
-rocketvault vault-access list --vault prod --output json
+rocketvault vault-access list --vault prod
 
 # 2. She has zero data-plane access herself:
 rocketvault secrets list --vault prod
@@ -570,6 +570,9 @@ rocketvault vault-access grant wren --role &quot;Key Vault Purge Operator&quot; 
 # Error: grant failed: role cannot be granted by a non-admin caller
 
 rocketvault vault-access grant wren --role &quot;Key Vault Data Access Administrator&quot; --vault prod
+# Error: grant failed: role cannot be granted by a non-admin caller
+
+rocketvault vault-access grant wren --role &quot;Key Vault Certificate User&quot; --vault prod
 # Error: grant failed: role cannot be granted by a non-admin caller
 
 # 4. The same allow-list gates revoke, so she can't escape via the back door:
@@ -614,7 +617,7 @@ curl -s $BASE/access-policies/principal/&lt;marcus-user-id&gt; \
 # 1
 
 # Marcus's role assignment is untouched:
-rocketvault vault-access list --vault prod --output json | jq '.[] | select(.principal_username==&quot;marcus&quot;)'
+rocketvault vault-access list --vault prod   # Marcus appears by principal id, not by name
 
 # Investigation clears him — revert instantly, no restart, no cache flush.
 curl -s -X DELETE $BASE/access-policies/$POLICY_ID -H &quot;Authorization: Bearer $ADMIN_TOKEN&quot;
@@ -631,8 +634,8 @@ curl -s -o /dev/null -w '%{http_code}\n' $BASE/vaults/prod/secrets/&lt;secret-id
 <h2 id="journey-i--revoking-a-compromised-service-account">Journey I — Revoking a Compromised Service Account</h2>
 <p><strong>Actor</strong>: Wren</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd"># Capture the assignment ID first — you need it to revoke.
-ASSIGNMENT_ID=$(rocketvault vault-access list --vault prod --output json \
-  | jq -r '.[] | select(.principal_username==&quot;checkout-api-svc&quot;) | .id')
+ASSIGNMENT_ID=$(rocketvault vault-access list --vault prod \
+  | awk -v p=&quot;$SVC_CLIENT_ID&quot; '$3 == p { print $1 }')
 
 # Prove the token works right now, and record its claims.
 curl -s -o /dev/null -w '%{http_code}\n' $BASE/vaults/prod/keys/&lt;key-id&gt; \
@@ -777,8 +780,8 @@ rocketvault audit config --retention-days 90    # set — a daily job then purge
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd"># 1. Enumerate per vault — there is no &quot;revoke everything&quot; command.
 for V in default dev staging prod; do
   echo &quot;== $V&quot;
-  rocketvault vault-access list --vault &quot;$V&quot; --output json \
-    | jq -r '.[] | select(.principal_username==&quot;marcus&quot;) | &quot;\(.id) \(.role)&quot;'
+  rocketvault vault-access list --vault &quot;$V&quot; \
+    | awk -v p=&quot;$MARCUS_ID&quot; '$3 == p { print $1, $2 }'
 done
 
 # 2. Revoke each. Takes effect on Marcus's very next request.
@@ -1067,7 +1070,13 @@ rocketvault certificates create --name checkout-tls-selfsigned \
 # ID    Name                       Created
 # &lt;id&gt;  checkout-tls-selfsigned    2026-08-25T...
 </pre></div>
-<p>Flag validation runs before any authorization or key lookup:</p>
+<p>Flag validation runs before the vault-scoped authorization check and the key
+lookup — but <strong>after</strong> the global-role gate. <code>cmd/certificates/create.go</code> checks
+<code>HasAnyRole(admin, certificate_manager)</code> at line 74, ahead of the
+<code>name</code>/<code>key-id</code>/<code>validity-days</code> check at line 88; only <code>RequireDataAction</code>
+(line 115) runs after flag validation. Noor holds <code>certificate_manager</code>, so she
+reaches the missing-field error below. A caller without that global role who
+also omits a required flag gets the forbidden error instead, never this one:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault certificates create --key-id &lt;checkout-tls-leaf-key-id&gt; --validity-days 365 --vault prod
 # Error: name, key-id, and validity-days are required
 </pre></div>
@@ -1103,10 +1112,11 @@ rocketvault certificate get &lt;ca-cert-id&gt; --vault prod
 rocketvault certificate get &lt;leaf-cert-id&gt; --vault prod --output json | jq .name
 # unchanged — --name was not passed on this call
 </pre></div>
-<p><strong>Renew</strong> — re-issues in place over the <em>same</em> key and ID, and, unlike every other mutating cert command, checks <code>certificates/create</code>, not <code>certificates/update</code>:</p>
+<p><strong>Renew</strong> — re-issues over the <em>same</em> key and ID as a new version (the previous one is archived), and, unlike every other mutating cert command, checks <code>certificates/create</code>, not <code>certificates/update</code>:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault certificate renew &lt;leaf-cert-id&gt; --validity-days 180 --vault prod
 # Certificate renewed successfully!
 # Certificate ID: &lt;leaf-cert-id&gt;
+# Version: &lt;previous version + 1&gt;
 # Validity: 180 days
 </pre></div>
 <p>Prove the divergence: grant a role with <code>update</code> but not <code>create</code>, and renew still fails even though update-only commands would succeed for that same principal:</p>

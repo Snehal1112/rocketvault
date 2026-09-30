@@ -1195,12 +1195,13 @@ rocketvault certificate get <leaf-cert-id> --vault prod --output json | jq .name
 # unchanged — --name was not passed on this call
 ```
 
-**Renew** — re-issues in place over the *same* key and ID, and, unlike every other mutating cert command, checks `certificates/create`, not `certificates/update`:
+**Renew** — re-issues over the *same* key and ID as a new version (the previous one is archived), and, unlike every other mutating cert command, checks `certificates/create`, not `certificates/update`:
 
 ```bash
 rocketvault certificate renew <leaf-cert-id> --validity-days 180 --vault prod
 # Certificate renewed successfully!
 # Certificate ID: <leaf-cert-id>
+# Version: <previous version + 1>
 # Validity: 180 days
 ```
 

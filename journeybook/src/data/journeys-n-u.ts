@@ -616,16 +616,17 @@ rocketvault certificate get <leaf-cert-id> --vault prod --output json | jq .name
       },
       {
         id: "Q12",
-        title: "Renew re-issues in place over the same key and id",
+        title: "Renew adds a new version over the same key and id",
         surface: "cli",
         gate: "global-role",
         command: `rocketvault certificate renew <leaf-cert-id> --validity-days 180 --vault prod`,
         expected: `Certificate renewed successfully!
 Certificate ID: <leaf-cert-id>
+Version: <previous version + 1>
 Validity: 180 days`,
-        assert: "Same id, same key, new validity",
-        why: "Certificates are unique per `(vault_id, name)`, so `RenewCertificate` updates the existing row in place rather than inserting a new one under the same name — the same ID and the same `KeyID` it already had, just a new validity window and certificate body.",
-        source: "internal/services/certificates/certificate_service.go:897-905",
+        assert: "Same id, same key, next version, new validity",
+        why: "`RenewCertificate` archives the current version under its own number and bumps the same row to the next version in one transaction (`ArchiveAndRenew`), so the ID and the `KeyID` are unchanged while the certificate body and validity are new. The command prints the new version number.",
+        source: "internal/services/certificates/certificate_service.go:1050-1066, cmd/certificates/renew.go:93-96",
       },
       {
         id: "Q13",
