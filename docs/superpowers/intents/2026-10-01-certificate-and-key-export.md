@@ -33,8 +33,15 @@ this, Rocket users must copy key material into ordinary secrets by hand.
 - Updates to `docs/api-specification.yaml`, `docs/api-developer-guide.md`,
   `docs/integration-examples.md`, and the parity doc.
 
+## Sequencing
+
+Certificate export takes an optional `version` (default latest), so it is built
+after [2026-10-01-certificate-versioning.md](2026-10-01-certificate-versioning.md),
+which adds certificate versions. Each has its own spec and plan.
+
 ## Out of scope
 
+- Certificate versioning itself, which has its own intent.
 - The bulk passphrase-sealed certificate export from the 2026-08-25 design.
 - CSV export and the certificate-to-secret linkage (P5).
 - CLI export commands, unless the spec adds them later.
