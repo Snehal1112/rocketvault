@@ -30,6 +30,11 @@ var ErrCertNotFound = errors.New("certificate not found")
 // or outside its valid time window (not_before / expires_at).
 var ErrCertLifecycleDenied = errors.New("certificate is disabled or outside its valid time window")
 
+// ErrCertVersioningUnavailable is returned when the service was built
+// without a version repository. Renewal and the version operations fail
+// closed rather than overwrite a certificate with no history kept.
+var ErrCertVersioningUnavailable = errors.New("certificate versioning is not configured")
+
 // CreateCertificateRequest represents a request to create a new X.509 certificate.
 type CreateCertificateRequest struct {
 	Name         string
@@ -69,6 +74,7 @@ type CreateCertificateResult struct {
 	Tags      []string
 	CreatedAt time.Time
 	ExpiresAt *time.Time
+	Version   int // The certificate's current version number.
 }
 
 // UpdateCertificateRequest represents a request to update an existing certificate.
@@ -83,6 +89,17 @@ type UpdateCertificateRequest struct {
 	NotBefore   *time.Time  // Optional - nil means no change.
 	// PurgeProtection is optional - nil means no change.
 	PurgeProtection *bool
+}
+
+// UpdateCertificateVersionRequest changes one version's lifecycle
+// attributes. Nil fields are left as they are; at least one must be set.
+type UpdateCertificateVersionRequest struct {
+	CertID    uuid.UUID
+	Version   int
+	Scope     model.Scope // Authorization scope, checked against the parent certificate.
+	Enabled   *bool
+	ExpiresAt *time.Time
+	NotBefore *time.Time
 }
 
 // CertificateService handles X.509 certificate management operations.
@@ -103,6 +120,15 @@ type CertificateService interface {
 	// also the audit-log principal and the identity used by the internal
 	// key-ownership checks below.
 	RenewCertificate(ctx context.Context, certID uuid.UUID, scope model.Scope, validityDays int) (*CreateCertificateResult, error)
+	// ListCertificateVersions returns certID's versions, oldest first with
+	// the current one last, authorized by scope against the parent.
+	ListCertificateVersions(ctx context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error)
+	// GetCertificateVersion returns one version's metadata, authorized by
+	// scope against the parent.
+	GetCertificateVersion(ctx context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error)
+	// UpdateCertificateVersion changes one version's lifecycle attributes,
+	// authorized by req.Scope against the parent.
+	UpdateCertificateVersion(ctx context.Context, req UpdateCertificateVersionRequest) (*model.CertificateVersion, error)
 	// ListDeletedCertificates lists soft-deleted certificates authorized by scope.
 	ListDeletedCertificates(ctx context.Context, scope model.Scope) ([]model.Certificate, error)
 	// RecoverCertificate restores a soft-deleted certificate authorized by scope.
@@ -137,10 +163,11 @@ type CertificateService interface {
 // certificateService implements CertificateService by coordinating certificate operations
 // and access control while delegating to repository layers.
 type certificateService struct {
-	certRepo   repositories.CertificateRepositoryInterface
-	keyRepo    repositories.KeyRepositoryInterface
-	policyRepo repositories.CertificatePolicyRepositoryInterface
-	logger     *logging.Logger
+	certRepo    repositories.CertificateRepositoryInterface
+	keyRepo     repositories.KeyRepositoryInterface
+	policyRepo  repositories.CertificatePolicyRepositoryInterface
+	versionRepo repositories.CertificateVersionRepositoryInterface
+	logger      *logging.Logger
 	// vaultRepo is optional. When set, PurgeCertificate refuses to purge a
 	// certificate whose containing vault has purge protection enabled.
 	vaultRepo repositories.VaultRepositoryInterface
@@ -155,7 +182,10 @@ type CertificateServiceConfig struct {
 	CertificateRepository repositories.CertificateRepositoryInterface
 	KeyRepository         repositories.KeyRepositoryInterface
 	PolicyRepository      repositories.CertificatePolicyRepositoryInterface
-	Logger                *logging.Logger
+	// VersionRepository stores archived versions. Renewal and the version
+	// operations fail closed with ErrCertVersioningUnavailable without it.
+	VersionRepository repositories.CertificateVersionRepositoryInterface
+	Logger            *logging.Logger
 	// VaultRepository is optional; it enables the vault-level purge-protection
 	// cascade check in PurgeCertificate.
 	VaultRepository repositories.VaultRepositoryInterface
@@ -179,6 +209,7 @@ func NewCertificateService(config CertificateServiceConfig) CertificateService {
 		certRepo:              config.CertificateRepository,
 		keyRepo:               config.KeyRepository,
 		policyRepo:            config.PolicyRepository,
+		versionRepo:           config.VersionRepository,
 		logger:                config.Logger,
 		vaultRepo:             config.VaultRepository,
 		globalPurgeProtection: config.GlobalPurgeProtection,
@@ -304,6 +335,7 @@ func (s *certificateService) CreateSelfSignedCertificate(ctx context.Context, re
 		RenewalDays: renewalDays,
 		Enabled:     enabled,
 		NotBefore:   req.NotBefore,
+		Version:     1,
 	}
 
 	// Store in repository
@@ -329,6 +361,7 @@ func (s *certificateService) CreateSelfSignedCertificate(ctx context.Context, re
 		Tags:      cert.Tags,
 		CreatedAt: cert.CreatedAt,
 		ExpiresAt: expiresAt,
+		Version:   1,
 	}, nil
 }
 
@@ -493,6 +526,7 @@ func (s *certificateService) CreateCASignedCertificate(ctx context.Context, req 
 		RenewalDays: renewalDays,
 		Enabled:     enabled,
 		NotBefore:   req.NotBefore,
+		Version:     1,
 	}
 
 	// Store in repository
@@ -519,6 +553,7 @@ func (s *certificateService) CreateCASignedCertificate(ctx context.Context, req 
 		Tags:      cert.Tags,
 		CreatedAt: cert.CreatedAt,
 		ExpiresAt: expiresAt,
+		Version:   1,
 	}, nil
 }
 
@@ -972,10 +1007,10 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 		}
 	}
 
-	expiresAt, err := extractExpiresAt(certPEM)
+	notBefore, notAfter, err := extractValidity(certPEM)
 	if err != nil {
-		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "failed to parse certificate expiry", err)
-		return nil, fmt.Errorf("failed to determine certificate expiry: %w", err)
+		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "failed to parse certificate validity", err)
+		return nil, fmt.Errorf("failed to determine certificate validity: %w", err)
 	}
 
 	encryptedKey, err := common.EncryptSecret(privateKeyPEM)
@@ -984,13 +1019,27 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 		return nil, fmt.Errorf("failed to encrypt private key: %w", err)
 	}
 
-	updated := *original
-	updated.Certificate = certPEM
-	updated.PrivateKey = encryptedKey
-	updated.CreatedAt = time.Now()
-	updated.ExpiresAt = expiresAt
+	if s.versionRepo == nil {
+		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "certificate version repository is not configured", nil)
+		return nil, ErrCertVersioningUnavailable
+	}
 
-	if err := s.certRepo.Update(ctx, &updated, scope); err != nil {
+	// Every guard above has passed, so only now is anything written. The
+	// current version is archived under its own number and the row moves to
+	// the next one, in one repository transaction guarded by the version the
+	// row was read at. A concurrent renewal that committed first makes this
+	// one a conflict and writes nothing.
+	archived := original.ArchiveRecord()
+	renewed := *original
+	renewed.Certificate = certPEM
+	renewed.PrivateKey = encryptedKey
+	renewed.Version = archived.Version + 1
+	renewed.CreatedAt = time.Now()
+	renewed.ExpiresAt = &notAfter
+	renewed.NotBefore = &notBefore
+	renewed.Enabled = true
+
+	if err := s.versionRepo.ArchiveAndRenew(ctx, archived, &renewed, scope); err != nil {
 		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "failed to store renewed certificate", err)
 		return nil, fmt.Errorf("failed to store renewed certificate: %w", err)
 	}
@@ -1000,18 +1049,125 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 	if demoted {
 		s.logger.LogAuditInfo(userID.String(), "renew_certificate", "ca_demoted",
 			fmt.Sprintf("certificate %s (ID: %s) asserted CA:TRUE without keyCertSign and was renewed as a non-CA leaf; reissue it with --is-ca if it is genuinely a certificate authority",
-				updated.Name, updated.ID))
+				renewed.Name, renewed.ID))
 	}
 
-	s.logger.LogAuditInfo(userID.String(), "renew_certificate", "success", fmt.Sprintf("certificate renewed: %s, ID: %s", updated.Name, updated.ID))
+	s.logger.LogAuditInfo(userID.String(), "renew_certificate", "success",
+		fmt.Sprintf("certificate renewed: %s, ID: %s, version %d archived, now version %d", renewed.Name, renewed.ID, archived.Version, renewed.Version))
 
 	return &CreateCertificateResult{
-		CertID:    updated.ID,
-		Name:      updated.Name,
-		Tags:      updated.Tags,
-		CreatedAt: updated.CreatedAt,
-		ExpiresAt: expiresAt,
+		CertID:    renewed.ID,
+		Name:      renewed.Name,
+		Tags:      renewed.Tags,
+		CreatedAt: renewed.CreatedAt,
+		ExpiresAt: renewed.ExpiresAt,
+		Version:   renewed.Version,
 	}, nil
+}
+
+// readVersionedParent authorizes a version operation against the parent
+// certificate. The scoped read is the whole gate: certificate_versions has no
+// vault column, so a version is reachable only through a parent the caller
+// can read. It is deliberately not lifecycle-gated, so a disabled
+// certificate's history can still be inspected and re-enabled, the same way
+// UpdateCertificate reads a disabled certificate.
+func (s *certificateService) readVersionedParent(ctx context.Context, certID uuid.UUID, scope model.Scope, action string) (*model.Certificate, error) {
+	actor := scope.ActorID().String()
+	if s.versionRepo == nil {
+		s.logger.LogAuditError(actor, action, "failed", "certificate version repository is not configured", nil)
+		return nil, ErrCertVersioningUnavailable
+	}
+	cert, err := s.certRepo.Read(ctx, certID, scope)
+	if err != nil {
+		s.logger.LogAuditError(actor, action, "failed", "Certificate not found", err)
+		return nil, fmt.Errorf("%w: %s", ErrCertNotFound, err.Error())
+	}
+	return cert, nil
+}
+
+// ListCertificateVersions returns certID's versions, oldest first, with the
+// current one, read off the certificate row, last.
+func (s *certificateService) ListCertificateVersions(ctx context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error) {
+	parent, err := s.readVersionedParent(ctx, certID, scope, "list_certificate_versions")
+	if err != nil {
+		return nil, err
+	}
+	archived, err := s.versionRepo.ListVersions(ctx, certID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list certificate versions: %w", err)
+	}
+	return append(archived, parent.VersionMetadata()), nil
+}
+
+// GetCertificateVersion returns one version's metadata. The current version
+// comes from the certificate row; earlier ones from certificate_versions.
+func (s *certificateService) GetCertificateVersion(ctx context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error) {
+	if version < 1 {
+		return nil, fmt.Errorf("%w: version must be >= 1", model.ErrCertificateVersionNotFound)
+	}
+	parent, err := s.readVersionedParent(ctx, certID, scope, "get_certificate_version")
+	if err != nil {
+		return nil, err
+	}
+	current := parent.CurrentVersion()
+	switch {
+	case version == current:
+		meta := parent.VersionMetadata()
+		return &meta, nil
+	case version > current:
+		return nil, fmt.Errorf("%w: certificate %s has no version %d", model.ErrCertificateVersionNotFound, certID, version)
+	}
+	return s.versionRepo.GetVersion(ctx, certID, version)
+}
+
+// UpdateCertificateVersion changes one version's lifecycle attributes.
+// Updating the current version writes the certificate row, exactly as a
+// certificate update of the same attributes would; the write is guarded by
+// the version number, so a renewal in between turns it into a conflict.
+func (s *certificateService) UpdateCertificateVersion(ctx context.Context, req UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
+	actor := req.Scope.ActorID().String()
+	if req.Enabled == nil && req.ExpiresAt == nil && req.NotBefore == nil {
+		return nil, fmt.Errorf("%w: at least one of enabled, expires_at or not_before is required", model.ErrInvalidCertificateVersionAttributes)
+	}
+
+	target, err := s.GetCertificateVersion(ctx, req.CertID, req.Version, req.Scope)
+	if err != nil {
+		s.logger.LogAuditError(actor, "update_certificate_version", "failed", "Certificate version not found", err)
+		return nil, err
+	}
+
+	attrs := model.CertificateVersionAttributes{Enabled: target.Enabled, ExpiresAt: target.ExpiresAt, NotBefore: target.NotBefore}
+	if req.Enabled != nil {
+		attrs.Enabled = *req.Enabled
+	}
+	if req.ExpiresAt != nil {
+		attrs.ExpiresAt = req.ExpiresAt
+	}
+	if req.NotBefore != nil {
+		attrs.NotBefore = req.NotBefore
+	}
+	if err := model.ValidateCertificateVersionWindow(attrs.NotBefore, attrs.ExpiresAt); err != nil {
+		s.logger.LogAuditError(actor, "update_certificate_version", "failed", "invalid version attributes", err)
+		return nil, err
+	}
+
+	if target.Current {
+		err = s.versionRepo.UpdateCurrentLifecycle(ctx, req.CertID, target.Version, attrs, req.Scope)
+	} else {
+		err = s.versionRepo.UpdateVersionLifecycle(ctx, req.CertID, target.Version, attrs)
+	}
+	if err != nil {
+		s.logger.LogAuditError(actor, "update_certificate_version", "failed", "Failed to update certificate version", err)
+		return nil, fmt.Errorf("failed to update certificate version: %w", err)
+	}
+
+	updated := *target
+	updated.Enabled = attrs.Enabled
+	updated.ExpiresAt = attrs.ExpiresAt
+	updated.NotBefore = attrs.NotBefore
+	s.logger.LogAuditInfo(actor, "update_certificate_version", "success",
+		fmt.Sprintf("Certificate %s version %d updated", req.CertID, target.Version))
+	return &updated, nil
 }
 
 // ValidateCertificateAccess validates that the caller may use a specific
@@ -1104,6 +1260,20 @@ func extractExpiresAt(certPEM string) (*time.Time, error) {
 	}
 	t := cert.NotAfter
 	return &t, nil
+}
+
+// extractValidity returns the NotBefore and NotAfter of a PEM-encoded X.509
+// certificate. A new version takes both dates from its certificate.
+func extractValidity(certPEM string) (time.Time, time.Time, error) {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("failed to decode PEM block from certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+	return cert.NotBefore, cert.NotAfter, nil
 }
 
 // caStatus describes what authority a stored certificate actually carries.

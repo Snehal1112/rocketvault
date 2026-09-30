@@ -248,3 +248,15 @@ func TestCheckAndRenewCertificates_WarnOnly(t *testing.T) {
 	assert.Equal(t, 1, warned)
 	certSvc.AssertNotCalled(t, "RenewCertificate")
 }
+
+func (m *mockCertSvcForRenewal) ListCertificateVersions(ctx context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error) {
+	panic("not called")
+}
+
+func (m *mockCertSvcForRenewal) GetCertificateVersion(ctx context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error) {
+	panic("not called")
+}
+
+func (m *mockCertSvcForRenewal) UpdateCertificateVersion(ctx context.Context, req certificates.UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
+	panic("not called")
+}

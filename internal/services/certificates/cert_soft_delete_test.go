@@ -330,6 +330,7 @@ func TestRenewCertificate_Succeeds_WhenKeyIDSet(t *testing.T) {
 	logger := &logging.Logger{Logger: logrus.New()}
 	svc := NewCertificateService(CertificateServiceConfig{
 		CertificateRepository: certRepo,
+		VersionRepository:     &fakeCertVersionRepo{certRepo: certRepo},
 		KeyRepository:         keyRepo,
 		Logger:                logger,
 	})

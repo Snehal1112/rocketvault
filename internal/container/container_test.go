@@ -275,6 +275,7 @@ func TestNewServiceContainer_Success_CacheDisabled(t *testing.T) {
 	assert.NotNil(t, container.GetKeyRepository(), "GetKeyRepository")
 	assert.NotNil(t, container.GetCertificateRepository(), "GetCertificateRepository")
 	assert.NotNil(t, container.GetCertificatePolicyRepository(), "GetCertificatePolicyRepository")
+	assert.NotNil(t, container.certificateVersionRepository, "certificateVersionRepository must be wired, or renewal fails closed")
 	assert.NotNil(t, container.GetKeyRotationPolicyRepository(), "GetKeyRotationPolicyRepository")
 	assert.NotNil(t, container.GetSessionRepository(), "GetSessionRepository")
 	assert.NotNil(t, container.GetVaultRepository(), "GetVaultRepository")

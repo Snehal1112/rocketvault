@@ -360,6 +360,67 @@ func (_c *MockCertificateService_GetCertificatePolicy_Call) RunAndReturn(run fun
 	return _c
 }
 
+// GetCertificateVersion provides a mock function with given fields: ctx, certID, version, scope
+func (_m *MockCertificateService) GetCertificateVersion(ctx context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error) {
+	ret := _m.Called(ctx, certID, version, scope)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetCertificateVersion")
+	}
+
+	var r0 *model.CertificateVersion
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, int, model.Scope) (*model.CertificateVersion, error)); ok {
+		return rf(ctx, certID, version, scope)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, int, model.Scope) *model.CertificateVersion); ok {
+		r0 = rf(ctx, certID, version, scope)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.CertificateVersion)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID, int, model.Scope) error); ok {
+		r1 = rf(ctx, certID, version, scope)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockCertificateService_GetCertificateVersion_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetCertificateVersion'
+type MockCertificateService_GetCertificateVersion_Call struct {
+	*mock.Call
+}
+
+// GetCertificateVersion is a helper method to define mock.On call
+//   - ctx context.Context
+//   - certID uuid.UUID
+//   - version int
+//   - scope model.Scope
+func (_e *MockCertificateService_Expecter) GetCertificateVersion(ctx interface{}, certID interface{}, version interface{}, scope interface{}) *MockCertificateService_GetCertificateVersion_Call {
+	return &MockCertificateService_GetCertificateVersion_Call{Call: _e.mock.On("GetCertificateVersion", ctx, certID, version, scope)}
+}
+
+func (_c *MockCertificateService_GetCertificateVersion_Call) Run(run func(ctx context.Context, certID uuid.UUID, version int, scope model.Scope)) *MockCertificateService_GetCertificateVersion_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(uuid.UUID), args[2].(int), args[3].(model.Scope))
+	})
+	return _c
+}
+
+func (_c *MockCertificateService_GetCertificateVersion_Call) Return(_a0 *model.CertificateVersion, _a1 error) *MockCertificateService_GetCertificateVersion_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockCertificateService_GetCertificateVersion_Call) RunAndReturn(run func(context.Context, uuid.UUID, int, model.Scope) (*model.CertificateVersion, error)) *MockCertificateService_GetCertificateVersion_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // ListCertificatePolicies provides a mock function with given fields: ctx, scope
 func (_m *MockCertificateService) ListCertificatePolicies(ctx context.Context, scope model.Scope) ([]model.CertificatePolicyWithCertName, error) {
 	ret := _m.Called(ctx, scope)
@@ -415,6 +476,66 @@ func (_c *MockCertificateService_ListCertificatePolicies_Call) Return(_a0 []mode
 }
 
 func (_c *MockCertificateService_ListCertificatePolicies_Call) RunAndReturn(run func(context.Context, model.Scope) ([]model.CertificatePolicyWithCertName, error)) *MockCertificateService_ListCertificatePolicies_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListCertificateVersions provides a mock function with given fields: ctx, certID, scope
+func (_m *MockCertificateService) ListCertificateVersions(ctx context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error) {
+	ret := _m.Called(ctx, certID, scope)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListCertificateVersions")
+	}
+
+	var r0 []model.CertificateVersion
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, model.Scope) ([]model.CertificateVersion, error)); ok {
+		return rf(ctx, certID, scope)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID, model.Scope) []model.CertificateVersion); ok {
+		r0 = rf(ctx, certID, scope)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]model.CertificateVersion)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID, model.Scope) error); ok {
+		r1 = rf(ctx, certID, scope)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockCertificateService_ListCertificateVersions_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListCertificateVersions'
+type MockCertificateService_ListCertificateVersions_Call struct {
+	*mock.Call
+}
+
+// ListCertificateVersions is a helper method to define mock.On call
+//   - ctx context.Context
+//   - certID uuid.UUID
+//   - scope model.Scope
+func (_e *MockCertificateService_Expecter) ListCertificateVersions(ctx interface{}, certID interface{}, scope interface{}) *MockCertificateService_ListCertificateVersions_Call {
+	return &MockCertificateService_ListCertificateVersions_Call{Call: _e.mock.On("ListCertificateVersions", ctx, certID, scope)}
+}
+
+func (_c *MockCertificateService_ListCertificateVersions_Call) Run(run func(ctx context.Context, certID uuid.UUID, scope model.Scope)) *MockCertificateService_ListCertificateVersions_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(uuid.UUID), args[2].(model.Scope))
+	})
+	return _c
+}
+
+func (_c *MockCertificateService_ListCertificateVersions_Call) Return(_a0 []model.CertificateVersion, _a1 error) *MockCertificateService_ListCertificateVersions_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockCertificateService_ListCertificateVersions_Call) RunAndReturn(run func(context.Context, uuid.UUID, model.Scope) ([]model.CertificateVersion, error)) *MockCertificateService_ListCertificateVersions_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -797,6 +918,65 @@ func (_c *MockCertificateService_UpdateCertificate_Call) Return(_a0 error) *Mock
 }
 
 func (_c *MockCertificateService_UpdateCertificate_Call) RunAndReturn(run func(context.Context, certificates.UpdateCertificateRequest) error) *MockCertificateService_UpdateCertificate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// UpdateCertificateVersion provides a mock function with given fields: ctx, req
+func (_m *MockCertificateService) UpdateCertificateVersion(ctx context.Context, req certificates.UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
+	ret := _m.Called(ctx, req)
+
+	if len(ret) == 0 {
+		panic("no return value specified for UpdateCertificateVersion")
+	}
+
+	var r0 *model.CertificateVersion
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, certificates.UpdateCertificateVersionRequest) (*model.CertificateVersion, error)); ok {
+		return rf(ctx, req)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, certificates.UpdateCertificateVersionRequest) *model.CertificateVersion); ok {
+		r0 = rf(ctx, req)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.CertificateVersion)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, certificates.UpdateCertificateVersionRequest) error); ok {
+		r1 = rf(ctx, req)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockCertificateService_UpdateCertificateVersion_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UpdateCertificateVersion'
+type MockCertificateService_UpdateCertificateVersion_Call struct {
+	*mock.Call
+}
+
+// UpdateCertificateVersion is a helper method to define mock.On call
+//   - ctx context.Context
+//   - req certificates.UpdateCertificateVersionRequest
+func (_e *MockCertificateService_Expecter) UpdateCertificateVersion(ctx interface{}, req interface{}) *MockCertificateService_UpdateCertificateVersion_Call {
+	return &MockCertificateService_UpdateCertificateVersion_Call{Call: _e.mock.On("UpdateCertificateVersion", ctx, req)}
+}
+
+func (_c *MockCertificateService_UpdateCertificateVersion_Call) Run(run func(ctx context.Context, req certificates.UpdateCertificateVersionRequest)) *MockCertificateService_UpdateCertificateVersion_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(certificates.UpdateCertificateVersionRequest))
+	})
+	return _c
+}
+
+func (_c *MockCertificateService_UpdateCertificateVersion_Call) Return(_a0 *model.CertificateVersion, _a1 error) *MockCertificateService_UpdateCertificateVersion_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockCertificateService_UpdateCertificateVersion_Call) RunAndReturn(run func(context.Context, certificates.UpdateCertificateVersionRequest) (*model.CertificateVersion, error)) *MockCertificateService_UpdateCertificateVersion_Call {
 	_c.Call.Return(run)
 	return _c
 }

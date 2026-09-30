@@ -892,3 +892,27 @@ func TestCreateCertificate_DefaultsToNonCA(t *testing.T) {
 	assert.False(t, captured.IsCA, "omitting is_ca must issue a leaf")
 	svc.AssertExpectations(t)
 }
+
+func (m *mockCertService) ListCertificateVersions(ctx context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error) {
+	args := m.Called(ctx, certID, scope)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]model.CertificateVersion), args.Error(1)
+}
+
+func (m *mockCertService) GetCertificateVersion(ctx context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error) {
+	args := m.Called(ctx, certID, version, scope)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.CertificateVersion), args.Error(1)
+}
+
+func (m *mockCertService) UpdateCertificateVersion(ctx context.Context, req certServices.UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.CertificateVersion), args.Error(1)
+}

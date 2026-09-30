@@ -156,17 +156,18 @@ type ServiceContainer struct {
 	globalPurgeProtection bool
 
 	// Repositories
-	userRepository              repositories.UserRepositoryInterface
-	secretRepository            repositories.SecretRepositoryInterface
-	rotationRepository          repositories.RotationPolicyRepositoryInterface
-	versionRepository           repositories.SecretVersionRepositoryInterface
-	keyRepository               repositories.KeyRepositoryInterface
-	certificateRepository       repositories.CertificateRepositoryInterface
-	certPolicyRepository        repositories.CertificatePolicyRepositoryInterface
-	keyRotationPolicyRepository repositories.KeyRotationPolicyRepositoryInterface
-	sessionRepository           repositories.SessionRepositoryInterface
-	vaultRepository             repositories.VaultRepositoryInterface
-	auditRepository             repositories.AuditRepositoryExtended
+	userRepository               repositories.UserRepositoryInterface
+	secretRepository             repositories.SecretRepositoryInterface
+	rotationRepository           repositories.RotationPolicyRepositoryInterface
+	versionRepository            repositories.SecretVersionRepositoryInterface
+	keyRepository                repositories.KeyRepositoryInterface
+	certificateRepository        repositories.CertificateRepositoryInterface
+	certificateVersionRepository repositories.CertificateVersionRepositoryInterface
+	certPolicyRepository         repositories.CertificatePolicyRepositoryInterface
+	keyRotationPolicyRepository  repositories.KeyRotationPolicyRepositoryInterface
+	sessionRepository            repositories.SessionRepositoryInterface
+	vaultRepository              repositories.VaultRepositoryInterface
+	auditRepository              repositories.AuditRepositoryExtended
 
 	// Audit services
 	auditService            auditServices.AuditServiceInterface
@@ -367,6 +368,7 @@ func (c *ServiceContainer) initializeServices() error {
 	c.versionRepository = repositories.NewSecretVersionRepository(c.conn, c.logger)
 	c.keyRepository = repositories.NewKeyRepository(c.conn, c.logger)
 	c.certificateRepository = repositories.NewCertificateRepository(c.conn, c.logger)
+	c.certificateVersionRepository = repositories.NewCertificateVersionRepository(c.conn, c.logger)
 	c.vaultRepository = repositories.NewVaultRepository(c.conn, c.logger)
 	vaultCascade := vaultServices.NewCascadeAdapter(c.secretRepository, c.keyRepository, c.certificateRepository)
 	c.vaultService = vaultServices.NewVaultService(c.vaultRepository, vaultCascade, c.logger)
@@ -698,6 +700,7 @@ func (c *ServiceContainer) initializeServices() error {
 	// Initialize certificate service
 	baseCertificateService := certServices.NewCertificateService(certServices.CertificateServiceConfig{
 		CertificateRepository: c.certificateRepository,
+		VersionRepository:     c.certificateVersionRepository,
 		KeyRepository:         c.keyRepository,
 		PolicyRepository:      c.certPolicyRepository,
 		Logger:                c.logger,

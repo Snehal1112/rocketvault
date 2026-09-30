@@ -195,3 +195,31 @@ func (s *CachedCertificateService) GetCacheStats() map[string]interface{} {
 func (s *CachedCertificateService) ClearCache(ctx context.Context) error {
 	return s.cache.Flush(ctx)
 }
+
+// ListCertificateVersions lists a certificate's versions (not cached).
+func (s *CachedCertificateService) ListCertificateVersions(ctx context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error) {
+	return s.certificateService.ListCertificateVersions(ctx, certID, scope)
+}
+
+// GetCertificateVersion reads one version (not cached; archived versions
+// never are).
+func (s *CachedCertificateService) GetCertificateVersion(ctx context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error) {
+	return s.certificateService.GetCertificateVersion(ctx, certID, version, scope)
+}
+
+// UpdateCertificateVersion updates one version and evicts the cached
+// certificate when the version was the current one, whose attributes live on
+// the cached row. Archived versions are not cached, so updating one leaves
+// the cache alone.
+func (s *CachedCertificateService) UpdateCertificateVersion(ctx context.Context, req certificates.UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
+	updated, err := s.certificateService.UpdateCertificateVersion(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if updated.Current {
+		if err := s.cache.DeleteByID(ctx, req.CertID); err != nil {
+			s.logger.WithError(err).Warn("Failed to invalidate cached certificate after version update")
+		}
+	}
+	return updated, nil
+}

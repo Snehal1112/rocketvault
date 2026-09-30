@@ -147,6 +147,11 @@ type recordingCertService struct {
 	// real CertificateService's "verify cert access, then delegate to the
 	// policy repository" flow.
 	policyRepo repositories.CertificatePolicyRepositoryInterface
+
+	// versionCalls and versionScope record the version operations and the
+	// scope they were dispatched with, for the route-shape tests.
+	versionCalls []string
+	versionScope model.Scope
 }
 
 func (s *recordingCertService) CreateSelfSignedCertificate(context.Context, certServices.CreateCertificateRequest) (*certServices.CreateCertificateResult, error) {
@@ -719,4 +724,29 @@ func TestDeleteKeyUsesVaultScope(t *testing.T) {
 	if _, isOwnerScoped := got.OwnerID(); isOwnerScoped {
 		t.Fatalf("delete key: no owner predicate may remain on the data plane")
 	}
+}
+
+func (s *recordingCertService) ListCertificateVersions(_ context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error) {
+	s.versionCalls = append(s.versionCalls, "list")
+	s.versionScope = scope
+	if s.getInVaultErr != nil {
+		return nil, s.getInVaultErr
+	}
+	return []model.CertificateVersion{{CertificateID: certID, Version: 1, Current: true, Enabled: true}}, nil
+}
+func (s *recordingCertService) GetCertificateVersion(_ context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error) {
+	s.versionCalls = append(s.versionCalls, "get")
+	s.versionScope = scope
+	if s.getInVaultErr != nil {
+		return nil, s.getInVaultErr
+	}
+	return &model.CertificateVersion{CertificateID: certID, Version: version, Current: true, Enabled: true}, nil
+}
+func (s *recordingCertService) UpdateCertificateVersion(_ context.Context, req certServices.UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
+	s.versionCalls = append(s.versionCalls, "update")
+	s.versionScope = req.Scope
+	if s.getInVaultErr != nil {
+		return nil, s.getInVaultErr
+	}
+	return &model.CertificateVersion{CertificateID: req.CertID, Version: req.Version, Current: true, Enabled: true}, nil
 }

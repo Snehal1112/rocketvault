@@ -224,6 +224,7 @@ func newRenewalFixtureWithStoredCert(t *testing.T, privateKeyPEM, storedPEM stri
 
 	svc := NewCertificateService(CertificateServiceConfig{
 		CertificateRepository: certRepo,
+		VersionRepository:     &fakeCertVersionRepo{certRepo: certRepo},
 		KeyRepository:         keyRepo,
 		Logger:                &logging.Logger{Logger: logrusLogger},
 	})

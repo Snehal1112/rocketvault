@@ -146,3 +146,24 @@ func (s *retryCertificateService) ListCertificatesDueForRenewal(ctx context.Cont
 		return s.baseService.ListCertificatesDueForRenewal(ctx, scope)
 	})
 }
+
+// ListCertificateVersions lists versions with retry logic for database operations.
+func (s *retryCertificateService) ListCertificateVersions(ctx context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error) {
+	return retried(ctx, s.retryService, func() ([]model.CertificateVersion, error) {
+		return s.baseService.ListCertificateVersions(ctx, certID, scope)
+	})
+}
+
+// GetCertificateVersion reads one version with retry logic for database operations.
+func (s *retryCertificateService) GetCertificateVersion(ctx context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error) {
+	return retried(ctx, s.retryService, func() (*model.CertificateVersion, error) {
+		return s.baseService.GetCertificateVersion(ctx, certID, version, scope)
+	})
+}
+
+// UpdateCertificateVersion updates one version with retry logic for database operations.
+func (s *retryCertificateService) UpdateCertificateVersion(ctx context.Context, req certificates.UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
+	return retried(ctx, s.retryService, func() (*model.CertificateVersion, error) {
+		return s.baseService.UpdateCertificateVersion(ctx, req)
+	})
+}

@@ -34,11 +34,7 @@ func newTestCertLogger() *logging.Logger {
 }
 
 func newCertSvc(certRepo *mockCertRepository, keyRepo *mockKeyRepo) CertificateService {
-	return NewCertificateService(CertificateServiceConfig{
-		CertificateRepository: certRepo,
-		KeyRepository:         keyRepo,
-		Logger:                newTestCertLogger(),
-	})
+	return newCertSvcWithVersions(certRepo, keyRepo, &fakeCertVersionRepo{certRepo: certRepo})
 }
 
 // certVaultScope matches the scope the certificate service now passes when it
@@ -1582,4 +1578,14 @@ func TestExtractExpiresAt_ValidCert(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, expiresAt)
 	assert.True(t, expiresAt.After(time.Now()))
+}
+
+func (m *mockRenewalCertSvc) ListCertificateVersions(ctx context.Context, certID uuid.UUID, scope model.Scope) ([]model.CertificateVersion, error) {
+	panic("not called")
+}
+func (m *mockRenewalCertSvc) GetCertificateVersion(ctx context.Context, certID uuid.UUID, version int, scope model.Scope) (*model.CertificateVersion, error) {
+	panic("not called")
+}
+func (m *mockRenewalCertSvc) UpdateCertificateVersion(ctx context.Context, req UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
+	panic("not called")
 }
