@@ -45,5 +45,17 @@ func writeCertificateRenewError(c *Context, err error) {
 		c.SetConflict("certificate is disabled or outside its valid time window and cannot be renewed")
 		return
 	}
+	if errors.Is(err, certServices.ErrRenewKeyForbidden) {
+		c.SetPermissionError("renewing this certificate requires ownership of its signing key")
+		return
+	}
+	if errors.Is(err, certServices.ErrRenewKeyNotFound) {
+		c.SetConflict("the certificate's signing key is not available, so it cannot be renewed")
+		return
+	}
+	if errors.Is(err, certServices.ErrRenewNotPossible) {
+		c.SetConflict("the certificate cannot be renewed in its current state")
+		return
+	}
 	writeCertificateError(c, err)
 }

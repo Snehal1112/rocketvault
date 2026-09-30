@@ -405,8 +405,11 @@ current version's validity period. Requires the
 }
 ```
 
-`409` means the certificate is disabled or outside its validity window, or a
-concurrent renewal won; re-read and retry.
+Renewal re-signs over the certificate's existing key, so the caller must own
+that key: `403` means the key belongs to another user. `409` means the
+certificate is disabled or outside its validity window, its key is no longer
+available, it was signed by a CA this installation no longer records, or a
+concurrent renewal won; re-read and retry only in the last case.
 
 #### List and Read Versions
 

@@ -162,6 +162,30 @@ func TestRenewCertificate_Statuses(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Internal server error")
 }
 
+func TestRenewCertificate_RoutineRefusals(t *testing.T) {
+	certID := uuid.New()
+	scope := certLegacyVaultScope()
+	cases := []struct {
+		name string
+		err  error
+		code int
+	}{
+		{"foreign key", fmt.Errorf("wrapped: %w", certServices.ErrRenewKeyForbidden), http.StatusForbidden},
+		{"key missing", fmt.Errorf("wrapped: %w", certServices.ErrRenewKeyNotFound), http.StatusConflict},
+		{"not possible", fmt.Errorf("wrapped: %w", certServices.ErrRenewNotPossible), http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &mockCertService{}
+			m.On("RenewCertificate", mock.Anything, certID, scope, 90).Return(nil, tc.err)
+			w := runCertVersionHandler(t, m, &ApiParams{CertificateID: certID.String()},
+				http.MethodPost, `{"validity_days":90}`, renewCertificate)
+			assert.Equal(t, tc.code, w.Code)
+			assert.NotContains(t, w.Body.String(), "wrapped", "internal text must not be echoed")
+		})
+	}
+}
+
 func TestRenewCertificate_DefaultsToCurrentValidity(t *testing.T) {
 	certID := uuid.New()
 	scope := certLegacyVaultScope()
@@ -182,6 +206,34 @@ func TestRenewCertificate_DefaultsToCurrentValidity(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	assert.Equal(t, 2, got.Version)
 	svc.AssertExpectations(t)
+}
+
+// A failed metadata read-back after a committed renewal must not turn the
+// request into an error: the new version exists.
+func TestRenewCertificate_ReadBackFailureFallsBackToResult(t *testing.T) {
+	certID := uuid.New()
+	scope := certLegacyVaultScope()
+	created := time.Now().UTC().Truncate(time.Second)
+	expires := created.Add(90 * 24 * time.Hour)
+
+	svc := &mockCertService{}
+	svc.On("RenewCertificate", mock.Anything, certID, scope, 90).
+		Return(&certServices.CreateCertificateResult{CertID: certID, Version: 3, CreatedAt: created, ExpiresAt: &expires}, nil)
+	svc.On("GetCertificateVersion", mock.Anything, certID, 3, scope).
+		Return(nil, errors.New("sql: connection reset by peer"))
+
+	w := runCertVersionHandler(t, svc, &ApiParams{CertificateID: certID.String()},
+		http.MethodPost, `{"validity_days":90}`, renewCertificate)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var got model.CertificateVersion
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, certID, got.CertificateID)
+	assert.Equal(t, 3, got.Version)
+	assert.True(t, got.Current)
+	assert.True(t, got.Enabled)
+	assert.True(t, got.CreatedAt.Equal(created))
+	require.NotNil(t, got.ExpiresAt)
+	assert.True(t, got.ExpiresAt.Equal(expires))
 }
 
 // TestCertificateVersionResponses_CarryNoKeyMaterial pins that no version

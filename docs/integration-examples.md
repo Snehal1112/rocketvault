@@ -604,6 +604,9 @@ curl -sS "$API/certificates/$CERT_ID/versions" \
   -H "Authorization: Bearer $ROCKETVAULT_TOKEN" | jq '.versions[] | {version, current, enabled, expires_at}'
 ```
 
+Renewal re-signs over the certificate's existing key, so the caller must own
+that key; otherwise the route answers `403`.
+
 The same from the CLI:
 
 ```bash

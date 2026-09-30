@@ -24,7 +24,8 @@ func TestRenewCmd_LongDescribesCAPreservation(t *testing.T) {
 	}
 }
 
-// Renewal writes in place, so there is exactly one certificate ID to print.
+// Renewal keeps the certificate ID and adds a version, so there is exactly
+// one certificate ID to print.
 func TestRenewCmd_LongDoesNotPromiseANewID(t *testing.T) {
 	require.Contains(t, renewCmd.Long, "There is no new certificate ID",
 		"the help must say the ID does not change")

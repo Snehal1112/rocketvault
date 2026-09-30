@@ -312,8 +312,11 @@ current version's validity period. Requires the
   &quot;enabled&quot;: true
 }
 </pre></div>
-<p><code>409</code> means the certificate is disabled or outside its validity window, or a
-concurrent renewal won; re-read and retry.</p>
+<p>Renewal re-signs over the certificate's existing key, so the caller must own
+that key: <code>403</code> means the key belongs to another user. <code>409</code> means the
+certificate is disabled or outside its validity window, its key is no longer
+available, it was signed by a CA this installation no longer records, or a
+concurrent renewal won; re-read and retry only in the last case.</p>
 <h4 id="list-and-read-versions">List and Read Versions</h4>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">GET /api/v1/certificates/{certificate_id}/versions
 GET /api/v1/certificates/{certificate_id}/versions/{version}

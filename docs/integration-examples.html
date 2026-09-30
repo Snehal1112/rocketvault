@@ -597,6 +597,8 @@ curl -sS -X POST &quot;$API/certificates/$CERT_ID/renew&quot; \
 curl -sS &quot;$API/certificates/$CERT_ID/versions&quot; \
   -H &quot;Authorization: Bearer $ROCKETVAULT_TOKEN&quot; | jq '.versions[] | {version, current, enabled, expires_at}'
 </pre></div>
+<p>Renewal re-signs over the certificate's existing key, so the caller must own
+that key; otherwise the route answers <code>403</code>.</p>
 <p>The same from the CLI:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault certificate renew &quot;$CERT_ID&quot; --validity-days 90 --vault &quot;$VAULT&quot;
 rocketvault certificate versions list &quot;$CERT_ID&quot; --vault &quot;$VAULT&quot;

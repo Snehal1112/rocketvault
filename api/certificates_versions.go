@@ -189,7 +189,16 @@ func renewCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	version, err := certService.GetCertificateVersion(r.Context(), certID, result.Version, scope)
 	if err != nil {
-		writeCertificateError(c, err)
+		// The renewal is committed, so a failed read-back must not report
+		// failure. Answer from the renewal result instead.
+		writeJSON(w, &model.CertificateVersion{
+			CertificateID: certID,
+			Version:       result.Version,
+			Current:       true,
+			CreatedAt:     result.CreatedAt,
+			ExpiresAt:     result.ExpiresAt,
+			Enabled:       true,
+		})
 		return
 	}
 	writeJSON(w, version)

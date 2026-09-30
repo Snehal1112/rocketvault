@@ -93,7 +93,7 @@ func registerCertificatesWriteTools(s *Server) {
 
 	registerIf(s, TierWrite, "renew_certificate",
 		"Renew a certificate: re-issue it over its key as a new version. The previous version is kept in the "+
-			"certificate's history. Never returns private key material.",
+			"certificate's history. The caller must own the certificate's key. Never returns private key material.",
 		// Not idempotent: each call creates another version.
 		Annotations{ReadOnly: false, Idempotent: false, Destructive: false},
 		s.handleRenewCertificate)

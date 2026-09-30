@@ -30,6 +30,29 @@ var ErrCertNotFound = errors.New("certificate not found")
 // or outside its valid time window (not_before / expires_at).
 var ErrCertLifecycleDenied = errors.New("certificate is disabled or outside its valid time window")
 
+// ErrRenewKeyForbidden is returned by RenewCertificate when the certificate's
+// key belongs to another user.
+var ErrRenewKeyForbidden = errors.New("forbidden: cannot use other users' keys")
+
+// ErrRenewKeyNotFound is returned by RenewCertificate when the certificate's
+// key cannot be read, for example because it was deleted.
+var ErrRenewKeyNotFound = errors.New("key not found")
+
+// ErrRenewNotPossible is returned by RenewCertificate when the certificate
+// cannot be renewed in its current state, such as a missing key link or a
+// signing CA this installation no longer records.
+var ErrRenewNotPossible = errors.New("certificate cannot be renewed")
+
+// renewError carries a fixed message while still matching a renew sentinel
+// through errors.Is, so the text callers already see does not change.
+type renewError struct {
+	msg      string
+	sentinel error
+}
+
+func (e *renewError) Error() string { return e.msg }
+func (e *renewError) Unwrap() error { return e.sentinel }
+
 // ErrCertVersioningUnavailable is returned when the service was built
 // without a version repository. Renewal and the version operations fail
 // closed rather than overwrite a certificate with no history kept.
@@ -921,7 +944,7 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 	}
 
 	if original.KeyID == (uuid.UUID{}) {
-		return nil, fmt.Errorf("certificate has no associated key ID; cannot renew")
+		return nil, &renewError{"certificate has no associated key ID; cannot renew", ErrRenewNotPossible}
 	}
 
 	if validityDays <= 0 {
@@ -929,20 +952,18 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 		return nil, fmt.Errorf("validity days must be positive")
 	}
 
-	// Certificates are unique per (vault_id, name), so renewal must update the
-	// existing row in place rather than inserting a new one under the same
-	// name (CreateSelfSignedCertificate always mints a new ID/row and would
-	// collide with the certificate being renewed).
+	// The row keeps its name and ID: the current version is archived and the
+	// row is bumped to the next version in one transaction (ArchiveAndRenew).
 	// The caller's own scope already names the vault the certificate lives in,
 	// so the signing key is authorized against that vault too (B32).
-	if err := s.ValidateKeyOwnership(ctx, original.KeyID, scope); err != nil {
-		return nil, err
-	}
-
 	key, err := s.keyRepo.Read(ctx, original.KeyID, scope)
 	if err != nil {
-		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "failed to read key", err)
-		return nil, fmt.Errorf("failed to read key: %w", err)
+		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", fmt.Sprintf("key not found: %s", err), err)
+		return nil, &renewError{"key not found: " + err.Error(), ErrRenewKeyNotFound}
+	}
+	if key.UserID != userID {
+		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "forbidden: cannot use other users' keys", nil)
+		return nil, ErrRenewKeyForbidden
 	}
 
 	privateKeyPEM, err := common.DecryptSecret(key.Value)
@@ -989,7 +1010,7 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 		}
 		if !selfSigned {
 			s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "certificate records no signing CA but is not self-signed", nil)
-			return nil, fmt.Errorf("cannot renew certificate %s: it was signed by a CA this installation no longer records; re-create it against its CA instead", original.ID)
+			return nil, &renewError{fmt.Sprintf("cannot renew certificate %s: it was signed by a CA this installation no longer records; re-create it against its CA instead", original.ID), ErrRenewNotPossible}
 		}
 
 		// isCA is the flag read off the certificate being replaced, above.
