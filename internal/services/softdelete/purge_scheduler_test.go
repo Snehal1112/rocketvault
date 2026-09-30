@@ -46,6 +46,14 @@ func createPurgeTables(db *sql.DB) {
 			purge_protection BOOLEAN DEFAULT FALSE
 		)`, table))
 	}
+	createVersionsTable(db)
+}
+
+func createVersionsTable(db *sql.DB) {
+	_, _ = db.Exec(`CREATE TABLE certificate_versions (
+		certificate_id TEXT NOT NULL,
+		version INTEGER NOT NULL
+	)`)
 }
 
 func testLogger() *logging.Logger {
@@ -378,4 +386,45 @@ func TestPurgeExpiredVaults_NilVaultPurger_NoOp(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		s.Stop()
 	})
+}
+
+// The retention sweep must delete archived versions with their certificate,
+// because SQLite runs with foreign keys off and cascades do not fire.
+func TestPurgeExpired_DeletesCertificateVersions(t *testing.T) {
+	rawDB := newTestDB(t)
+	createPurgeTables(rawDB)
+
+	expired := time.Now().AddDate(0, 0, -60).Format("2006-01-02 15:04:05")
+	recent := time.Now().AddDate(0, 0, -5).Format("2006-01-02 15:04:05")
+	rows := []struct {
+		id        string
+		deletedAt any
+		protected bool
+	}{
+		{"expired", expired, false},
+		{"recent", recent, false},
+		{"protected", expired, true},
+		{"live", nil, false},
+	}
+	for _, r := range rows {
+		_, err := rawDB.Exec(`INSERT INTO certificates (id, deleted_at, purge_protection) VALUES (?, ?, ?)`,
+			r.id, r.deletedAt, r.protected)
+		require.NoError(t, err)
+		_, err = rawDB.Exec(`INSERT INTO certificate_versions (certificate_id, version) VALUES (?, 1)`, r.id)
+		require.NoError(t, err)
+	}
+
+	s := NewPurgeScheduler(newTestConn(t, rawDB), testConfig(), testLogger(), nil)
+	s.purgeExpired(context.Background())
+
+	count := func(id string) int {
+		var n int
+		require.NoError(t, rawDB.QueryRow(
+			`SELECT COUNT(*) FROM certificate_versions WHERE certificate_id = ?`, id).Scan(&n))
+		return n
+	}
+	assert.Equal(t, 0, count("expired"), "expired certificate versions must be purged")
+	assert.Equal(t, 1, count("recent"))
+	assert.Equal(t, 1, count("protected"))
+	assert.Equal(t, 1, count("live"))
 }

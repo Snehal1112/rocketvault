@@ -85,18 +85,54 @@ func (s *PurgeScheduler) purgeExpired(ctx context.Context) {
 			`DELETE FROM %s WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purge_protection = FALSE`,
 			table,
 		)
-		result, err := s.db.ExecContext(ctx, query, cutoff)
+		n, err := s.purgeTable(ctx, table, query, cutoff)
 		if err != nil {
 			s.log.WithError(err).Errorf("auto-purge failed for table %s", table)
 			continue
 		}
-		n, _ := result.RowsAffected()
 		if n > 0 {
 			s.log.Infof("auto-purged %d expired items from %s", n, table)
 		}
 	}
 
 	s.purgeExpiredVaults(ctx)
+}
+
+// purgeTable runs the expired-row DELETE for one table. For certificates it
+// first deletes their archived versions in the same transaction, because
+// SQLite runs with foreign keys off and the cascade never fires.
+func (s *PurgeScheduler) purgeTable(ctx context.Context, table, query string, cutoff time.Time) (int64, error) {
+	if table != "certificates" {
+		result, err := s.db.ExecContext(ctx, query, cutoff)
+		if err != nil {
+			return 0, err
+		}
+		n, _ := result.RowsAffected()
+		return n, nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx,
+		`DELETE FROM certificate_versions WHERE certificate_id IN (
+			SELECT id FROM certificates WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purge_protection = FALSE)`,
+		cutoff)
+	if err != nil {
+		return 0, err
+	}
+	result, err := tx.ExecContext(ctx, query, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
 }
 
 // purgeExpiredVaults auto-purges soft-deleted vaults past their retention
