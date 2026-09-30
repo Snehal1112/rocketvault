@@ -115,6 +115,11 @@ func (c *Context) SetPermissionError(permission string) {
 		"Insufficient permissions: "+permission, nil, "", http.StatusForbidden)
 }
 
+// SetConflict sets a 409 error for a request that collides with existing state.
+func (c *Context) SetConflict(message string) {
+	c.Err = common.NewAppError("api.context.set_conflict", message, nil, "", http.StatusConflict)
+}
+
 // SetNotFound sets a 404 error for a missing resource.
 func (c *Context) SetNotFound(resource string) {
 	c.Err = common.NewAppError("api.context.set_not_found",

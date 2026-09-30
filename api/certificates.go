@@ -76,6 +76,7 @@ type CertificateResponse struct {
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
 	Enabled     bool       `json:"enabled"`
 	NotBefore   *time.Time `json:"not_before,omitempty"`
+	Version     int        `json:"version"` // The current version number.
 }
 
 // CertificateListResponse is the JSON response for listing certificates.
@@ -112,6 +113,12 @@ func (api *API) registerCertificateRoutes(c *mux.Router, scope string) {
 	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/policy", ApiSessionRequired(api.App, upsertCertificatePolicy)).Methods("PUT")
 	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/policy", ApiSessionRequired(api.App, deleteCertificatePolicy)).Methods("DELETE")
 
+	// Versions sub-resource and renewal. Renewal creates a new version.
+	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/versions", ApiSessionRequired(api.App, listCertificateVersions)).Methods("GET")
+	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/versions/{version:[0-9]+}", ApiSessionRequired(api.App, getCertificateVersion)).Methods("GET")
+	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/versions/{version:[0-9]+}", ApiSessionRequired(api.App, updateCertificateVersion)).Methods("PUT")
+	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/renew", ApiSessionRequired(api.App, renewCertificate)).Methods("POST")
+
 	api.Logger.WithField("scope", scope).Infoln("Certificates API routes initialized")
 }
 
@@ -128,6 +135,7 @@ func certToDomainResponse(cert *model.Certificate) CertificateResponse {
 		ExpiresAt:   cert.ExpiresAt,
 		Enabled:     cert.Enabled,
 		NotBefore:   cert.NotBefore,
+		Version:     cert.CurrentVersion(),
 	}
 }
 
@@ -223,6 +231,7 @@ func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	response := CertificateResponse{
 		ID:          result.CertID,
+		Version:     result.Version,
 		Name:        result.Name,
 		UserID:      userID,
 		CreatedAt:   result.CreatedAt,

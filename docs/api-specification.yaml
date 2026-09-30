@@ -3704,6 +3704,136 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /api/v1/certificates/{certificate_id}/versions:
+    parameters:
+      - $ref: "#/components/parameters/CertificateId"
+    get:
+      summary: List certificate versions
+      description: |
+        Returns every version of the certificate, oldest first, with the
+        current version last and marked `current: true`. Metadata only: no
+        certificate body and no private key. A certificate created before
+        versioning reports a single version 1. Versions are sequential
+        integers, not Azure's 32-hex identifiers.
+      operationId: listCertificateVersions
+      tags:
+        - Certificates
+      responses:
+        "200":
+          description: Certificate versions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateVersionListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/certificates/{certificate_id}/versions/{version}:
+    parameters:
+      - $ref: "#/components/parameters/CertificateId"
+      - $ref: "#/components/parameters/Version"
+    get:
+      summary: Get a certificate version
+      description: Returns one version's metadata. No certificate body and no private key.
+      operationId: getCertificateVersion
+      tags:
+        - Certificates
+      responses:
+        "200":
+          description: Certificate version retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a certificate version's lifecycle attributes
+      description: |
+        Changes `enabled`, `expires_at` and `not_before` on one version.
+        Updating the current version is the same as updating the
+        certificate's own attributes. A disabled or expired version is
+        unusable, and a disabled certificate gates every version.
+      operationId: updateCertificateVersion
+      tags:
+        - Certificates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCertificateVersionRequest"
+      responses:
+        "200":
+          description: Certificate version updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/certificates/{certificate_id}/renew:
+    parameters:
+      - $ref: "#/components/parameters/CertificateId"
+    post:
+      summary: Renew a certificate
+      description: |
+        Re-issues the certificate over its key and makes the result the new
+        current version. The previous version is archived under its own
+        number. Requires the certificates/create data action. A disabled
+        certificate, one outside its validity window, or a concurrent renewal
+        returns 409.
+      operationId: renewCertificate
+      tags:
+        - Certificates
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenewCertificateRequest"
+      responses:
+        "200":
+          description: Certificate renewed; the new version's metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+
   /api/v1/certificates/{certificate_id}/backup:
     parameters:
       - $ref: "#/components/parameters/CertificateId"
@@ -3948,6 +4078,128 @@ paths:
           $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /api/v1/vaults/{vault_name}/certificates/{certificate_id}/versions:
+    parameters:
+      - $ref: "#/components/parameters/VaultName"
+      - $ref: "#/components/parameters/CertificateId"
+    get:
+      summary: List certificate versions in a vault
+      description: |
+        Returns every version of a certificate held in the named vault,
+        oldest first, with the current version last and marked
+        `current: true`. Metadata only, matching the flat route.
+      operationId: listCertificateVersionsInVault
+      tags:
+        - Certificates
+      responses:
+        "200":
+          description: Certificate versions retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateVersionListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/vaults/{vault_name}/certificates/{certificate_id}/versions/{version}:
+    parameters:
+      - $ref: "#/components/parameters/VaultName"
+      - $ref: "#/components/parameters/CertificateId"
+      - $ref: "#/components/parameters/Version"
+    get:
+      summary: Get a certificate version in a vault
+      description: Returns one version's metadata for a certificate held in the named vault.
+      operationId: getCertificateVersionInVault
+      tags:
+        - Certificates
+      responses:
+        "200":
+          description: Certificate version retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      summary: Update a certificate version's lifecycle attributes in a vault
+      description: Changes `enabled`, `expires_at` and `not_before` on one version, matching the flat route.
+      operationId: updateCertificateVersionInVault
+      tags:
+        - Certificates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCertificateVersionRequest"
+      responses:
+        "200":
+          description: Certificate version updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/vaults/{vault_name}/certificates/{certificate_id}/renew:
+    parameters:
+      - $ref: "#/components/parameters/VaultName"
+      - $ref: "#/components/parameters/CertificateId"
+    post:
+      summary: Renew a certificate in a vault
+      description: Re-issues a certificate held in the named vault as a new current version, matching the flat route.
+      operationId: renewCertificateInVault
+      tags:
+        - Certificates
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenewCertificateRequest"
+      responses:
+        "200":
+          description: Certificate renewed; the new version's metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CertificateVersion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 
   /api/v1/vaults/{vault_name}/certificates/{certificate_id}/backup:
     parameters:
@@ -4630,6 +4882,12 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     NotFound:
       description: The requested resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: The request conflicts with the resource's current state
       content:
         application/json:
           schema:
@@ -6639,6 +6897,7 @@ components:
         - auto_renew
         - renewal_days
         - enabled
+        - version
       properties:
         id:
           type: string
@@ -6667,6 +6926,73 @@ components:
         not_before:
           type: string
           format: date-time
+        version:
+          type: integer
+          minimum: 1
+          description: The certificate's current version number.
+
+    CertificateVersion:
+      type: object
+      description: One certificate version. Metadata only; there is no certificate body and no private key.
+      required:
+        - certificate_id
+        - version
+        - current
+        - created_at
+        - enabled
+      properties:
+        certificate_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        current:
+          type: boolean
+          description: True for the certificate's current version.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        not_before:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+
+    CertificateVersionListResponse:
+      type: object
+      required:
+        - versions
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CertificateVersion"
+
+    UpdateCertificateVersionRequest:
+      type: object
+      description: At least one field is required. not_before must not be after expires_at.
+      properties:
+        enabled:
+          type: boolean
+        expires_at:
+          type: string
+          format: date-time
+        not_before:
+          type: string
+          format: date-time
+
+    RenewCertificateRequest:
+      type: object
+      properties:
+        validity_days:
+          type: integer
+          minimum: 1
+          description: Validity of the new version in days. Omitted means the current version's validity period.
+
 
     CertificateListResponse:
       type: object

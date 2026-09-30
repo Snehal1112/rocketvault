@@ -361,9 +361,11 @@ func TestCertToDomainResponse_PopulatesFields(t *testing.T) {
 		Tags:      []string{"tag1"},
 		AutoRenew: true,
 		Enabled:   true,
+		Version:   3,
 	}
 
 	resp := certToDomainResponse(cert)
+	assert.Equal(t, 3, resp.Version)
 	assert.Equal(t, certID, resp.ID)
 	assert.Equal(t, "my-cert", resp.Name)
 	assert.Equal(t, userID, resp.UserID)

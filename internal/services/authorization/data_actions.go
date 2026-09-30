@@ -257,10 +257,22 @@ func mapCertificateAction(method, rest string) (model.DataAction, RouteKind) {
 			if method == http.MethodPost {
 				return model.ActionCertificatesBackup, RouteVaultData
 			}
+		case "versions":
+			if method == http.MethodGet {
+				return model.ActionCertificatesRead, RouteVaultData
+			}
 		case "renew":
 			if method == http.MethodPost {
 				return model.ActionCertificatesCreate, RouteVaultData
 			}
+		}
+	}
+	if len(seg) == 3 && seg[1] == "versions" {
+		switch method {
+		case http.MethodGet:
+			return model.ActionCertificatesRead, RouteVaultData
+		case http.MethodPut:
+			return model.ActionCertificatesUpdate, RouteVaultData
 		}
 	}
 	return "", RouteVaultData

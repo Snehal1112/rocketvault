@@ -187,8 +187,13 @@ func (s *recordingCertService) ListCertificates(_ context.Context, scope model.S
 func (s *recordingCertService) DeleteCertificate(context.Context, uuid.UUID, model.Scope) error {
 	panic("unexpected")
 }
-func (s *recordingCertService) RenewCertificate(context.Context, uuid.UUID, model.Scope, int) (*certServices.CreateCertificateResult, error) {
-	panic("unexpected")
+func (s *recordingCertService) RenewCertificate(_ context.Context, certID uuid.UUID, scope model.Scope, _ int) (*certServices.CreateCertificateResult, error) {
+	s.versionCalls = append(s.versionCalls, "renew")
+	s.versionScope = scope
+	if s.getInVaultErr != nil {
+		return nil, s.getInVaultErr
+	}
+	return &certServices.CreateCertificateResult{CertID: certID, Version: 2}, nil
 }
 func (s *recordingCertService) ValidateCertificateAccess(context.Context, uuid.UUID, model.Scope) error {
 	panic("unexpected")

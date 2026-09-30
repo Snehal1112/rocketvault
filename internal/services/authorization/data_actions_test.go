@@ -76,6 +76,10 @@ func TestMapRouteToDataAction(t *testing.T) {
 		{"list deleted certificates", http.MethodGet, "/api/v1/deleted/certificates", model.ActionCertificatesRead, RouteVaultData},
 		{"recover certificate", http.MethodPost, "/api/v1/deleted/certificates/abc/restore", model.ActionCertificatesRecover, RouteVaultData},
 		{"purge certificate", http.MethodDelete, "/api/v1/deleted/certificates/abc/purge", model.ActionCertificatesPurge, RouteVaultData},
+		{"list certificate versions", http.MethodGet, "/api/v1/certificates/abc/versions", model.ActionCertificatesRead, RouteVaultData},
+		{"get certificate version", http.MethodGet, "/api/v1/certificates/abc/versions/2", model.ActionCertificatesRead, RouteVaultData},
+		{"update certificate version", http.MethodPut, "/api/v1/certificates/abc/versions/2", model.ActionCertificatesUpdate, RouteVaultData},
+		{"renew certificate", http.MethodPost, "/api/v1/certificates/abc/renew", model.ActionCertificatesCreate, RouteVaultData},
 
 		// Vault data-plane. Use flat path "/api/v1/purge"; the test loop below
 		// auto-generates vault-scoped "/api/v1/vaults/prod/purge" by prepending
@@ -153,6 +157,10 @@ func TestMapRouteToDataActionUnmappedMethodFailsClosed(t *testing.T) {
 		{http.MethodPost, "/api/v1/deleted/secrets/abc/unknown"},
 		{http.MethodGet, "/api/v1/vaults/prod/secrets/abc/unknown"},
 		{http.MethodGet, "/api/v1/keys/import"},
+		{http.MethodDelete, "/api/v1/certificates/abc/versions/2"},
+		{http.MethodPost, "/api/v1/certificates/abc/versions"},
+		{http.MethodGet, "/api/v1/certificates/abc/renew"},
+		{http.MethodGet, "/api/v1/certificates/abc/versions/2/extra"},
 	}
 	for _, c := range cases {
 		action, kind := MapRouteToDataAction(c.method, c.path)
