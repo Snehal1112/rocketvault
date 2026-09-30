@@ -146,6 +146,7 @@ func makeCertsTable(t *testing.T, db *sql.DB) {
 		);
 	`)
 	require.NoError(t, err)
+	createCertificateVersionsTable(t, db)
 }
 
 // makeUsersTable creates the minimal users + bootstrap_tokens schema.

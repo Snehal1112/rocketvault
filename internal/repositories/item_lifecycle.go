@@ -33,12 +33,18 @@ import (
 //     explicitly -- the same reason RoleAssignmentRepository.DeleteByVault and
 //     AccessPolicyRepository.DeleteByVault exist.
 type itemLifecycleConfig struct {
-	table              string // SQL table name, plural: "secrets" / "keys" / "certificates"
-	item               string // singular label: "secret" / "key" / "certificate"
-	itemCap            string // capitalized singular label: "Secret" / "Key" / "Certificate"
-	idField            string // logrus field key for id-scoped debug logs: "secret_id" / "key_id" / "cert_id"
-	tagTable           string // join table holding this item's tags: "secret_tags" / "key_tags" / "certificate_tags"
-	tagFK              string // the tag table's column referencing the item: "secret_id" / "key_id" / "certificate_id"
+	table    string // SQL table name, plural: "secrets" / "keys" / "certificates"
+	item     string // singular label: "secret" / "key" / "certificate"
+	itemCap  string // capitalized singular label: "Secret" / "Key" / "Certificate"
+	idField  string // logrus field key for id-scoped debug logs: "secret_id" / "key_id" / "cert_id"
+	tagTable string // join table holding this item's tags: "secret_tags" / "key_tags" / "certificate_tags"
+	tagFK    string // the tag table's column referencing the item: "secret_id" / "key_id" / "certificate_id"
+	// versionTable/versionFK name the item's archived-version table when the
+	// purge and delete paths must clear it explicitly. Only certificates set
+	// them. The same SQLite cascade caveat applies to key_versions and
+	// secret_versions, but those are tracked separately as B26.
+	versionTable       string
+	versionFK          string
 	auditActor         string
 	purgeErr           error
 	notFoundIsSentinel bool
@@ -48,6 +54,19 @@ type itemLifecycleConfig struct {
 
 // passthroughWrap runs fn directly with no metrics wrapping — secret's wrap.
 func passthroughWrap(_ string, fn func() error) error { return fn() }
+
+// deleteItemVersions removes id's archived-version rows when cfg names a
+// version table. See itemLifecycleConfig.versionTable.
+func deleteItemVersions(ctx context.Context, ex db.DBTX, cfg itemLifecycleConfig, id uuid.UUID) error {
+	if cfg.versionTable == "" {
+		return nil
+	}
+	if _, err := ex.ExecContext(ctx,
+		"DELETE FROM "+cfg.versionTable+" WHERE "+cfg.versionFK+" = ?", id.String()); err != nil {
+		return fmt.Errorf("failed to delete %s versions: %w", cfg.item, err)
+	}
+	return nil
+}
 
 // softDeleteItem marks one row deleted_at = now(), refusing rows already
 // soft-deleted.
@@ -165,6 +184,10 @@ func purgeItem(ctx context.Context, conn db.DB, cfg itemLifecycleConfig, id uuid
 			cfg.log.LogAuditError(cfg.auditActor, op, "failed", "Failed to purge "+cfg.item+" tags", tagErr)
 			return fmt.Errorf("failed to purge %s tags: %w", cfg.item, tagErr)
 		}
+		if verErr := deleteItemVersions(ctx, tx, cfg, id); verErr != nil {
+			cfg.log.LogAuditError(cfg.auditActor, op, "failed", "Failed to purge "+cfg.item+" versions", verErr)
+			return verErr
+		}
 
 		result, err := tx.ExecContext(ctx, "DELETE FROM "+cfg.table+" WHERE id = ?", id.String())
 		if err != nil {
@@ -277,6 +300,15 @@ func purgeVaultContents(ctx context.Context, ex db.DBTX, cfg itemLifecycleConfig
 			cfg.log.LogAuditError(vaultID.String(), op, "failed", "Failed to purge vault "+cfg.tagTable, tagErr)
 			return fmt.Errorf("failed to purge vault %s: %w", cfg.tagTable, tagErr)
 		}
+		// Same cascade caveat for archived versions, through the same subquery.
+		if cfg.versionTable != "" {
+			if _, verErr := ex.ExecContext(ctx,
+				"DELETE FROM "+cfg.versionTable+" WHERE "+cfg.versionFK+
+					" IN (SELECT id FROM "+cfg.table+" WHERE vault_id = ?)", vaultID.String()); verErr != nil {
+				cfg.log.LogAuditError(vaultID.String(), op, "failed", "Failed to purge vault "+cfg.versionTable, verErr)
+				return fmt.Errorf("failed to purge vault %s: %w", cfg.versionTable, verErr)
+			}
+		}
 
 		_, err := ex.ExecContext(ctx, "DELETE FROM "+cfg.table+" WHERE vault_id = ?", vaultID.String())
 		if err != nil {
@@ -314,6 +346,10 @@ func deleteItemWithTags(ctx context.Context, conn db.DB, cfg itemLifecycleConfig
 			"DELETE FROM "+cfg.tagTable+" WHERE "+cfg.tagFK+" = ?", id.String()); err != nil {
 			cfg.log.LogAuditError(cfg.auditActor, op, "failed", "Failed to delete tags", err)
 			return fmt.Errorf("failed to delete tags: %w", err)
+		}
+		if verErr := deleteItemVersions(ctx, tx, cfg, id); verErr != nil {
+			cfg.log.LogAuditError(cfg.auditActor, op, "failed", "Failed to delete "+cfg.item+" versions", verErr)
+			return verErr
 		}
 
 		result, err := tx.ExecContext(ctx, "DELETE FROM "+cfg.table+" WHERE id = ?", id.String())

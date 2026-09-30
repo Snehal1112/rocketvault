@@ -121,6 +121,7 @@ func setupFullCertDB(t *testing.T) *sql.DB {
 		);
 	`)
 	require.NoError(t, err)
+	createCertificateVersionsTable(t, db)
 	return db
 }
 

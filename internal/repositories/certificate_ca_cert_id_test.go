@@ -49,6 +49,7 @@ func setupCertCACertIDTestDB(t *testing.T) *sql.DB {
 		);
 	`)
 	require.NoError(t, err)
+	createCertificateVersionsTable(t, db)
 
 	t.Cleanup(func() { db.Close() }) //nolint:errcheck,gosec
 	return db

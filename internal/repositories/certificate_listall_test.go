@@ -55,6 +55,7 @@ func setupCertListAllTestDB(t *testing.T) *sql.DB {
 		);
 	`)
 	require.NoError(t, err, "create certificates schema")
+	createCertificateVersionsTable(t, raw)
 
 	return raw
 }

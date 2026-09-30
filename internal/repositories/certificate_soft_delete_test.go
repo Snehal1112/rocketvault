@@ -65,6 +65,7 @@ func setupCertTestDB(t *testing.T) *sql.DB {
 		);
 	`)
 	require.NoError(t, err, "failed to create certificate test schema")
+	createCertificateVersionsTable(t, db)
 
 	t.Cleanup(func() { db.Close() }) //nolint:errcheck,gosec
 

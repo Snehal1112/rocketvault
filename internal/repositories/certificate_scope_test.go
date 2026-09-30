@@ -50,6 +50,7 @@ func newScopeTestCertRepo(t *testing.T) *CertificateRepository {
 		PRIMARY KEY (certificate_id, tag)
 	)`)
 	require.NoError(t, err)
+	createCertificateVersionsTable(t, db)
 
 	l := logrus.New()
 	l.SetLevel(logrus.PanicLevel)

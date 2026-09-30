@@ -264,6 +264,22 @@ func newCrossVaultCertsTestAPI(t *testing.T) (*API, *vaultFakeRepo, repositories
 		t.Fatalf("create certificate_tags schema: %v", err)
 	}
 
+	_, err = sqlDB.Exec(`CREATE TABLE IF NOT EXISTS certificate_versions (
+		certificate_id TEXT NOT NULL,
+		version        INTEGER NOT NULL,
+		certificate    TEXT NOT NULL,
+		private_key    TEXT NOT NULL,
+		key_id         TEXT NULL,
+		created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		expires_at     TIMESTAMP NULL,
+		not_before     TIMESTAMP NULL,
+		enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+		PRIMARY KEY (certificate_id, version)
+	)`)
+	if err != nil {
+		t.Fatalf("create certificate_versions schema: %v", err)
+	}
+
 	certRepo := repositories.NewCertificateRepository(rvdb.NewConn(sqlDB, rvdb.SQLite), userTestLog())
 	certSvc := certServices.NewCertificateService(certServices.CertificateServiceConfig{
 		CertificateRepository: certRepo,
