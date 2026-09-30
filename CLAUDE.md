@@ -529,13 +529,14 @@ npm run typecheck # If available
 - **2026-10-01**: Certificate versioning — `GET .../versions`, `GET|PUT .../versions/{n}`
   and `POST .../renew` on both route shapes, version-aware backup, purge and
   master-key rotation, `rocketvault certificate versions list|get`, and the
-  `renew_certificate` MCP write tool (29 tools fully enabled, 20 with only
+  `renew_certificate` MCP write tool (28 tools with every gated tier
+  enabled, 29 once `allow_interactive_login` adds `login`; 20 with only
   `allow_write`). Plan: `docs/superpowers/plans/2026-10-01-certificate-versioning.md`.
 - **2026-08-24**: Added the MCP server (`rocketvault mcp`) — a Model Context
   Protocol interface exposing the vault to Claude Code and Claude Desktop over
   stdio. Read-only by default (10 tools), with independently gated tiers for
   writes, destructive operations, crypto and secret values (28 tools fully
-  enabled — verified live via `rocketvault mcp --check` on 2026-09-03; this
+  enabled as of then, before `renew_certificate` — verified live via `rocketvault mcp --check` on 2026-09-03; this
   line and the MCP plan docs previously said 27, which was off by one).
   Built on a new `internal/vaultapi` typed REST client, which the
   pending CLI remote-mode work is expected to reuse. Design:
