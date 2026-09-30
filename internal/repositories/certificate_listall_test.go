@@ -36,6 +36,7 @@ func setupCertListAllTestDB(t *testing.T) *sql.DB {
 			name TEXT NOT NULL,
 			certificate TEXT NOT NULL,
 			private_key TEXT NOT NULL,
+			version INTEGER NOT NULL DEFAULT 1,
 			created_at TIMESTAMP NOT NULL,
 			expires_at TIMESTAMP,
 			auto_renew BOOLEAN NOT NULL DEFAULT FALSE,

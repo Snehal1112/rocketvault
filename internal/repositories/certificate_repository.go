@@ -69,7 +69,7 @@ type CertificateFilter = model.CertificateFilter
 // silent -- the omitted fields simply read back as their zero values, so
 // nothing failed until someone depended on one. TestCertificateSelectListIsNotDuplicated
 // now fails the build if a third one appears.
-const certificateColumns = "id, user_id, vault_id, name, certificate, private_key, created_at, expires_at, auto_renew, renewal_days, key_id, ca_cert_id, enabled, not_before, deleted_at, purge_protection"
+const certificateColumns = "id, user_id, vault_id, name, certificate, private_key, created_at, expires_at, auto_renew, renewal_days, key_id, ca_cert_id, enabled, not_before, deleted_at, purge_protection, version"
 
 // scanCertificateRow scans one certificates row in the canonical column order.
 func scanCertificateRow(scan func(dest ...any) error) (model.Certificate, error) {
@@ -79,7 +79,7 @@ func scanCertificateRow(scan func(dest ...any) error) (model.Certificate, error)
 
 	if err := scan(&idStr, &userIDStr, &vaultIDStr, &cert.Name, &cert.Certificate, &cert.PrivateKey,
 		&cert.CreatedAt, &cert.ExpiresAt, &cert.AutoRenew, &cert.RenewalDays, &keyIDStr, &caCertIDStr,
-		&cert.Enabled, &cert.NotBefore, &cert.DeletedAt, &cert.PurgeProtection); err != nil {
+		&cert.Enabled, &cert.NotBefore, &cert.DeletedAt, &cert.PurgeProtection, &cert.Version); err != nil {
 		return cert, err
 	}
 
@@ -152,13 +152,16 @@ func (r *CertificateRepository) Update(ctx context.Context, cert *model.Certific
 		}
 		defer tx.Rollback() //nolint:errcheck
 
-		// ca_cert_id is deliberately absent: the CA link is set at creation and
-		// immutable afterwards. Renewal writes through this method, so touching
-		// the column here would erase the issuer on the first renewal (B37).
-		query := "UPDATE certificates SET name = ?, certificate = ?, private_key = ?, created_at = ?, expires_at = ?, auto_renew = ?, renewal_days = ?, enabled = ?, not_before = ? WHERE id = ?"
+		// Only metadata is written here. The body, the private key and the
+		// issuance dates belong to a version, and only a renewal changes them,
+		// through CertificateVersionRepository.ArchiveAndRenew under a version
+		// guard. Writing them here from a read taken before a concurrent
+		// renewal would put the old body back under the new version number.
+		// ca_cert_id is deliberately absent too: the CA link is set at
+		// creation and immutable afterwards (B37).
+		query := "UPDATE certificates SET name = ?, auto_renew = ?, renewal_days = ?, enabled = ?, not_before = ? WHERE id = ?"
 		execArgs := []any{
-			cert.Name, cert.Certificate, cert.PrivateKey, cert.CreatedAt, cert.ExpiresAt,
-			cert.AutoRenew, cert.RenewalDays, cert.Enabled, cert.NotBefore, cert.ID.String(),
+			cert.Name, cert.AutoRenew, cert.RenewalDays, cert.Enabled, cert.NotBefore, cert.ID.String(),
 		}
 
 		result, execErr := ScopedExec(ctx, tx, query, execArgs, scope)
@@ -426,11 +429,13 @@ func (r *CertificateRepository) insertCertAndTags(ctx context.Context, ex db.DBT
 	}
 
 	// Insert certificate with pre-encrypted private key and renewal metadata.
+	// version is the row's current version: 1 on create, the blob's own
+	// number on restore.
 	_, err := ex.ExecContext(
 		ctx,
-		"INSERT INTO certificates (id, user_id, vault_id, name, certificate, private_key, created_at, expires_at, auto_renew, renewal_days, key_id, ca_cert_id, enabled, not_before) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO certificates (id, user_id, vault_id, name, certificate, private_key, created_at, expires_at, auto_renew, renewal_days, key_id, ca_cert_id, enabled, not_before, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		cert.ID.String(), cert.UserID.String(), cert.VaultID.String(), cert.Name, cert.Certificate, cert.PrivateKey, cert.CreatedAt,
-		cert.ExpiresAt, cert.AutoRenew, cert.RenewalDays, cert.KeyID.String(), caCertID, cert.Enabled, cert.NotBefore,
+		cert.ExpiresAt, cert.AutoRenew, cert.RenewalDays, cert.KeyID.String(), caCertID, cert.Enabled, cert.NotBefore, cert.CurrentVersion(),
 	)
 	if err != nil {
 		if db.SQLite.IsConstraintErr(err) {

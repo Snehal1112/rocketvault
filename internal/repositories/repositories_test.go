@@ -94,6 +94,7 @@ func setupFullCertDB(t *testing.T) *sql.DB {
 			name TEXT NOT NULL,
 			certificate TEXT NOT NULL,
 			private_key TEXT NOT NULL,
+			version INTEGER NOT NULL DEFAULT 1,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMP DEFAULT NULL,
 			purge_protection BOOLEAN NOT NULL DEFAULT FALSE,

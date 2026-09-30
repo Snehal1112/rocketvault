@@ -30,6 +30,7 @@ func setupCertCACertIDTestDB(t *testing.T) *sql.DB {
 			name TEXT NOT NULL,
 			certificate TEXT NOT NULL,
 			private_key TEXT NOT NULL,
+			version INTEGER NOT NULL DEFAULT 1,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMP NULL,
 			purge_protection BOOLEAN NOT NULL DEFAULT FALSE,
@@ -146,7 +147,8 @@ func TestCertificateRepository_CACertID_SurvivesUpdate(t *testing.T) {
 
 	got, err := repo.Read(ctx, cert.ID, scope)
 	require.NoError(t, err)
-	require.Equal(t, "renewed-pem", got.Certificate)
+	require.Equal(t, "cert-pem", got.Certificate,
+		"Update writes metadata only; a renewal writes the body through ArchiveAndRenew")
 	require.NotNil(t, got.CACertID, "Update must leave ca_cert_id alone")
 	require.Equal(t, caCertID, *got.CACertID)
 }
