@@ -74,14 +74,8 @@ func (s *certRenewalService) CheckAndRenewCertificates(ctx context.Context) (int
 		}
 
 		if cert.AutoRenew {
-			// Preserve original validity period when renewing.
-			validityDays := 365
-			if !cert.CreatedAt.IsZero() && cert.ExpiresAt != nil {
-				validityDays = int(cert.ExpiresAt.Sub(cert.CreatedAt).Hours() / 24)
-			}
-			if validityDays <= 0 {
-				validityDays = 365
-			}
+			// Preserve the current version's validity period when renewing.
+			validityDays := CurrentValidityDays(&cert)
 
 			_, err := s.certSvc.RenewCertificate(ctx, cert.ID, model.NewAdminScope(cert.UserID), validityDays)
 			if err != nil {
@@ -100,4 +94,20 @@ func (s *certRenewalService) CheckAndRenewCertificates(ctx context.Context) (int
 	}
 
 	return renewed, warned, nil
+}
+
+// CurrentValidityDays returns the validity period of cert's current version
+// in whole days: expires_at minus created_at. It falls back to 365 when
+// either is missing or the difference is not positive. The auto-renew
+// scheduler and the renew route both use it, so a renewal without an
+// explicit validity keeps the period the certificate already had.
+func CurrentValidityDays(cert *model.Certificate) int {
+	if cert == nil || cert.CreatedAt.IsZero() || cert.ExpiresAt == nil {
+		return 365
+	}
+	days := int(cert.ExpiresAt.Sub(cert.CreatedAt).Hours() / 24)
+	if days <= 0 {
+		return 365
+	}
+	return days
 }

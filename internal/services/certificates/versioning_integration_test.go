@@ -161,3 +161,41 @@ func TestCertificateVersions_OutOfScopeOrDeletedParentIsNotFound(t *testing.T) {
 	_, err = h.svc.ListCertificateVersions(ctx, certID, h.scope())
 	assert.True(t, errors.Is(err, ErrCertNotFound), "a soft-deleted parent is a 404")
 }
+
+func TestCheckAndRenewCertificates_CreatesVersionWithPreservedValidity(t *testing.T) {
+	h := newVersioningHarness(t)
+	ctx := context.Background()
+	certID := h.createCert(t, "auto-renewed")
+
+	// Move the certificate into its renewal window, with a 365-day validity.
+	now := time.Now().UTC()
+	created := now.Add(-355 * 24 * time.Hour)
+	expires := now.Add(10 * 24 * time.Hour)
+	_, err := h.raw.Exec("UPDATE certificates SET created_at = ?, expires_at = ?, auto_renew = ?, renewal_days = ? WHERE id = ?",
+		created, expires, true, 30, certID.String())
+	require.NoError(t, err)
+
+	scheduler := NewCertificateRenewalService(RenewalServiceConfig{
+		CertRepository:     h.certRepo,
+		CertificateService: h.svc,
+		Logger:             newTestCertLogger(),
+	})
+	renewed, warned, err := scheduler.CheckAndRenewCertificates(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, renewed)
+	assert.Zero(t, warned)
+
+	versions, err := h.svc.ListCertificateVersions(ctx, certID, h.scope())
+	require.NoError(t, err)
+	require.Len(t, versions, 2)
+	assert.Equal(t, 1, versions[0].Version)
+	assert.False(t, versions[0].Current)
+	require.NotNil(t, versions[0].ExpiresAt)
+	assert.WithinDuration(t, expires, *versions[0].ExpiresAt, time.Second)
+
+	assert.Equal(t, 2, versions[1].Version)
+	assert.True(t, versions[1].Current)
+	require.NotNil(t, versions[1].ExpiresAt)
+	assert.WithinDuration(t, time.Now().AddDate(0, 0, 365), *versions[1].ExpiresAt, 24*time.Hour,
+		"validity is computed from the current version's created_at and expires_at")
+}
