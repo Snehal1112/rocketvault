@@ -152,16 +152,18 @@ func (r *CertificateRepository) Update(ctx context.Context, cert *model.Certific
 		}
 		defer tx.Rollback() //nolint:errcheck
 
-		// Only metadata is written here. The body, the private key and the
-		// issuance dates belong to a version, and only a renewal changes them,
-		// through CertificateVersionRepository.ArchiveAndRenew under a version
-		// guard. Writing them here from a read taken before a concurrent
-		// renewal would put the old body back under the new version number.
+		// Only metadata is written here: the body, the private key and
+		// created_at/expires_at belong to a version and change only through
+		// CertificateVersionRepository.ArchiveAndRenew. enabled and not_before
+		// stay user-settable, but a renewal rewrites them too, so the UPDATE is
+		// guarded by the version the caller read. A write built from a read
+		// taken before a concurrent renewal matches no row and reports
+		// ErrCertificateVersionConflict instead of reverting the new version.
 		// ca_cert_id is deliberately absent too: the CA link is set at
 		// creation and immutable afterwards (B37).
-		query := "UPDATE certificates SET name = ?, auto_renew = ?, renewal_days = ?, enabled = ?, not_before = ? WHERE id = ?"
+		query := "UPDATE certificates SET name = ?, auto_renew = ?, renewal_days = ?, enabled = ?, not_before = ? WHERE id = ? AND version = ?"
 		execArgs := []any{
-			cert.Name, cert.AutoRenew, cert.RenewalDays, cert.Enabled, cert.NotBefore, cert.ID.String(),
+			cert.Name, cert.AutoRenew, cert.RenewalDays, cert.Enabled, cert.NotBefore, cert.ID.String(), cert.CurrentVersion(),
 		}
 
 		result, execErr := ScopedExec(ctx, tx, query, execArgs, scope)
@@ -177,6 +179,16 @@ func (r *CertificateRepository) Update(ctx context.Context, cert *model.Certific
 			return fmt.Errorf("failed to get rows affected: %w", rowsErr)
 		}
 		if rowsAffected == 0 {
+			// Tell a lost renewal race apart from a missing row. The probe is
+			// scoped, so an out-of-scope row still reads as not found.
+			current, probeErr := ScopedGet(ctx, tx, "SELECT version FROM certificates WHERE id = ? AND deleted_at IS NULL",
+				[]any{cert.ID.String()}, scope, func(row *sql.Row) (int, error) {
+					var v int
+					return v, row.Scan(&v)
+				})
+			if probeErr == nil && current != cert.CurrentVersion() {
+				return fmt.Errorf("certificate %s is no longer at version %d: %w", cert.ID, cert.CurrentVersion(), ErrCertificateVersionConflict)
+			}
 			return fmt.Errorf("certificate not found")
 		}
 

@@ -279,24 +279,67 @@ func TestUpdateCurrentLifecycle_StaleVersionConflicts(t *testing.T) {
 	assert.True(t, got.Enabled, "version 2 must be untouched by an update aimed at version 1")
 }
 
-// TestCertificateUpdate_NeverRewritesRenewedMaterial pins Review Focus 1: a
-// metadata update built from a read taken before a renewal must not put the
-// old body, key or expiry back over the new version.
-func TestCertificateUpdate_NeverRewritesRenewedMaterial(t *testing.T) {
+// TestCertificateUpdate_StaleReadConflicts pins Review Focus 1: a metadata
+// update built from a read taken before a renewal must not put the old
+// not_before or enabled back over the new version, nor touch the body, key or
+// dates. It reports a version conflict instead.
+func TestCertificateUpdate_StaleReadConflicts(t *testing.T) {
 	certs, versions, _ := newCertVersionFixture(t)
 	ctx := context.Background()
 	vaultID := uuid.New()
 	cert := seedVersionedCert(t, certs, vaultID)
 	scope := model.NewVaultScope(vaultID, cert.UserID)
 
+	// Give the seed an old not_before and enabled = true, then read it.
+	oldNotBefore := time.Now().Add(-48 * time.Hour).UTC()
+	cert.NotBefore = &oldNotBefore
+	require.NoError(t, certs.Update(ctx, cert, scope))
 	stale, err := certs.Read(ctx, cert.ID, scope)
 	require.NoError(t, err)
+	require.True(t, stale.Enabled)
+	require.NotNil(t, stale.NotBefore)
+
+	renewed := renewedFrom(stale, "PEM-v2")
+	require.NoError(t, versions.ArchiveAndRenew(ctx, stale.ArchiveRecord(), renewed, scope))
+
+	stale.Name = "renamed-after-renewal"
+	stale.Enabled = false
+	err = certs.Update(ctx, stale, scope)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, repositories.ErrCertificateVersionConflict))
+
+	got, err := certs.Read(ctx, cert.ID, scope)
+	require.NoError(t, err)
+	assert.Equal(t, cert.Name, got.Name)
+	assert.Equal(t, "PEM-v2", got.Certificate)
+	assert.Equal(t, "ENC-PEM-v2", got.PrivateKey)
+	assert.Equal(t, 2, got.Version)
+	assert.True(t, got.Enabled)
+	require.NotNil(t, got.NotBefore)
+	assert.WithinDuration(t, *renewed.NotBefore, *got.NotBefore, time.Second)
+	require.NotNil(t, got.ExpiresAt)
+	assert.WithinDuration(t, *renewed.ExpiresAt, *got.ExpiresAt, time.Second)
+	assert.WithinDuration(t, renewed.CreatedAt, got.CreatedAt, time.Second)
+}
+
+// TestCertificateUpdate_FreshReadSucceedsWithoutTouchingMaterial pins that an
+// update built from a current read lands, and still writes metadata only.
+func TestCertificateUpdate_FreshReadSucceedsWithoutTouchingMaterial(t *testing.T) {
+	certs, versions, _ := newCertVersionFixture(t)
+	ctx := context.Background()
+	vaultID := uuid.New()
+	cert := seedVersionedCert(t, certs, vaultID)
+	scope := model.NewVaultScope(vaultID, cert.UserID)
 
 	renewed := renewedFrom(cert, "PEM-v2")
 	require.NoError(t, versions.ArchiveAndRenew(ctx, cert.ArchiveRecord(), renewed, scope))
 
-	stale.Name = "renamed-after-renewal"
-	require.NoError(t, certs.Update(ctx, stale, scope))
+	fresh, err := certs.Read(ctx, cert.ID, scope)
+	require.NoError(t, err)
+	fresh.Name = "renamed-after-renewal"
+	fresh.Certificate = "TAMPERED"
+	fresh.PrivateKey = "TAMPERED"
+	require.NoError(t, certs.Update(ctx, fresh, scope))
 
 	got, err := certs.Read(ctx, cert.ID, scope)
 	require.NoError(t, err)
