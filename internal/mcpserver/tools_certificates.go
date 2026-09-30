@@ -53,17 +53,29 @@ type certificatePolicyResult struct {
 	IssuerName       Untrusted `json:"issuer_name,omitempty"`
 }
 
+// certificateVersionResult is one version in a certificate's history. It
+// has no field for a PEM or a private key.
+type certificateVersionResult struct {
+	Version   int    `json:"version"`
+	Current   bool   `json:"current"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
 type getCertificateResult struct {
-	Vault       string                   `json:"vault"`
-	Name        string                   `json:"name"`
-	ID          string                   `json:"id"`
-	Enabled     bool                     `json:"enabled"`
-	AutoRenew   bool                     `json:"auto_renew"`
-	RenewalDays int                      `json:"renewal_days"`
-	Tags        []Untrusted              `json:"tags,omitempty"`
-	CreatedAt   string                   `json:"created_at,omitempty"`
-	ExpiresAt   string                   `json:"expires_at,omitempty"`
-	Policy      *certificatePolicyResult `json:"policy,omitempty"`
+	Vault       string                     `json:"vault"`
+	Name        string                     `json:"name"`
+	ID          string                     `json:"id"`
+	Enabled     bool                       `json:"enabled"`
+	AutoRenew   bool                       `json:"auto_renew"`
+	RenewalDays int                        `json:"renewal_days"`
+	Version     int                        `json:"version"`
+	Versions    []certificateVersionResult `json:"versions,omitempty"`
+	Tags        []Untrusted                `json:"tags,omitempty"`
+	CreatedAt   string                     `json:"created_at,omitempty"`
+	ExpiresAt   string                     `json:"expires_at,omitempty"`
+	Policy      *certificatePolicyResult   `json:"policy,omitempty"`
 }
 
 // registerCertificatesReadTools adds the read-tier certificate tools.
@@ -73,7 +85,7 @@ func registerCertificatesReadTools(s *Server) {
 		Annotations{ReadOnly: true, Idempotent: true}, s.handleListCertificates)
 
 	registerIf(s, TierRead, "get_certificate",
-		"Get a certificate's metadata and issuance policy, including subject, SANs and renewal settings.",
+		"Get a certificate's metadata, version history and issuance policy, including subject, SANs and renewal settings.",
 		Annotations{ReadOnly: true, Idempotent: true}, s.handleGetCertificate)
 
 	registerIf(s, TierRead, "list_deleted",
@@ -137,11 +149,28 @@ func (s *Server) handleGetCertificate(ctx context.Context, _ *mcp.CallToolReques
 		Enabled:     certificate.Enabled,
 		AutoRenew:   certificate.AutoRenew,
 		RenewalDays: certificate.RenewalDays,
+		Version:     certificate.Version,
 		Tags:        WrapAll(certificate.Tags),
 		CreatedAt:   certificate.CreatedAt.Format(time.RFC3339),
 	}
 	if certificate.ExpiresAt != nil {
 		result.ExpiresAt = certificate.ExpiresAt.Format(time.RFC3339)
+	}
+
+	// The version history is supplementary, like the policy below.
+	if versions, err := s.client.GetCertificateVersions(ctx, vault, args.Name); err == nil {
+		for _, v := range versions {
+			entry := certificateVersionResult{
+				Version:   v.Version,
+				Current:   v.Current,
+				Enabled:   v.Enabled,
+				CreatedAt: v.CreatedAt.Format(time.RFC3339),
+			}
+			if v.ExpiresAt != nil {
+				entry.ExpiresAt = v.ExpiresAt.Format(time.RFC3339)
+			}
+			result.Versions = append(result.Versions, entry)
+		}
 	}
 
 	// The policy is supplementary; many certificates have none.

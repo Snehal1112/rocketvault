@@ -58,6 +58,9 @@ func leakRoutes() map[string]string {
 		"/api/v1/vaults/default/deleted/secrets": `{"deleted_secrets":[{"id":"` + dbSecretUUID + `",
 			"name":"old","value":"` + leakMarker + `"}],"total":1}`,
 
+		"/api/v1/vaults/default/certificates/" + tlsCertUUID + "/versions": `{"versions":[{"version":1,"current":true,
+			"private_key":"` + leakMarker + `","certificate":"` + leakMarker + `"}]}`,
+
 		"/api/v1/vaults/default/role-assignments": `{"role_assignments":[{"id":"` + assignmentID + `",
 			"principal_username":"` + freeTextMarker + `","role":"Key Vault Reader"}],"total":1}`,
 

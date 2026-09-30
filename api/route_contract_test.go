@@ -27,6 +27,8 @@ var clientCalledRoutes = []clientCalledRoute{
 	{"GET", "/api/v1/vaults/{vault_name}/role-assignments", "vaultapi.ListRoleAssignments"},
 	{"POST", "/api/v1/vaults/{vault_name}/role-assignments", "vaultapi.CreateRoleAssignment"},
 	{"DELETE", "/api/v1/vaults/{vault_name}/role-assignments/{assignment_id}", "vaultapi.DeleteRoleAssignment"},
+	{"GET", "/api/v1/vaults/{vault_name}/certificates/{certificate_id}/versions", "vaultapi.GetCertificateVersions"},
+	{"POST", "/api/v1/vaults/{vault_name}/certificates/{certificate_id}/renew", "vaultapi.RenewCertificate"},
 }
 
 // stripConstraints removes mux regex constraints from a path template so a

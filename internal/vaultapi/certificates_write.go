@@ -169,3 +169,35 @@ func (c *Client) UpsertCertificatePolicy(ctx context.Context, vault, name string
 		IssuerName:       wire.IssuerName,
 	}, nil
 }
+
+// renewCertificateBody is the renew route's optional body. A zero
+// ValidityDays is omitted, which keeps the current validity period.
+type renewCertificateBody struct {
+	ValidityDays int `json:"validity_days,omitempty"`
+}
+
+// RenewCertificate issues a new version of a certificate and returns that
+// version's metadata. validityDays of zero keeps the current period.
+func (c *Client) RenewCertificate(ctx context.Context, vault, name string, validityDays int) (*CertificateVersion, error) {
+	if vault == "" {
+		return nil, fmt.Errorf("vaultapi: vault is required to renew a certificate")
+	}
+	if name == "" {
+		return nil, fmt.Errorf("vaultapi: certificate name is required to renew a certificate")
+	}
+	if validityDays < 0 {
+		return nil, fmt.Errorf("vaultapi: validity_days must not be negative, got %d", validityDays)
+	}
+
+	id, err := c.Resolver().Resolve(ctx, vault, KindCertificates, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var version CertificateVersion
+	path := fmt.Sprintf("/api/v1/vaults/%s/certificates/%s/renew", vault, id)
+	if err := c.Do(ctx, http.MethodPost, path, renewCertificateBody{ValidityDays: validityDays}, &version); err != nil {
+		return nil, err
+	}
+	return &version, nil
+}

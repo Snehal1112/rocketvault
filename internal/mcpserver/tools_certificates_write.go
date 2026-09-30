@@ -67,6 +67,22 @@ type setCertificatePolicyResult struct {
 	DaysBeforeExpiry int       `json:"days_before_expiry"`
 }
 
+type renewCertificateArgs struct {
+	Name         string `json:"name" jsonschema:"the certificate's name, or its id"`
+	ValidityDays int    `json:"validity_days,omitempty" jsonschema:"days the new version is valid for; omitted keeps the current version's validity period"`
+	Vault        string `json:"vault,omitempty" jsonschema:"the vault holding the certificate; defaults to the server's configured vault"`
+}
+
+// renewCertificateResult describes the new version. It has no field for a
+// PEM or a private key.
+type renewCertificateResult struct {
+	Vault     string `json:"vault"`
+	Name      string `json:"name"`
+	Version   int    `json:"version"`
+	Enabled   bool   `json:"enabled"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
 // registerCertificatesWriteTools adds the write-tier certificate tools.
 func registerCertificatesWriteTools(s *Server) {
 	registerIf(s, TierWrite, "create_certificate",
@@ -74,6 +90,13 @@ func registerCertificatesWriteTools(s *Server) {
 			"use list_keys to find one or create_key to make one first. Never returns private key material.",
 		Annotations{ReadOnly: false, Idempotent: false, Destructive: false},
 		s.handleCreateCertificate)
+
+	registerIf(s, TierWrite, "renew_certificate",
+		"Renew a certificate: re-issue it over its key as a new version. The previous version is kept in the "+
+			"certificate's history. Never returns private key material.",
+		// Not idempotent: each call creates another version.
+		Annotations{ReadOnly: false, Idempotent: false, Destructive: false},
+		s.handleRenewCertificate)
 
 	registerIf(s, TierWrite, "set_certificate_policy",
 		"Replaces a certificate's entire issuance policy. Every required field is applied as given, and anything "+
@@ -170,4 +193,33 @@ func (s *Server) handleSetCertificatePolicy(ctx context.Context, _ *mcp.CallTool
 		AutoRenew:        policy.AutoRenew,
 		DaysBeforeExpiry: policy.DaysBeforeExpiry,
 	}, nil
+}
+
+func (s *Server) handleRenewCertificate(ctx context.Context, _ *mcp.CallToolRequest, args renewCertificateArgs) (*mcp.CallToolResult, renewCertificateResult, error) {
+	if args.Name == "" {
+		return errorResult("renew_certificate requires a name"), renewCertificateResult{}, nil
+	}
+	if args.ValidityDays < 0 {
+		return errorResult("renew_certificate requires a positive validity_days, or none"), renewCertificateResult{}, nil
+	}
+	vault, err := s.ResolveVault(args.Vault)
+	if err != nil {
+		return errorResult("%s", err), renewCertificateResult{}, nil
+	}
+
+	version, err := s.client.RenewCertificate(ctx, vault, args.Name, args.ValidityDays)
+	if err != nil {
+		return errorResult("could not renew certificate %q in vault %q: %s", args.Name, vault, err), renewCertificateResult{}, nil
+	}
+
+	result := renewCertificateResult{
+		Vault:   vault,
+		Name:    args.Name,
+		Version: version.Version,
+		Enabled: version.Enabled,
+	}
+	if version.ExpiresAt != nil {
+		result.ExpiresAt = version.ExpiresAt.Format(time.RFC3339)
+	}
+	return nil, result, nil
 }

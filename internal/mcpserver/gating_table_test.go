@@ -23,7 +23,7 @@ var (
 	}
 	writeTools = []string{
 		"create_certificate", "create_key", "create_vault",
-		"grant_vault_role", "recover_deleted", "rotate_key",
+		"grant_vault_role", "recover_deleted", "renew_certificate", "rotate_key",
 		"set_certificate_policy", "set_key_rotation_policy", "set_secret",
 	}
 	destructiveTools = []string{
@@ -117,10 +117,10 @@ func TestGatingTable_CountsMatchTheDocumentedSurface(t *testing.T) {
 		want                               int
 	}{
 		{false, false, false, false, 10},
-		{true, false, false, false, 19},
-		{true, true, false, false, 23},
-		{true, true, true, false, 26},
-		{true, true, true, true, 27},
+		{true, false, false, false, 20},
+		{true, true, false, false, 24},
+		{true, true, true, false, 27},
+		{true, true, true, true, 28},
 	}
 
 	for _, tc := range cases {

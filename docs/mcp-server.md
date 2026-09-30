@@ -73,7 +73,7 @@ independent, and all default to `false`:
 
 | Flag | Adds | Tools |
 |---|---|---|
-| `allow_write` | Create and update | 9 |
+| `allow_write` | Create and update | 10 |
 | `allow_destructive` | Delete, purge, revoke | 4 |
 | `allow_crypto` | Sign, verify, encrypt, decrypt | 4 |
 | `allow_secret_values` | `get_secret` can return plaintext | 0 (changes an existing tool) |

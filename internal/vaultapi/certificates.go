@@ -22,6 +22,7 @@ type CertificateSummary struct {
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	NotBefore *time.Time `json:"not_before,omitempty"`
+	Version   int        `json:"version"`
 }
 
 // Certificate is a single certificate with its renewal settings.
@@ -42,6 +43,7 @@ type certificateWire struct {
 	ExpiresAt   *time.Time `json:"expires_at"`
 	Enabled     bool       `json:"enabled"`
 	NotBefore   *time.Time `json:"not_before"`
+	Version     int        `json:"version"`
 }
 
 type certificatesListResponse struct {
@@ -61,6 +63,7 @@ func (w certificateWire) summary() (CertificateSummary, error) {
 		CreatedAt: w.CreatedAt,
 		ExpiresAt: w.ExpiresAt,
 		NotBefore: w.NotBefore,
+		Version:   w.Version,
 	}, nil
 }
 
@@ -199,4 +202,39 @@ func (c *Client) GetCertificatePolicy(ctx context.Context, vault, name string) (
 		DaysBeforeExpiry: wire.DaysBeforeExpiry,
 		IssuerName:       wire.IssuerName,
 	}, nil
+}
+
+// CertificateVersion is one entry of a certificate's version history. Like
+// the API type it mirrors, it has no field for a PEM or a private key.
+type CertificateVersion struct {
+	CertificateID uuid.UUID  `json:"certificate_id"`
+	Version       int        `json:"version"`
+	Current       bool       `json:"current"`
+	Enabled       bool       `json:"enabled"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	NotBefore     *time.Time `json:"not_before,omitempty"`
+}
+
+type certificateVersionsResponse struct {
+	Versions []CertificateVersion `json:"versions"`
+}
+
+// GetCertificateVersions returns a certificate's versions, oldest first,
+// with the current one last.
+func (c *Client) GetCertificateVersions(ctx context.Context, vault, name string) ([]CertificateVersion, error) {
+	if vault == "" {
+		return nil, fmt.Errorf("vaultapi: vault is required to list certificate versions")
+	}
+	id, err := c.Resolver().Resolve(ctx, vault, KindCertificates, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var response certificateVersionsResponse
+	path := fmt.Sprintf("/api/v1/vaults/%s/certificates/%s/versions", vault, id)
+	if err := c.Do(ctx, http.MethodGet, path, nil, &response); err != nil {
+		return nil, err
+	}
+	return response.Versions, nil
 }
