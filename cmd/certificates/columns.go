@@ -11,6 +11,7 @@ import (
 var certColumns = []vaultcli.Column[model.Certificate]{
 	vaultcli.Col("ID", func(c model.Certificate) string { return vaultcli.CellUUID(c.ID) }),
 	vaultcli.Col("Name", func(c model.Certificate) string { return c.Name }),
+	vaultcli.Col("Version", func(c model.Certificate) string { return vaultcli.CellInt(c.CurrentVersion()) }),
 	vaultcli.Col("Tags", func(c model.Certificate) string { return vaultcli.CellCSV(c.Tags) }),
 	vaultcli.Col("Expires", func(c model.Certificate) string { return vaultcli.CellOptTime(c.ExpiresAt) }),
 	vaultcli.Col("AutoRenew", func(c model.Certificate) string { return vaultcli.CellBool(c.AutoRenew) }),
@@ -60,4 +61,15 @@ var certPolicyListColumns = []vaultcli.Column[model.CertificatePolicyWithCertNam
 	vaultcli.Col("Days-Before-Expiry", func(p model.CertificatePolicyWithCertName) string {
 		return vaultcli.CellInt(p.DaysBeforeExpiry)
 	}),
+}
+
+// certVersionColumns is how a certificate version is printed. There is no
+// column for a PEM or a key: model.CertificateVersion carries neither.
+var certVersionColumns = []vaultcli.Column[model.CertificateVersion]{
+	vaultcli.Col("Version", func(v model.CertificateVersion) string { return vaultcli.CellInt(v.Version) }),
+	vaultcli.Col("Current", func(v model.CertificateVersion) string { return vaultcli.CellBool(v.Current) }),
+	vaultcli.Col("Enabled", func(v model.CertificateVersion) string { return vaultcli.CellBool(v.Enabled) }),
+	vaultcli.Col("Not-Before", func(v model.CertificateVersion) string { return vaultcli.CellOptTime(v.NotBefore) }),
+	vaultcli.Col("Expires", func(v model.CertificateVersion) string { return vaultcli.CellOptTime(v.ExpiresAt) }),
+	vaultcli.Col("Created", func(v model.CertificateVersion) string { return vaultcli.CellTime(v.CreatedAt) }),
 }

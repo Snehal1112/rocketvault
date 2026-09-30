@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"rocketvault/cmd/vaultcli"
+	certServices "rocketvault/internal/services/certificates"
 	"rocketvault/model"
 )
 
@@ -19,9 +20,10 @@ var renewCmd = &cobra.Command{
 	Use:   "renew <id>",
 	Short: "Renew a certificate",
 	Long: `Re-issue an X.509 certificate over its existing key with a fresh validity
-period counted from now. The renewal is written in place: the certificate
-keeps its ID, name, tags and vault, and only its body and expiry change.
-There is no new certificate ID to record.
+period counted from now. The certificate keeps its ID, name, tags and
+vault. There is no new certificate ID to record: the renewal adds a
+new version instead, and the body it replaces is kept as the previous
+version. List them with 'rocketvault certificate versions list <id>'.
 
 A certificate originally signed by a CA is re-issued through that same CA,
 so its issuer and chain are preserved; a self-signed certificate is
@@ -35,10 +37,11 @@ vault — not certificates/update. The certificate's key must still exist in
 that vault and be owned by the calling user.
 
 Acts on the vault named by --vault, defaulting to "default".
---validity-days must be positive. A certificate that is disabled, not yet
-valid or already expired reads as inaccessible and cannot be renewed, so
-renew before it lapses rather than after.`,
-	Example: `  # Renew for the default 365 days
+--validity-days must be positive; when omitted, the current version's
+validity period is kept. A certificate that is disabled, not yet valid
+or already expired reads as inaccessible and cannot be renewed, so renew
+before it lapses rather than after.`,
+	Example: `  # Renew for the same period as the current version
   rocketvault certificate renew <id>
 
   # Renew for a shorter period
@@ -63,7 +66,9 @@ renew before it lapses rather than after.`,
 		}
 
 		validityDays, _ := cmd.Flags().GetInt("validity-days")
-		if validityDays <= 0 {
+		// An omitted flag keeps the current period; an explicit value must be positive.
+		keepPeriod := !cmd.Flags().Changed("validity-days") && validityDays < 0
+		if !keepPeriod && validityDays <= 0 {
 			return s.Fail("validity-days must be greater than 0", nil)
 		}
 
@@ -72,15 +77,23 @@ renew before it lapses rather than after.`,
 		}
 		certService := s.Container.GetCertificateService()
 
+		if keepPeriod {
+			current, err := certService.GetCertificate(s.Ctx, certID, s.Scope)
+			if err != nil {
+				return s.Fail("failed to renew certificate", err)
+			}
+			validityDays = certServices.CurrentValidityDays(current)
+		}
+
 		result, err := certService.RenewCertificate(s.Ctx, certID, s.Scope, validityDays)
 		if err != nil {
 			return s.Fail("failed to renew certificate", err)
 		}
 
-		s.OK(fmt.Sprintf("certificate renewed: %s", result.CertID))
-		// Renewal updates the row in place, so there is one ID, not two.
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Certificate renewed successfully!\nCertificate ID: %s\nValidity: %d days\n",
-			result.CertID, validityDays)
+		s.OK(fmt.Sprintf("certificate renewed: %s, now version %d", result.CertID, result.Version))
+		// Renewal adds a version under the same ID, so there is one ID to print.
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Certificate renewed successfully!\nCertificate ID: %s\nVersion: %d\nValidity: %d days\n",
+			result.CertID, result.Version, validityDays)
 		return nil
 	},
 }
@@ -89,5 +102,5 @@ renew before it lapses rather than after.`,
 func InitCertificatesRenew(certificatesCmd *cobra.Command) {
 	certificatesCmd.AddCommand(renewCmd)
 
-	renewCmd.Flags().Int("validity-days", 365, "Certificate validity period in days")
+	renewCmd.Flags().Int("validity-days", -1, "Certificate validity period in days (default: the current version's period)")
 }

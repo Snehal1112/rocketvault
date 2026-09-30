@@ -29,3 +29,10 @@ func TestRenewCmd_LongDoesNotPromiseANewID(t *testing.T) {
 	require.Contains(t, renewCmd.Long, "There is no new certificate ID",
 		"the help must say the ID does not change")
 }
+
+// Renewal adds a version and keeps the old one, and the help must say so.
+func TestRenewCmd_LongDescribesVersioning(t *testing.T) {
+	require.Contains(t, renewCmd.Long, "new version")
+	require.Contains(t, renewCmd.Long, "certificate versions list")
+	require.NotContains(t, renewCmd.Long, "written in place")
+}

@@ -75,5 +75,6 @@ func init() {
 	certificates.InitCertificatesUpdate(certificateCmd)
 	certificates.InitCertificatesDelete(certificateCmd)
 	certificates.InitCertificatesRenew(certificateCmd)
+	certificates.InitCertificatesVersions(certificateCmd)
 	certificates.InitCertificatesRotationPolicy(certificateCmd)
 }
