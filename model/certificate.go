@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"time"
 
@@ -31,6 +32,11 @@ type Certificate struct {
 	RenewalDays      int        `json:"renewal_days"`
 	Enabled          bool       `json:"enabled"`
 	NotBefore        *time.Time `json:"not_before,omitempty"`
+	// Version is the number of the version this row holds. The row is
+	// always the current version; earlier ones live in certificate_versions.
+	// Zero is a row that predates versioning and reads as version 1, see
+	// CurrentVersion.
+	Version int `json:"version"`
 }
 
 // Clone returns a copy of c that shares no mutable state with the original:
@@ -68,6 +74,130 @@ func (c *Certificate) IsAccessible() bool {
 		return false
 	}
 	return true
+}
+
+// CurrentVersion returns the version number the certificate row holds. A
+// zero Version, from a caller or a backup blob that predates versioning, is
+// version 1: every certificate has at least one version.
+func (c *Certificate) CurrentVersion() int {
+	if c.Version < 1 {
+		return 1
+	}
+	return c.Version
+}
+
+// VersionMetadata returns the current version's metadata, read off the
+// certificate row itself.
+func (c *Certificate) VersionMetadata() CertificateVersion {
+	return CertificateVersion{
+		CertificateID: c.ID,
+		Version:       c.CurrentVersion(),
+		Current:       true,
+		CreatedAt:     c.CreatedAt,
+		ExpiresAt:     cloneTimePtr(c.ExpiresAt),
+		NotBefore:     cloneTimePtr(c.NotBefore),
+		Enabled:       c.Enabled,
+	}
+}
+
+// ArchiveRecord snapshots the current version, material included, so a
+// renewal can move it into certificate_versions under its own number.
+func (c *Certificate) ArchiveRecord() CertificateVersionRecord {
+	return CertificateVersionRecord{
+		CertificateID: c.ID,
+		Version:       c.CurrentVersion(),
+		Certificate:   c.Certificate,
+		PrivateKey:    c.PrivateKey,
+		KeyID:         c.KeyID,
+		CreatedAt:     c.CreatedAt,
+		ExpiresAt:     cloneTimePtr(c.ExpiresAt),
+		NotBefore:     cloneTimePtr(c.NotBefore),
+		Enabled:       c.Enabled,
+	}
+}
+
+// VersionUsable reports whether version v of this certificate may be used.
+// A disabled certificate gates every one of its versions; otherwise the
+// version's own lifecycle decides.
+func (c *Certificate) VersionUsable(v CertificateVersion) bool {
+	return c.Enabled && v.IsAccessible()
+}
+
+// CertificateVersion is one version of a certificate. It is metadata only:
+// there is deliberately no PEM and no private key field here, and none may
+// be added, because the versions handlers encode it straight onto the
+// response. CertificateVersionRecord carries the material, for backup only.
+type CertificateVersion struct {
+	CertificateID uuid.UUID  `json:"certificate_id"`
+	Version       int        `json:"version"`
+	Current       bool       `json:"current"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	NotBefore     *time.Time `json:"not_before,omitempty"`
+	Enabled       bool       `json:"enabled"`
+}
+
+// IsAccessible reports whether the version is enabled and inside its own
+// validity window.
+func (v CertificateVersion) IsAccessible() bool {
+	if !v.Enabled {
+		return false
+	}
+	now := time.Now()
+	if v.NotBefore != nil && now.Before(*v.NotBefore) {
+		return false
+	}
+	if v.ExpiresAt != nil && now.After(*v.ExpiresAt) {
+		return false
+	}
+	return true
+}
+
+// CertificateVersionRecord carries one archived version's material for
+// internal use: the repository and the backup service. It is never encoded
+// into an API response. PrivateKey holds the same master-key-encrypted form
+// the database stores, so a backup blob carrying records is key material.
+type CertificateVersionRecord struct {
+	CertificateID uuid.UUID  `json:"certificate_id"`
+	Version       int        `json:"version"`
+	Certificate   string     `json:"certificate"`
+	PrivateKey    string     `json:"private_key"`
+	KeyID         uuid.UUID  `json:"key_id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	NotBefore     *time.Time `json:"not_before,omitempty"`
+	Enabled       bool       `json:"enabled"`
+}
+
+// Metadata returns the metadata of this archived version.
+func (r CertificateVersionRecord) Metadata() CertificateVersion {
+	return CertificateVersion{
+		CertificateID: r.CertificateID,
+		Version:       r.Version,
+		Current:       false,
+		CreatedAt:     r.CreatedAt,
+		ExpiresAt:     cloneTimePtr(r.ExpiresAt),
+		NotBefore:     cloneTimePtr(r.NotBefore),
+		Enabled:       r.Enabled,
+	}
+}
+
+// CertificateVersionAttributes are the lifecycle attributes every version
+// carries and PUT .../versions/{version} may change.
+type CertificateVersionAttributes struct {
+	Enabled   bool
+	ExpiresAt *time.Time
+	NotBefore *time.Time
+}
+
+// ValidateCertificateVersionWindow rejects a not_before that falls after
+// expires_at. Either may be unset.
+func ValidateCertificateVersionWindow(notBefore, expiresAt *time.Time) error {
+	if notBefore != nil && expiresAt != nil && notBefore.After(*expiresAt) {
+		return fmt.Errorf("%w: not_before %s is after expires_at %s", ErrInvalidCertificateVersionAttributes,
+			notBefore.Format(time.RFC3339), expiresAt.Format(time.RFC3339))
+	}
+	return nil
 }
 
 // RevokedCertificate represents a revoked certificate in the CRL.

@@ -70,3 +70,16 @@ var ErrGlobalPurgeProtectionEnabled = errors.New("purge refused: soft_delete.pur
 // exist (or is not visible to the requesting owner). Propagates unwrapped to
 // callers — same pattern as ErrKeyPurgeProtected above.
 var ErrKeyVersionNotFound = errors.New("key version not found")
+
+// ErrCertificateVersionNotFound is returned when a certificate has no
+// version with the requested number, or the number is below 1.
+var ErrCertificateVersionNotFound = errors.New("certificate version not found")
+
+// ErrCertificateVersionConflict is returned when a renewal or a
+// current-version update loses a race: the version it read is no longer the
+// current one. The caller may re-read and retry.
+var ErrCertificateVersionConflict = errors.New("certificate version changed concurrently")
+
+// ErrInvalidCertificateVersionAttributes is returned when a version update
+// carries no attribute, or sets not_before after expires_at.
+var ErrInvalidCertificateVersionAttributes = errors.New("invalid certificate version attributes")

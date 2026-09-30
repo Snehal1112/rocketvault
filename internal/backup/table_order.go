@@ -38,6 +38,7 @@ var tableDependencies = map[string][]string{
 	"key_tags":                  {"keys"},
 	"key_versions":              {"keys"},
 	"certificate_tags":          {"certificates"},
+	"certificate_versions":      {"certificates"},
 	"certificate_policies":      {"certificates", "users"},
 	"key_rotation_policies":     {"keys", "users"},
 	"secret_tags":               {"secrets"},

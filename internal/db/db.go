@@ -470,6 +470,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			renewal_days INTEGER NOT NULL DEFAULT 30,
 			enabled BOOLEAN NOT NULL DEFAULT TRUE,
 			not_before TIMESTAMP NULL,
+			version INTEGER NOT NULL DEFAULT 1,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		);
 		CREATE INDEX IF NOT EXISTS idx_certificates_user_id ON certificates(user_id);
@@ -483,6 +484,21 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			FOREIGN KEY (certificate_id) REFERENCES certificates(id) ON DELETE CASCADE
 		);
 		CREATE INDEX IF NOT EXISTS idx_certificate_tags_tag ON certificate_tags(tag);
+
+		CREATE TABLE IF NOT EXISTS certificate_versions (
+			certificate_id TEXT NOT NULL,
+			version        INTEGER NOT NULL,
+			certificate    TEXT NOT NULL,
+			private_key    TEXT NOT NULL,
+			key_id         TEXT NULL,
+			created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			expires_at     TIMESTAMP NULL,
+			not_before     TIMESTAMP NULL,
+			enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+			PRIMARY KEY (certificate_id, version),
+			FOREIGN KEY (certificate_id) REFERENCES certificates(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_certificate_versions_certificate_id ON certificate_versions(certificate_id);
 
 		CREATE TABLE IF NOT EXISTS certificate_policies (
 			id                TEXT PRIMARY KEY,
@@ -810,6 +826,26 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 		// B37: remember which CA signed a certificate, so renewal can re-issue
 		// through the same CA instead of silently self-signing.
 		"ALTER TABLE certificates ADD COLUMN ca_cert_id TEXT NULL",
+		// Certificate versioning: the certificates row is always the current
+		// version, and every earlier one is archived in certificate_versions.
+		// Existing rows become version 1; nothing is backfilled. The ON DELETE
+		// CASCADE only fires on Postgres; SQLite deletes these rows explicitly
+		// in item_lifecycle.go.
+		"ALTER TABLE certificates ADD COLUMN version INTEGER NOT NULL DEFAULT 1",
+		`CREATE TABLE IF NOT EXISTS certificate_versions (
+			certificate_id TEXT NOT NULL,
+			version        INTEGER NOT NULL,
+			certificate    TEXT NOT NULL,
+			private_key    TEXT NOT NULL,
+			key_id         TEXT NULL,
+			created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			expires_at     TIMESTAMP NULL,
+			not_before     TIMESTAMP NULL,
+			enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+			PRIMARY KEY (certificate_id, version),
+			FOREIGN KEY (certificate_id) REFERENCES certificates(id) ON DELETE CASCADE
+		)`,
+		"CREATE INDEX IF NOT EXISTS idx_certificate_versions_certificate_id ON certificate_versions(certificate_id)",
 		// Milestone 3: service-account / OAuth2 table (CREATE TABLE IF NOT EXISTS is idempotent)
 		`CREATE TABLE IF NOT EXISTS oauth2_clients (
 			id            TEXT PRIMARY KEY,
