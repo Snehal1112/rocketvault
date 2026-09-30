@@ -284,6 +284,55 @@ omitted.</li>
 </pre></div>
 <p>Private key material is never returned; the response includes only public
 components (RSA <code>n</code>/<code>e</code>, EC <code>x</code>/<code>y</code>), same as <code>POST /api/v1/keys</code>.</p>
+<h3 id="certificate-endpoints">Certificate Endpoints</h3>
+<p>Certificates are versioned. Every create and every renewal produces a new
+numbered version; the certificate's ID and name never change. Version numbers
+are sequential integers starting at 1 (Azure Key Vault uses 32-hex version
+IDs; this is a deliberate divergence). Every route below also exists under
+<code>/api/v1/vaults/{vault_name}/certificates/...</code>. No response ever carries a PEM
+or a private key.</p>
+<h4 id="renew-a-certificate">Renew a Certificate</h4>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">POST /api/v1/certificates/{certificate_id}/renew
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{&quot;validity_days&quot;: 90}
+</pre></div>
+<p>The body is optional; without <code>validity_days</code> the new version keeps the
+current version's validity period. Requires the
+<code>Microsoft.KeyVault/vaults/certificates/create</code> data action.</p>
+<p><strong>Response:</strong> <code>200 OK</code>, the new version's metadata:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">json</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">{
+  &quot;certificate_id&quot;: &quot;550e8400-e29b-41d4-a716-446655440000&quot;,
+  &quot;version&quot;: 3,
+  &quot;current&quot;: true,
+  &quot;created_at&quot;: &quot;2026-10-01T10:30:00Z&quot;,
+  &quot;expires_at&quot;: &quot;2026-12-30T10:30:00Z&quot;,
+  &quot;not_before&quot;: &quot;2026-10-01T10:30:00Z&quot;,
+  &quot;enabled&quot;: true
+}
+</pre></div>
+<p><code>409</code> means the certificate is disabled or outside its validity window, or a
+concurrent renewal won; re-read and retry.</p>
+<h4 id="list-and-read-versions">List and Read Versions</h4>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">GET /api/v1/certificates/{certificate_id}/versions
+GET /api/v1/certificates/{certificate_id}/versions/{version}
+</pre></div>
+<p>The list is <code>{&quot;versions&quot;: [...]}</code>, oldest first, with the current version last
+and marked <code>&quot;current&quot;: true</code>. Both require the
+<code>Microsoft.KeyVault/vaults/certificates/read</code> data action.</p>
+<h4 id="update-a-versions-lifecycle">Update a Version's Lifecycle</h4>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">PUT /api/v1/certificates/{certificate_id}/versions/{version}
+Content-Type: application/json
+
+{&quot;enabled&quot;: false}
+</pre></div>
+<p>Accepts <code>enabled</code>, <code>expires_at</code> and <code>not_before</code>; at least one is required and
+<code>not_before</code> must not be after <code>expires_at</code> (otherwise <code>400</code>). Updating the
+current version is the same as updating the certificate's own attributes. A
+disabled or expired version is unusable, and a disabled certificate gates every
+version. Requires <code>Microsoft.KeyVault/vaults/certificates/update</code>. There is no
+route to delete a single version.</p>
 <h2 id="error-handling">Error Handling</h2>
 <h3 id="http-status-codes">HTTP Status Codes</h3>
 <ul>
@@ -292,6 +341,7 @@ components (RSA <code>n</code>/<code>e</code>, EC <code>x</code>/<code>y</code>)
 <li><code>400</code>: Bad Request (invalid input)</li>
 <li><code>401</code>: Unauthorized (missing/invalid token)</li>
 <li><code>404</code>: Not Found</li>
+<li><code>409</code>: Conflict (the resource changed concurrently, or is in a state that refuses the operation)</li>
 <li><code>500</code>: Internal Server Error</li>
 </ul>
 <h3 id="common-error-patterns">Common Error Patterns</h3>

@@ -28,6 +28,7 @@
 <li><a href="#authentication-flow">Authentication Flow</a></li>
 <li><a href="#secret-backup-and-restore">Secret Backup and Restore</a></li>
 <li><a href="#automated-secret-rotation">Automated Secret Rotation</a></li>
+<li><a href="#certificate-renewal-and-version-history">Certificate Renewal and Version History</a></li>
 <li><a href="#cicd-pipeline-integration">CI/CD Pipeline Integration</a></li>
 <li><a href="#monitoring-and-alerting">Monitoring and Alerting</a></li>
 <li><a href="#multi-environment-management">Multi-Environment Management</a></li>
@@ -578,6 +579,32 @@ rotator
   .catch((error) =&gt; {
     console.error(&quot;Rotation failed:&quot;, error);
   });
+</pre></div>
+<h2 id="certificate-renewal-and-version-history">Certificate Renewal and Version History</h2>
+<p>Renew a certificate, then confirm the previous version was kept:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">#!/usr/bin/env bash
+# renew_cert.sh - renew a certificate and show its version history.
+set -euo pipefail
+
+API=&quot;${ROCKETVAULT_URL:-http://127.0.0.1:8774}/api/v1/vaults/${VAULT:-default}&quot;
+CERT_ID=&quot;$1&quot;
+
+curl -sS -X POST &quot;$API/certificates/$CERT_ID/renew&quot; \
+  -H &quot;Authorization: Bearer $ROCKETVAULT_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; \
+  -d '{&quot;validity_days&quot;: 90}' | jq '{version, expires_at}'
+
+curl -sS &quot;$API/certificates/$CERT_ID/versions&quot; \
+  -H &quot;Authorization: Bearer $ROCKETVAULT_TOKEN&quot; | jq '.versions[] | {version, current, enabled, expires_at}'
+</pre></div>
+<p>The same from the CLI:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault certificate renew &quot;$CERT_ID&quot; --validity-days 90 --vault &quot;$VAULT&quot;
+rocketvault certificate versions list &quot;$CERT_ID&quot; --vault &quot;$VAULT&quot;
+</pre></div>
+<p>To retire an old version without deleting it, disable it:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">curl -sS -X PUT &quot;$API/certificates/$CERT_ID/versions/1&quot; \
+  -H &quot;Authorization: Bearer $ROCKETVAULT_TOKEN&quot; \
+  -H &quot;Content-Type: application/json&quot; -d '{&quot;enabled&quot;: false}'
 </pre></div>
 <h2 id="cicd-pipeline-integration">CI/CD Pipeline Integration</h2>
 <h3 id="github-actions-integration">GitHub Actions Integration</h3>

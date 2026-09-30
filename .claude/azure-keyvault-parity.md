@@ -220,7 +220,10 @@ is now wired, with a regression test.*
 | Get / List / Update / Delete | ✅ | ✅ full CRUD | ✅ |
 | Certificate policy (get/set/delete) | ✅ | ✅ `/certificates/{id}/policy` GET/PUT/DELETE | ✅ |
 | Auto-renewal | ✅ | ✅ `auto_renew`, `renewal_days`, renewal scheduler | ✅ |
-| Backup / Restore | ✅ | ✅ `/certificates/{id}/backup`, `/certificates/restore` — note this is an unencrypted, same-instance base64url blob (`internal/backup/item_backup.go:360-366`), not a portable export; see the passphrase-sealed Export row's design doc below for the distinction | ✅ |
+| Versioned certificates (stable identity, new version on issue and renew; list and get by version) | ✅ | ✅ `GET /certificates/{id}/versions`, `GET /certificates/{id}/versions/{n}`, `POST /certificates/{id}/renew` (design: `docs/superpowers/specs/2026-10-01-certificate-versioning-design.md`) | ✅ |
+| Per-version attributes (enabled, expires, not_before) | ✅ | ✅ `PUT /certificates/{id}/versions/{n}`; a disabled certificate gates every version | ✅ |
+| Version identifier format | 32-hex | sequential integers, like keys and secrets; new versions come only from renew because import and merge are unbuilt | 🟡 |
+| Backup / Restore | ✅ | ✅ `/certificates/{id}/backup`, `/certificates/restore` — the blob carries every archived version and restore replays them in one transaction; note this is an unencrypted, same-instance base64url blob (`internal/backup/item_backup.go`, `BackupCertificate`), not a portable export; see the passphrase-sealed Export row's design doc below for the distinction | ✅ |
 | Import certificate (PFX/PEM) | ✅ | ❌ no import route at all — not previously tracked in this table. Design specified, not yet built: `docs/superpowers/specs/2026-08-25-certificate-import-merge-design.md` | ❌ |
 | Merge CSR (pending certificate) | ✅ (full pending-operation lifecycle: create CSR via the vault, get it signed externally, merge later with no resupplied state) | ❌ no merge route at all — not previously tracked in this table. Design specified, not yet built, and deliberately scoped to a single-call merge (caller resupplies the CSR + signed cert together; no persisted pending-operation state) rather than Azure's full lifecycle: `docs/superpowers/specs/2026-08-25-certificate-import-merge-design.md` § 2.1 | ❌ |
 | Public-CA integration (DigiCert/GlobalSign) | ✅ | ❌ self-signed / internal only | ❌ |
@@ -485,22 +488,23 @@ they are capabilities Azure lacks, not parity gaps.
 | 1. Secrets management | 9 | 1 | 0 | 2 |
 | 2. Key management — operations | 9 | 3 | 1 | 0 |
 | 3. Key management — types & algorithms | 3 | 4 | 1 | 0 |
-| 4. Certificate management | 5 | 0 | 4 | 0 |
+| 4. Certificate management | 7 | 1 | 4 | 0 |
 | 5. Multi-vault / namespacing | 5 | 0 | 0 | 1 |
 | 6. Access control / authorization | 14 | 3 | 0 | 0 |
 | 7. Soft-delete, purge protection, recovery | 5 | 0 | 0 | 0 |
 | 8. HSM & cryptographic protection | 1 | 2 | 0 | 1 |
 | 9. Monitoring, audit & compliance | 1 | 1 | 1 | 3 |
 | 10. Platform & operations | 3 | 0 | 1 | 3 |
-| **Total** | **55** | **14** | **8** | **10** |
+| **Total** | **57** | **15** | **8** | **10** |
 
-**71% full parity** (55/77 parity-comparable rows), 18% partial, 10% not supported.
+**71% full parity** (57/80 parity-comparable rows), 19% partial, 10% not supported.
 Counting partial as usable-with-caveats, 90% of compared capabilities are present in
 some form. (Two rows added 2026-08-25 — certificate import and CSR merge, both
 ❌, specified but not yet built — moved this from 72%/54/75 to 70%/54/77. Key
 import closed the same day, moving it again to 71%/55/77; see
 `docs/superpowers/specs/2026-08-25-certificate-import-merge-design.md` and
 `docs/superpowers/specs/2026-08-25-key-import-jwk-design.md`.)
+(Three §4 rows added 2026-10-01 for certificate versioning moved this from 55/77 to 57/80.)
 
 Read that number with three caveats. **Rows are not equally weighted** — "geo-
 replication ❌" and "RSNULL 🟡" cost the same one row, though only one of them would

@@ -368,6 +368,73 @@ target vault, granted by the `Key Vault Crypto Officer` or
 Private key material is never returned; the response includes only public
 components (RSA `n`/`e`, EC `x`/`y`), same as `POST /api/v1/keys`.
 
+### Certificate Endpoints
+
+Certificates are versioned. Every create and every renewal produces a new
+numbered version; the certificate's ID and name never change. Version numbers
+are sequential integers starting at 1 (Azure Key Vault uses 32-hex version
+IDs; this is a deliberate divergence). Every route below also exists under
+`/api/v1/vaults/{vault_name}/certificates/...`. No response ever carries a PEM
+or a private key.
+
+#### Renew a Certificate
+
+```http
+POST /api/v1/certificates/{certificate_id}/renew
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"validity_days": 90}
+```
+
+The body is optional; without `validity_days` the new version keeps the
+current version's validity period. Requires the
+`Microsoft.KeyVault/vaults/certificates/create` data action.
+
+**Response:** `200 OK`, the new version's metadata:
+
+```json
+{
+  "certificate_id": "550e8400-e29b-41d4-a716-446655440000",
+  "version": 3,
+  "current": true,
+  "created_at": "2026-10-01T10:30:00Z",
+  "expires_at": "2026-12-30T10:30:00Z",
+  "not_before": "2026-10-01T10:30:00Z",
+  "enabled": true
+}
+```
+
+`409` means the certificate is disabled or outside its validity window, or a
+concurrent renewal won; re-read and retry.
+
+#### List and Read Versions
+
+```http
+GET /api/v1/certificates/{certificate_id}/versions
+GET /api/v1/certificates/{certificate_id}/versions/{version}
+```
+
+The list is `{"versions": [...]}`, oldest first, with the current version last
+and marked `"current": true`. Both require the
+`Microsoft.KeyVault/vaults/certificates/read` data action.
+
+#### Update a Version's Lifecycle
+
+```http
+PUT /api/v1/certificates/{certificate_id}/versions/{version}
+Content-Type: application/json
+
+{"enabled": false}
+```
+
+Accepts `enabled`, `expires_at` and `not_before`; at least one is required and
+`not_before` must not be after `expires_at` (otherwise `400`). Updating the
+current version is the same as updating the certificate's own attributes. A
+disabled or expired version is unusable, and a disabled certificate gates every
+version. Requires `Microsoft.KeyVault/vaults/certificates/update`. There is no
+route to delete a single version.
+
 ## Error Handling
 
 ### HTTP Status Codes
@@ -377,6 +444,7 @@ components (RSA `n`/`e`, EC `x`/`y`), same as `POST /api/v1/keys`.
 - `400`: Bad Request (invalid input)
 - `401`: Unauthorized (missing/invalid token)
 - `404`: Not Found
+- `409`: Conflict (the resource changed concurrently, or is in a state that refuses the operation)
 - `500`: Internal Server Error
 
 ### Common Error Patterns

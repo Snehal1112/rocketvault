@@ -1543,7 +1543,7 @@ still correctly asserts Reader may list versions.
 `listSecrets` (`api/secrets.go`) builds its response without values
 deliberately, which makes the versions route an outlier rather than a pattern.
 Keys are structurally safe already (`model.KeyVersion` has no `Value`, and its
-"metadata only" mapping is truthful). Certificates have no versions at all.
+"metadata only" mapping is truthful). Certificates had no versions at all when this was written; superseded 2026-10-01 by certificate versioning, whose `model.CertificateVersion` is metadata-only by the same rule as `model.KeyVersion`.
 
 **Bundled fix — see B31 below**, a distinct defect in the same code path found
 while fixing this one.

@@ -7,6 +7,7 @@ This document provides practical integration examples for common use cases when 
 - [Authentication Flow](#authentication-flow)
 - [Secret Backup and Restore](#secret-backup-and-restore)
 - [Automated Secret Rotation](#automated-secret-rotation)
+- [Certificate Renewal and Version History](#certificate-renewal-and-version-history)
 - [CI/CD Pipeline Integration](#cicd-pipeline-integration)
 - [Monitoring and Alerting](#monitoring-and-alerting)
 - [Multi-Environment Management](#multi-environment-management)
@@ -580,6 +581,42 @@ rotator
   .catch((error) => {
     console.error("Rotation failed:", error);
   });
+```
+
+## Certificate Renewal and Version History
+
+Renew a certificate, then confirm the previous version was kept:
+
+```bash
+#!/usr/bin/env bash
+# renew_cert.sh - renew a certificate and show its version history.
+set -euo pipefail
+
+API="${ROCKETVAULT_URL:-http://127.0.0.1:8774}/api/v1/vaults/${VAULT:-default}"
+CERT_ID="$1"
+
+curl -sS -X POST "$API/certificates/$CERT_ID/renew" \
+  -H "Authorization: Bearer $ROCKETVAULT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"validity_days": 90}' | jq '{version, expires_at}'
+
+curl -sS "$API/certificates/$CERT_ID/versions" \
+  -H "Authorization: Bearer $ROCKETVAULT_TOKEN" | jq '.versions[] | {version, current, enabled, expires_at}'
+```
+
+The same from the CLI:
+
+```bash
+rocketvault certificate renew "$CERT_ID" --validity-days 90 --vault "$VAULT"
+rocketvault certificate versions list "$CERT_ID" --vault "$VAULT"
+```
+
+To retire an old version without deleting it, disable it:
+
+```bash
+curl -sS -X PUT "$API/certificates/$CERT_ID/versions/1" \
+  -H "Authorization: Bearer $ROCKETVAULT_TOKEN" \
+  -H "Content-Type: application/json" -d '{"enabled": false}'
 ```
 
 ## CI/CD Pipeline Integration
