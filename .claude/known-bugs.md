@@ -4265,6 +4265,45 @@ incidentally, by pre-existing purge tests that would fail with "no such
 column" if a column name were wrong, not by a dedicated orphan-row
 assertion for those two types.
 
+### B86 — Restoring a certificate backup into a vault where the name already exists returns 500
+
+**Status**: Open (GitHub issue #51; found 2026-10-01 during the
+certificate-versioning regression smoke test; not caused by that work)
+**Severity**: Low-Medium — a routine, user-correctable conflict is reported as
+a server fault, and the response body carries the driver's raw error text; no
+data loss and no partial rows are left behind
+**Files**: `api/backup_item.go` (`restoreCertificate`, the `switch` after
+`svc.RestoreCertificate`), `internal/repositories/certificate_repository.go`
+(`insertCertAndTags`), `internal/repositories/name_taken_errors.go`
+
+**Symptom**: `POST /api/v1/vaults/{vault}/certificates/restore` with a blob
+whose certificate name is already taken by an active certificate in the target
+vault (for example restoring a backup into the vault it was taken from, while
+the original still exists) returns HTTP 500 whose `detailed_error` contains
+the driver's `UNIQUE constraint failed` text, instead of a 409. The restore
+is atomic, so no certificate or version rows are written.
+
+**Root cause**: the repository already wraps the unique-constraint error as
+`repositories.ErrNameTaken` (`certificate_repository.go:457`, added for B50),
+but no `api/` file maps `ErrNameTaken` to a status. The restore handler's
+`switch` has only `backup.ErrInvalidBlob` (400) and a `default` that calls
+`SetInternalError`, so the sentinel falls through to a 500. The same handler
+shape exists for secrets and keys (`api/backup_item.go`, `RestoreSecret` and
+`RestoreKey`); whether they behave the same, and whether create-with-a-taken-
+name does, was not tested — only that `grep` finds no `ErrNameTaken` mapping
+anywhere in `api/`.
+
+**Fix recipe**: map `repositories.ErrNameTaken` (via `errors.Is`) to a 409
+through the shared `Context.SetConflict` in the certificate, key and secret
+restore handlers, and in the create handlers if they share the gap, with a
+fixed message that does not echo the driver text. Add a handler test per
+route that restores or creates twice and asserts 409 and a body free of SQL
+text.
+
+**Verified not a regression of certificate versioning**: the restore code path
+and `api/backup_item.go` have no name-taken handling at the pre-versioning base
+commit (`05837d6`) either, and `api/backup_item.go` is unchanged since.
+
 ---
 
 ## Deferred Refactors
