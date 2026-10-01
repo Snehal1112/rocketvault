@@ -23,9 +23,9 @@ export of [2026-08-25-certificate-export-design.md](2026-08-25-certificate-expor
 `api/certificates.go`, `api/keys.go`, `api/keys_types.go`, a new
 `api/export.go`, the CLI create/import commands (`cmd/certificates/create.go`,
 `cmd/keys/`), `internal/vaultapi/` and `internal/mcpserver/` create tools (the
-`--exportable` flag and field only), `go.mod` (proposed new dependency
-`software.sslmate.com/src/go-pkcs12`, which needs the user's approval before the
-plan adds it), and the docs listed under Documentation.
+`--exportable` flag and field only), `go.mod` (new dependency
+`software.sslmate.com/src/go-pkcs12`, approved by the user on 2026-10-01), and
+the docs listed under Documentation.
 
 ---
 
