@@ -21,8 +21,11 @@ export of [2026-08-25-certificate-export-design.md](2026-08-25-certificate-expor
 `internal/container/service_container.go`,
 `internal/services/authorization/data_actions.go`, `internal/backup/item_backup.go`,
 `api/certificates.go`, `api/keys.go`, `api/keys_types.go`, a new
-`api/export.go`, `go.mod` (new dependency `software.sslmate.com/src/go-pkcs12`),
-and the docs listed under Documentation.
+`api/export.go`, the CLI create/import commands (`cmd/certificates/create.go`,
+`cmd/keys/`), `internal/vaultapi/` and `internal/mcpserver/` create tools (the
+`--exportable` flag and field only), `go.mod` (proposed new dependency
+`software.sslmate.com/src/go-pkcs12`, which needs the user's approval before the
+plan adds it), and the docs listed under Documentation.
 
 ---
 
@@ -70,6 +73,16 @@ export every private key in a vault.
   `POST /keys` and `POST /keys/import`. Repository `Update` never writes it
   (same pattern as `ca_cert_id`). A `PUT` carrying it is ignored like any
   unknown field.
+- Every creation surface gets the field, not only HTTP, because otherwise an
+  item created through it could never be exported: `--exportable` on the CLI
+  `certificates create`, `keys create` and `keys import` commands, and the
+  `exportable` field on the vault client (`internal/vaultapi`) and the MCP
+  create tools (`create_certificate`, `create_key`). The CLI paths run their own
+  authorization as today; setting the flag needs no extra permission beyond the
+  create itself.
+- Key rotation (`RotateKey`) updates the same key row, so it preserves
+  `exportable`; a test pins this. A rotated key's older versions export through
+  the same flag.
 - Creation rules:
   - `exportable: true` on an HSM-backed or `oct` key is a 400.
   - An exportable certificate requires an exportable key. Creating one over a
@@ -94,8 +107,13 @@ where the request carries `Format` (`pem` or `pkcs12`), `Password *string`,
    404. The parent's lifecycle gate applies (disabled or outside its valid time
    window: 409 `certificate_disabled`, `ErrCertLifecycleDenied`).
 2. Resolve the version: 0 or the current number uses the parent row; an archived
-   number uses `certificate_versions` (404 if absent). An archived version that is
-   disabled or outside its window is a 409 `certificate_disabled`.
+   number uses `certificate_versions` (404 if absent). The usability check is
+   the one versioning already defines: `Certificate.VersionUsable(v)`, which is
+   the parent being enabled AND that version being enabled and inside its own
+   `not_before`/`expires_at` window (`CertificateVersion.IsAccessible`). The
+   current version's `enabled` and dates live on the parent row. A failed check
+   is a 409 `certificate_disabled`. This is the first consumer of the per-version
+   `enabled` and dates that versioning added.
 3. `exportable` false: 403 `certificate_not_exportable`, with a reason.
 4. Decrypt the stored key copy for that version, parse it with
    `crypto.ParsePrivateKey`, and re-marshal with `x509.MarshalPKCS8PrivateKey`.
@@ -106,7 +124,10 @@ where the request carries `Format` (`pem` or `pkcs12`), `Password *string`,
 5. Chain: leaf first, then intermediates found by walking `CACertID`, with a
    depth cap of 10, cycle detection, and a scoped read per hop. The root is
    excluded: a chain stops before the self-signed certificate. A self-signed
-   leaf exports alone.
+   leaf exports alone. Limit: each hop uses the CA certificate's current PEM, so
+   if a CA was renewed after the leaf was issued the chain carries the CA's newer
+   certificate. That verifies correctly as long as the CA's key did not change,
+   which renewal does not do; documented.
 6. `pem`: return `certificate_pem` (the chain) and `private_key_pem`.
    `pkcs12`: the `password` field must be present (400 otherwise; an empty
    string is allowed). Encode with `go-pkcs12`: `modern` by default, and
@@ -179,6 +200,11 @@ Responses (plain JSON, no `Content-Disposition`, under 64 KiB):
 row). Every export response sets `Cache-Control: no-store` and
 `Pragma: no-cache`.
 
+The routes take the certificate or key UUID, like every other route. A client
+that stores a name (Rocket's environment file stores a reference) resolves it to
+the id from the list response, which carries `exportable` and `key_algorithm`
+for exactly that purpose.
+
 Errors on the export routes use `{"error":{"code","message"}}` through a local
 helper (the rest of the API keeps its flat body):
 
@@ -237,6 +263,16 @@ Test-first, per layer:
   attempt writes an audit entry.
 - **Restore**: a restored certificate and key are never exportable, even from an
   edited blob.
+- **Creation surfaces**: `--exportable` on the CLI create and import commands
+  and the `exportable` field on the vault client and MCP create tools reach the
+  service; key rotation preserves the flag.
+- **Version gating**: an archived version that is disabled, not yet valid or
+  expired is a 409; an enabled one exports; the certificate being disabled
+  blocks every version.
+- **No logging of secrets**: a test drives an export with a PKCS12 password
+  through the real middleware chain and asserts neither the password nor any key
+  text appears in captured logs or audit events (the middleware does not log
+  request bodies today, and the test keeps it that way).
 - **End to end**: an exported identity drives a real TLS handshake against
   `openssl s_server -Verify 1`, PEM and PKCS12, RSA and EC.
 
