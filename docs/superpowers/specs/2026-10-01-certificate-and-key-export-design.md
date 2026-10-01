@@ -276,6 +276,46 @@ Test-first, per layer:
 - **End to end**: an exported identity drives a real TLS handshake against
   `openssl s_server -Verify 1`, PEM and PKCS12, RSA and EC.
 
+## Regression safety
+
+Export must not change the behavior of anything that exists today. This is a
+requirement, not a hope, and each point below has a test or a delivery gate:
+
+- **Existing data stays safe and unchanged.** The migration only adds a column
+  with `DEFAULT FALSE`. Every existing certificate and key reads as
+  non-exportable, and nothing is backfilled or rewritten. An upgrade test opens a
+  database created by the pre-export build and checks that existing certificates,
+  versions, keys, secrets and role assignments are all intact and readable.
+- **Existing API responses only gain fields.** `CertificateResponse` and
+  `KeyResponse` gain `exportable` and `key_algorithm`; no existing field is
+  renamed, removed or retyped, and no existing status code or error body changes
+  (the R6 body is used only on the new export routes). Golden-response tests for
+  create, get, list and update pin this, and `openapi_drift_test` and the route
+  contract tests pass.
+- **No existing role gains export.** A role-matrix test asserts that the
+  effective data actions of every pre-existing built-in role are exactly what they
+  were before (only the two new roles and Administrator hold the new actions).
+  Existing role assignments, the grant allow-list and global-admin behavior are
+  unchanged. The role-count updates ("eleven" to thirteen) are the only edits to
+  existing role code.
+- **Existing creation and update paths behave the same.** A create without
+  `exportable` produces exactly what it produced before (non-exportable); update,
+  rotate, renew, versions, soft-delete, recover and purge behave as before, and
+  the existing suites for them pass unmodified except where a count or a new
+  field is asserted.
+- **Backup, restore and rekey stay compatible.** Blobs written before this change
+  restore unchanged (as non-exportable); a restore never grants exportability;
+  master-key rotation and the backup table order are unaffected.
+- **No new weakness in the old surfaces.** Caching, retry and logging behavior of
+  existing methods is unchanged; the new methods are pass-through only, and the
+  existing middleware and policy chain is not modified beyond the new route
+  mappings (unmapped paths still fail closed).
+- **Hard gates before reporting done:** `go build ./...`, `go vet ./...` and
+  `go test ./... -count=1` pass with no failing package; the pre-existing tests
+  are not weakened or deleted to make room; and a live smoke test on an isolated
+  instance upgrades a database from the pre-export build and exercises the
+  existing certificate, key, secret and role flows before the new export flows.
+
 ## Documentation
 
 `docs/api-specification.yaml` and `docs/api-routes.generated.txt` (both route
@@ -291,7 +331,8 @@ non-exportable.
 ## Delivery
 
 Built after certificate versioning, on `v-4.0.0`; commits through the
-`1-git-commit` skill; build, `go vet` and the linter clean. The report to Rocket
+`1-git-commit` skill; build, `go vet` and the linter clean; the Regression
+safety gates above all pass. The report to Rocket
 carries the commit hashes, the final routes and bodies, how to start an isolated
 local instance, and how to create a service principal with the exporter role plus
 an exportable RSA certificate, an exportable EC certificate and a non-exportable
