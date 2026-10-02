@@ -634,6 +634,7 @@ Two independent limits apply, and a request must pass both. Exceeding either ret
 | Limit | Counted per | Default | Config key |
 |-------|-------------|---------|------------|
 | General endpoints | client IP | 300 req/min | `rate_limit.default` |
+| Public `/config` endpoint | client IP | 300 req/min (shares the general bucket) | `rate_limit.default` |
 | Auth endpoints (`/login`, `/refresh`, `/oauth2/token`) | client IP | 5 req/min | `rate_limit.auth` |
 | All authenticated endpoints | vault | 600 req/min | `rate_limit.per_vault` |
 
@@ -644,8 +645,27 @@ Each limit reports its own response headers, so you can tell which ceiling you h
 | `X-RateLimit-Limit` / `-Remaining` / `-Reset` | Your per-IP budget. |
 | `X-RateLimit-Vault-Limit` / `-Remaining` / `-Reset` | The budget of the vault you addressed. |
 
+The client IP is the TCP peer address unless the peer is listed in
+`server.trusted_proxies`; IPv6 clients are counted per /64 block.
 `-Reset` is a Unix timestamp for when the bucket is full again. Both are continuously-refilling
 token buckets, not fixed windows, so capacity returns gradually rather than all at once.
+
+### Behind a reverse proxy
+
+`X-Forwarded-For` and `X-Real-IP` are ignored unless the TCP peer is in
+`server.trusted_proxies` (IP addresses or CIDR ranges; default empty). A
+deployment behind a proxy must set it, or every client shares the proxy's
+bucket and audit rows show the proxy's address. The proxy must append to or
+overwrite `X-Forwarded-For`.
+
+### Failed-login backoff
+
+Separately from the IP limits, each account has a failed-login counter. The
+first 5 consecutive failures are free; after that the account answers
+`429 Too Many Requests` with a `Retry-After` header, starting at 2 seconds and
+doubling up to 15 minutes. A successful login resets it, and a counter whose
+last failure is 24 hours old is forgotten. Unknown usernames get the same
+answer as known ones.
 
 ### The per-vault limit
 

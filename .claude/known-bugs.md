@@ -4943,6 +4943,159 @@ breaker opened after five failed logins and answered before the 429.
 
 ---
 
+### B85 — Login rate limiting trusted forged client addresses and had no per-account limit
+
+**Status**: Fixed (login rate limiting plan, 2026-10-02) in commits fb40402e,
+bce058cd, bf088430, 04832b63, b26838cd, 81fdf328, 38bf1ca8, 6cb0c616,
+f754aa2a, 296db102, 7e692ef5; GitHub #46
+**Severity**: Medium
+**Files**: `internal/middleware/clientip.go`, `internal/middleware/middleware.go`,
+`config/trusted_proxy.go`, `internal/services/auth/login_throttle.go`,
+`internal/services/auth/authentication_service.go`,
+`internal/repositories/login_failure_repository.go`, `internal/db/db.go`,
+`internal/backup/table_order.go`, `common/encrypt.go`,
+`internal/services/oauth2/oauth2_service.go`, `api/oauth2.go`, `api/users.go`,
+`api/api.go`, `internal/retry/retry.go`,
+`internal/services/retry/retry_service.go`
+
+**Symptom**: a client could pick its own rate-limit bucket by sending
+`X-Forwarded-For` or `X-Real-IP`, so the 5 req/min login limit was
+bypassable. The limiter maps grew without bound. Login had no per-account
+limit, so a guesser rotating IPs had unlimited tries per account.
+Unknown usernames and clients were rejected faster than wrong passwords, so
+response timing revealed which names exist. `/oauth2/token` read credentials
+from the query string (logged by proxies), `/config` was not rate limited,
+and the OAuth2 audit row stored an unbounded, unsanitised `client_id`.
+
+**Root cause**: forwarded headers were read without checking who sent them,
+the keyed limiter map had no eviction, and nothing counted failures per
+account. Not-found paths skipped the bcrypt compare. The handler used
+`FormValue`, which also reads the query, and the Config router had no
+limiter.
+
+**What was fixed**:
+- Trusted-proxy client IP (fb40402e): `server.trusted_proxies` (default
+  empty) and one resolver, `ClientIPResolver`. The rightmost-untrusted walk
+  of `X-Forwarded-For` finds the client; `X-Real-IP` is read only when there
+  is no `X-Forwarded-For`; an unreadable hop falls back to the peer; an
+  invalid list trusts nobody. Rate limits, logs and audit rows all use it.
+- IPv6 /64 buckets (bce058cd): rate-limit keys group IPv6 by /64; the audit
+  IP stays the full address.
+- Bounded limiters (bf088430): 2-minute idle TTL, 100000-entry cap, lazy
+  sweep at most once a minute.
+- Per-account backoff (04832b63, b26838cd, 81fdf328): table `login_failures`
+  (dual-written, in the backup table order), `LoginThrottle`. 5 free
+  failures, then 2s doubling to a 15-minute cap, 24h reset, exact-username
+  keys (SHA-256 key for names over 64 bytes). Every identity failure exit is
+  recorded and a success resets the counter. A throttled login is HTTP 429
+  with `Retry-After`, the same for known and unknown names. Storage errors
+  fail open with a warning. Writes ignore request cancellation and are
+  bounded by 5s.
+- Constant-time rejection (6cb0c616, f754aa2a): unknown users, unknown,
+  disabled or expired OAuth2 clients, and non-bcrypt stored hashes (OIDC
+  users, the system user, bad client secret hashes) each spend one bcrypt
+  compare (`common.BurnPasswordCompare`).
+- `/oauth2/token` and `/config` (296db102): `PostFormValue` only, so query
+  credentials are ignored; the Config router uses `RateLimitMiddleware`.
+- Audit hygiene (7e692ef5): `sanitizeAuditClientID` drops control characters
+  and invalid UTF-8 and caps `client_id` at 255 bytes in audit rows.
+- Minimal B90 fix (81fdf328, 38bf1ca8): the database breaker ignores client
+  outcomes and cancelled requests. See B90 for what remains open.
+
+**Accepted behaviour changes and limits**:
+- Breaking: forwarded headers are no longer trusted by default, so behind a
+  proxy `server.trusted_proxies` must be set or all clients share the
+  proxy's bucket and audit rows show its address. The docker/Fly/Railway
+  template hardcodes `trusted_proxies: []` (no environment hook yet). A
+  proxy that sets only `X-Real-IP` and passes the client's `X-Forwarded-For`
+  lets that client choose its IP. A hop carrying a port falls back to the
+  peer. A comma-separated string value fails closed silently.
+- Breaking: `/oauth2/token` ignores `client_id`, `client_secret` and
+  `grant_type` in the query string.
+- Breaking: a sixth consecutive failed login for one account returns 429.
+- /64 granularity: a /56 or /48 allocation can still use many buckets.
+- Limiter flood residual: more than 100000 distinct live keys within 2
+  minutes can evict a quieter client's bucket (distributed attacker only).
+- The backoff lets an attacker slow a known username (administrator accounts
+  included); the real user logs in once the delay passes. The reset on
+  success is an activity oracle: probing a name can reveal that someone
+  logged in successfully.
+- `login_failures` grows with sprayed usernames, with no hard cap on
+  purpose (evicting rows would let an attacker flush a victim's counter).
+  Rows older than 24h are pruned on each recorded failure. Monitor the
+  table size.
+- Legacy bcrypt hashes at cost 10 verify faster than the dummy compare
+  (reveals a legacy hash, not existence). Each unknown-username attempt
+  costs one bcrypt compare, bounded only by the per-IP limiter.
+- Deferred, tracked as B91 (log injection), B92 (Check/RecordFailure race)
+  and B93 (`/jwks.json` unlimited). Also deferred: no fail-open metric or
+  throttled-refusal audit event, and a claim-error retry can record more
+  than one failure.
+
+**GitHub issue**: #46
+
+---
+
+### B91 — The login username is logged unescaped
+
+**Status**: Open; GitHub #57 (found 2026-10-02 in the login-rate-limiting
+review)
+**Severity**: Low
+**Files**: `api/users.go` (`loginUser`), `internal/services/auth/authentication_service.go`
+(`AuthenticateUser`)
+
+**Symptom**: the attacker-controlled login username reaches the log verbatim,
+so newlines or escape sequences can forge or hide log lines, depending on
+the formatter.
+
+**Root cause**: `loginUser` calls
+`c.Logger.Printf("Login failed for user %s: %v", req.Username, err)`, which
+puts the raw name into the message. `AuthenticateUser` logs
+`WithField("username", username)` at three sites (start, backoff refusal,
+user not found). Nothing sanitises the value. The JSON formatter escapes
+control characters; whether text output (colored TTY) and the custom YAML
+formatter in `internal/logging` do was not verified.
+
+**Fix recipe**: one helper that quotes or strips control characters, used at
+all four sites, plus a test per formatter.
+
+---
+
+### B92 — The login throttle check and record are separate steps
+
+**Status**: Open; GitHub #58 (deferred from the login-rate-limiting plan)
+**Severity**: Low
+**Files**: `internal/services/auth/login_throttle.go` (`Check`,
+`RecordFailure`), `internal/services/auth/authentication_service.go`
+
+**Symptom**: simultaneous attempts on one account at the end of a backoff
+window each pass the check before any failure is recorded, so each gets a
+guess.
+
+**Root cause**: `Check` only reads and `RecordFailure` writes later, with no
+reservation between them. Check never writes on purpose, so attempts inside
+the window cannot extend it.
+
+**Fix recipe**: reserve atomically, for example a `next_allowed_at` column
+set in the same statement that tests it, so one attempt per window proceeds.
+
+---
+
+### B93 — `/jwks.json` is a public route with no rate limit
+
+**Status**: Open; GitHub #59 (deferred from the login-rate-limiting plan)
+**Severity**: Low
+**Files**: `api/api.go` (the `JWKS` router), `api/jwks.go`
+
+**Symptom**: any client can call `GET /jwks.json` without a limit.
+
+**Root cause**: the JWKS router uses only the CORS and security-header
+middleware, unlike the Config and OAuth2 routers.
+
+**Fix recipe**: add `mw.RateLimitMiddleware` to `r.JWKS.Use(...)`.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

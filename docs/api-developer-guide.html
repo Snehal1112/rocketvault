@@ -534,6 +534,12 @@ key, chain or password is ever logged.</li>
 <td><code>rate_limit.default</code></td>
 </tr>
 <tr>
+<td>Public <code>/config</code> endpoint</td>
+<td>client IP</td>
+<td>300 req/min (shares the general bucket)</td>
+<td><code>rate_limit.default</code></td>
+</tr>
+<tr>
 <td>Auth endpoints (<code>/login</code>, <code>/refresh</code>, <code>/oauth2/token</code>)</td>
 <td>client IP</td>
 <td>5 req/min</td>
@@ -566,8 +572,23 @@ key, chain or password is ever logged.</li>
 </tr>
 </tbody>
 </table>
-<p><code>-Reset</code> is a Unix timestamp for when the bucket is full again. Both are continuously-refilling
+<p>The client IP is the TCP peer address unless the peer is listed in
+<code>server.trusted_proxies</code>; IPv6 clients are counted per /64 block.
+<code>-Reset</code> is a Unix timestamp for when the bucket is full again. Both are continuously-refilling
 token buckets, not fixed windows, so capacity returns gradually rather than all at once.</p>
+<h3 id="behind-a-reverse-proxy">Behind a reverse proxy</h3>
+<p><code>X-Forwarded-For</code> and <code>X-Real-IP</code> are ignored unless the TCP peer is in
+<code>server.trusted_proxies</code> (IP addresses or CIDR ranges; default empty). A
+deployment behind a proxy must set it, or every client shares the proxy's
+bucket and audit rows show the proxy's address. The proxy must append to or
+overwrite <code>X-Forwarded-For</code>.</p>
+<h3 id="failed-login-backoff">Failed-login backoff</h3>
+<p>Separately from the IP limits, each account has a failed-login counter. The
+first 5 consecutive failures are free; after that the account answers
+<code>429 Too Many Requests</code> with a <code>Retry-After</code> header, starting at 2 seconds and
+doubling up to 15 minutes. A successful login resets it, and a counter whose
+last failure is 24 hours old is forgotten. Unknown usernames get the same
+answer as known ones.</p>
 <h3 id="the-per-vault-limit">The per-vault limit</h3>
 <p>The per-vault budget is shared by every caller of that vault, so a client can be throttled by
 someone else's traffic against the same vault while its own per-IP budget is untouched. Check

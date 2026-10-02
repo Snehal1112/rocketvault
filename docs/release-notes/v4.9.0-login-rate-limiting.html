@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>v4.9.0 — Login rate limiting — RocketVault Docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="../assets/doc-theme.css"/>
+</head>
+<body>
+<header class="doc-header">
+  <a class="doc-back" href="../admin-manual.html">&larr; Admin Manual</a>
+  <div class="doc-brand">
+    <div class="doc-mark" aria-hidden="true"></div>
+    <span class="doc-kicker">RocketVault Docs</span>
+  </div>
+  <h1 class="doc-title">v4.9.0 — Login rate limiting</h1>
+  <div class="doc-meta"><span class="doc-chip">docs/release-notes/v4.9.0-login-rate-limiting.md</span></div>
+  <hr/>
+</header>
+<nav class="doc-toc"><div class="doc-toc-label">On this page</div><ol><li><a href="#what-changed">What changed</a></li><li><a href="#breaking-changes">Breaking changes</a></li><li><a href="#upgrade-procedure">Upgrade procedure</a></li><li><a href="#schema">Schema</a></li><li><a href="#what-did-not-change">What did not change</a></li><li><a href="#known-limitations-and-operator-warnings">Known limitations and operator warnings</a></li></ol></nav>
+<main class="doc">
+<blockquote>
+<p>The version number is provisional and may change before tagging.</p>
+</blockquote>
+<p>This release hardens login and rate limiting after the 2026-09-30 audit of
+<code>api/</code> (issue #46). Full detail: <code>.claude/known-bugs.md</code> (B85, with the
+follow-ups B91 to B93). It also contains a minimal fix of B90 (#56), which
+stays partly open.</p>
+<h2 id="what-changed">What changed</h2>
+<ul>
+<li><strong>One client-IP resolver.</strong> <code>server.trusted_proxies</code> (default empty) lists
+the reverse proxies whose <code>X-Forwarded-For</code> and <code>X-Real-IP</code> headers are
+trusted. Every consumer (rate limits, request logs, audit rows) goes
+through <code>ClientIPResolver</code>. It walks <code>X-Forwarded-For</code> from the right and
+returns the first hop that is not a trusted proxy. <code>X-Real-IP</code> is read only
+when the trusted proxy sent no <code>X-Forwarded-For</code>. An unreadable hop falls
+back to the peer address. An invalid <code>trusted_proxies</code> entry is logged and
+the whole list is ignored, so nobody is trusted.</li>
+<li><strong>IPv6 clients are limited per /64.</strong> The audit IP stays the full address.</li>
+<li><strong>Bounded rate-limiter maps.</strong> Buckets idle for 2 minutes are dropped
+(lazy sweep at most once a minute) and each limiter holds at most 100000
+entries. See the residual risk below.</li>
+<li><strong>Per-account failed-login backoff.</strong> 5 free failures, then a wait of 2s
+that doubles per failure up to 15 minutes; a counter whose last failure is
+24 hours old is forgotten. The key is the exact username (a SHA-256 key for
+names over 64 bytes). Every identity failure exit counts: unknown user,
+wrong password, missing TOTP secret, wrong or malformed code, replayed
+code and claim failure. A successful login resets the counter. A throttled
+login answers HTTP 429 with <code>Retry-After</code>, with the same body for known and
+unknown usernames. If the counter table cannot be read, login proceeds and
+a warning is logged (the per-IP limiter still applies).</li>
+<li><strong>Constant-time rejection.</strong> Unknown users, unknown, disabled or expired
+OAuth2 clients and accounts whose stored hash is not usable bcrypt (OIDC
+accounts, the system user, a bad OAuth2 client secret hash) now spend one
+bcrypt compare, so timing does not reveal which names exist.</li>
+<li><strong><code>/oauth2/token</code> reads credentials from the body only.</strong> <code>client_id</code>,
+<code>client_secret</code> and <code>grant_type</code> in the query string are ignored.</li>
+<li><strong><code>/config</code> is rate limited</strong> (per client IP, <code>rate_limit.default</code>).</li>
+<li><strong><code>client_id</code> in OAuth2 audit rows is sanitised</strong>: control characters and
+invalid UTF-8 are dropped and the value is capped at 255 bytes.</li>
+<li><strong>Database breaker, minimal B90 fix.</strong> The shared database circuit breaker
+no longer counts client outcomes (bad credentials, bad tokens, throttled
+logins) or cancelled requests as database failures. A client error in a
+half-open trial releases its slot. Without this the new 429 could not be
+observed under the default breaker settings. B90 stays partly open (see
+<code>.claude/known-bugs.md</code>).</li>
+</ul>
+<h2 id="breaking-changes">Breaking changes</h2>
+<ol>
+<li><strong>Forwarded headers are no longer trusted by default.</strong> Behind a reverse
+proxy, every client now shares the proxy's address until
+<code>server.trusted_proxies</code> is set: they share one rate-limit bucket (the
+5 req/min auth budget included) and audit rows show the proxy's address.</li>
+<li><strong><code>/oauth2/token</code> ignores query-string credentials.</strong> A client that sends
+<code>client_secret</code> or <code>client_id</code> in the query now gets 401, and one that
+sends <code>grant_type</code> there gets 400. Send them in the form body or HTTP
+Basic.</li>
+<li><strong>A sixth consecutive failed login for one account returns 429</strong> with
+<code>Retry-After</code> for a growing delay.</li>
+</ol>
+<h2 id="upgrade-procedure">Upgrade procedure</h2>
+<ol>
+<li>
+<p><strong>Behind a reverse proxy (Railway, Fly, nginx, a load balancer): set
+<code>server.trusted_proxies</code> to the proxy's address or range.</strong> This is
+required, not optional. Example:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">yaml</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">server:
+  trusted_proxies:
+    - &quot;10.0.0.0/8&quot;
+</pre></div>
+<p>Requirements and pitfalls:</p>
+<ul>
+<li>The trusted proxy must append to or overwrite <code>X-Forwarded-For</code>.
+<code>X-Forwarded-For</code> is preferred over <code>X-Real-IP</code>; a proxy that sets only
+<code>X-Real-IP</code> while passing the client's own <code>X-Forwarded-For</code> lets that
+client choose its IP.</li>
+<li>A hop that carries a port (for example <code>1.2.3.4:5678</code>, as some Azure
+gateways send) is unreadable, so the resolver falls back to the peer
+and all clients share one bucket.</li>
+<li>The value must be a YAML list. A single comma-separated string is read
+as one invalid entry and the list is ignored without a startup failure
+(an error is logged).</li>
+<li><code>.rocketvault.docker.yaml.tmpl</code>, used by docker, Fly and Railway,
+hardcodes <code>trusted_proxies: []</code> and has no environment variable for it
+yet, so edit the rendered template for those targets.</li>
+</ul>
+</li>
+<li>
+<p><strong>Direct deployments</strong>: no action. The headers are ignored.</p>
+</li>
+<li>
+<p>The <code>login_failures</code> table is created automatically at startup on SQLite
+and Postgres (no manual step).</p>
+</li>
+<li>
+<p>Clients of <code>/oauth2/token</code> that put credentials in the query string must
+move them to the body or Basic auth.</p>
+</li>
+</ol>
+<h2 id="schema">Schema</h2>
+<p>New table <code>login_failures</code> (<code>username</code>, <code>failures</code>, <code>last_failure_at</code>, with
+an index on <code>last_failure_at</code>). It is dual-written in
+<code>createOptimizedSchema</code> and <code>migrateSchema</code> and is included in the backup
+table order.</p>
+<h2 id="what-did-not-change">What did not change</h2>
+<p><code>rate_limit.default</code>, <code>rate_limit.auth</code> and <code>rate_limit.per_vault</code> keep their
+values, and the per-vault limiter is untouched. <code>/jwks.json</code> is still not
+rate limited (B93).</p>
+<h2 id="known-limitations-and-operator-warnings">Known limitations and operator warnings</h2>
+<ul>
+<li><strong>/64 granularity.</strong> A provider allocation of a /56 or /48 can still
+occupy many buckets.</li>
+<li><strong>Limiter flood residual.</strong> Once a limiter holds 100000 live keys, a new
+key evicts one. An attacker presenting more than 100000 distinct keys
+within 2 minutes (distinct IPv4 addresses or /64 prefixes) can reset a
+quieter client's bucket. That needs a distributed attacker; the
+per-account backoff still applies.</li>
+<li><strong>Backoff can slow a known user.</strong> Anyone can slow the logins of a known
+username (administrator accounts included) by failing 5 times. The delay
+is capped at 15 minutes and the real user can log in once it passes. This
+is accepted.</li>
+<li><strong>Activity oracle.</strong> A success resets the counter, so probing a name can
+reveal that someone logged in successfully since the last probe.</li>
+<li><strong>Table growth.</strong> <code>login_failures</code> grows with sprayed usernames. There is
+deliberately no hard cap, because evicting rows would let an attacker
+flush a victim's counter. Rows older than 24 hours are pruned on each
+recorded failure. Monitor the table size.</li>
+<li><strong>Concurrent burst.</strong> The throttle check and the failure record are
+separate steps, so simultaneous attempts at the end of a window can each
+get a guess (B92; follow-up: atomic reservation).</li>
+<li><strong>Legacy bcrypt hashes.</strong> Hashes created at cost 10 (before the cost
+increase) verify faster than the dummy compare, which reveals that an
+account has a legacy hash, not whether an account exists.</li>
+<li><strong>Unknown usernames cost a bcrypt compare each</strong>, bounded only by the
+per-IP limiter.</li>
+<li><strong>Login logging.</strong> The raw login username is logged unescaped (B91).</li>
+</ul>
+
+</main>
+<footer class="doc-footer"><a href="../admin-manual.html">&larr; Back to the Admin Manual</a></footer>
+<script src="../assets/doc-theme.js"></script>
+</body>
+</html>
