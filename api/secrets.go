@@ -140,7 +140,7 @@ func createSecret(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	secret, err := secretService.CreateSecret(r.Context(), createReq)
 	if err != nil {
-		c.SetInternalError(err)
+		writeSecretError(c, err)
 		return
 	}
 
@@ -478,7 +478,7 @@ func generateSecret(c *Context, w http.ResponseWriter, r *http.Request) {
 		UseLowercase: req.UseLowercase,
 	})
 	if err != nil {
-		c.SetInternalError(err)
+		writeSecretError(c, err)
 		return
 	}
 

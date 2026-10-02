@@ -3200,7 +3200,7 @@ out to be impossible while a context was active.
 
 ### B55 — A duplicate resource name returns HTTP 500 with the SQL constraint in the response body, for secrets, keys and certificates alike
 
-**Status**: Fixed 2026-10-02 (found 2026-09-03). `writeSecretError`, `writeKeyError` and `writeCertificateError` map `repositories.ErrNameTaken` to a 409 via `Context.SetConflict`; the unsupported-content-type error maps to 400 via `secrets.ErrInvalidContentType`. Tests in `api/errors_mapping_test.go`.
+**Status**: Fixed 2026-10-02 (found 2026-09-03). `writeSecretError`, `writeKeyError` and `writeCertificateError` map `repositories.ErrNameTaken` to a 409 via `Context.SetConflict`; the unsupported-content-type error maps to 400 via `secrets.ErrInvalidContentType`. The create handlers (`createSecret`, `generateSecret`, `createCertificate`, `createKey`) and the three restore handlers all reach those mappers. Handler-level tests in `api/errors_mapping_test.go` and `api/backup_item_test.go`.
 **Severity**: Medium — a plain client error is reported as a server fault, and
 the response leaks the table and column names of the violated unique index.
 No data is at risk and the write is correctly rejected, but callers cannot
@@ -4272,7 +4272,10 @@ certificate-versioning regression smoke test; not caused by that work).
 Fix: `api/backup_item.go`'s secret, key and certificate restore handlers now
 map `repositories.ErrNameTaken` through `Context.SetConflict` to a 409 with a
 fixed message, and `writeSecretError`/`writeKeyError`/`writeCertificateError`
-gained the same arm so create handlers answer 409 too. Tests:
+gained the same arm. `createSecret`, `generateSecret` and `createCertificate`
+now route their service errors through those mappers (they previously called
+`SetInternalError` directly, so create still answered 500); `createKey` and
+key import already did. Tests:
 `TestRestore{Secret,Key,Certificate}Handler_NameTaken_Returns409` and
 `TestWriteErrors_NameTaken_Returns409WithoutDriverText`.
 **Severity**: Low-Medium — a routine, user-correctable conflict is reported as

@@ -238,7 +238,7 @@ func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 			c.SetConflict("exportable: the key's exportable flag is false; an exportable certificate requires a key created with exportable: true")
 			return
 		}
-		c.SetInternalError(err)
+		writeCertificateError(c, err)
 		return
 	}
 
