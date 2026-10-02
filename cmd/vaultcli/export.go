@@ -16,6 +16,10 @@ import (
 // exists when --force was not given.
 const outputExistsMessage = "the output file already exists: pass --force to replace it"
 
+// ErrExportNotSealed wraps a failure to seal an export. It is kept apart from
+// a write failure so the audit trail can tell the two apart.
+var ErrExportNotSealed = errors.New("failed to seal the export")
+
 // ExportAttempt is one CLI certificate or key export attempt. It records
 // exactly one structured audit event through exportaudit, whatever the
 // outcome: the same event the HTTP export handlers write, with Source "cli".
@@ -73,10 +77,19 @@ func (e *ExportAttempt) FailInput(reason string, shown error) error {
 	return fmt.Errorf("failed to export %s: %w", e.attempt.ResourceType, shown)
 }
 
-// FailOutput records that the output file could not be written. The service
-// already released the material, but no file holds it, so the attempt is a
-// failure.
+// FailOutput records that the output file could not be written, or that the
+// export could not be sealed. The service already released the material, but
+// no file holds it, so the attempt is a failure.
 func (e *ExportAttempt) FailOutput(err error) error {
+	if errors.Is(err, ErrExportNotSealed) {
+		// Sealing never reached the disk, so it is not a write failure. The
+		// cause goes to the log file only, as for any internal failure.
+		if e.s.Log != nil {
+			e.s.Log.WithField("operation", "export_"+e.attempt.ResourceType).
+				WithField("step", "seal").WithError(err).Error("export failed")
+		}
+		return e.Fail(exportaudit.Internal("the export could not be sealed"))
+	}
 	if errors.Is(err, common.ErrOutputExists) {
 		return e.Fail(exportaudit.BadRequest(outputExistsMessage))
 	}
@@ -228,7 +241,7 @@ func (o ExportOutput) Write(cmd *cobra.Command, p common.ItemExportPayload, pass
 	if o.Encrypt {
 		sealed, err := common.SealItemExport(p, passphrase)
 		if err != nil {
-			return fmt.Errorf("failed to seal the export: %w", err)
+			return fmt.Errorf("%w: %w", ErrExportNotSealed, err)
 		}
 		data = sealed
 	} else {

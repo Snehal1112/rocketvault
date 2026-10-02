@@ -40,7 +40,8 @@ list certificates, update their metadata, renew them, and delete them.
 Issuing, updating, renewing, and deleting require the admin or
 certificate_manager role plus the matching data action
 (certificates/create, certificates/update, certificates/delete) in the target
-vault. get and list require only certificates/read. Vault access is
+vault. get and list require only certificates/read, and export only
+certificates/export/action, with no account role. Vault access is
 deny-by-default, so a role assignment must exist for the target vault — see
 'rocketvault vault-access'.
 
@@ -76,5 +77,6 @@ func init() {
 	certificates.InitCertificatesDelete(certificateCmd)
 	certificates.InitCertificatesRenew(certificateCmd)
 	certificates.InitCertificatesVersions(certificateCmd)
+	certificates.InitCertificatesExport(certificateCmd)
 	certificates.InitCertificatesRotationPolicy(certificateCmd)
 }
