@@ -875,3 +875,59 @@ func TestNewServiceContainer_LoginRejectsReplayedTOTPCode(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid TOTP code")
 	assert.NotContains(t, err.Error(), "not configured")
 }
+
+// TestNewServiceContainer_LoginThrottleIsWired pins that the container hands
+// the authentication service a working login throttle (issue #46). Without
+// it, failed logins are never slowed down per account. It drives the real
+// container, including the retry wrapper, against a real SQLite schema.
+func TestNewServiceContainer_LoginThrottleIsWired(t *testing.T) {
+	dsn := "file:loginthrottletest_" + uuid.NewString() + "?mode=memory&cache=shared"
+	rawDB, err := sql.Open("sqlite3", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	require.NoError(t, rvdb.NewRepository(newTestLogger()).SetupSchema(rawDB, rvdb.SQLite))
+
+	containerViper := viper.New()
+	containerViper.Set("jwt.key_source", "os_store")
+	// Failed logins count toward the shared database circuit breaker (B90),
+	// which would open after five of them and hide the throttle. Raise the
+	// threshold so this test observes the throttle alone.
+	containerViper.Set("retry.circuit_breaker.failure_threshold", 1000)
+	container, err := NewServiceContainer(Config{
+		Database:    rawDB,
+		Logger:      newTestLogger(),
+		CacheConfig: cacheConfigWithSecretsDisabled(t),
+		Viper:       containerViper,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = container.Close() })
+	require.NotNil(t, container.loginThrottle, "the container must build a login throttle")
+
+	ctx := context.Background()
+	hash, err := authServices.NewPasswordService().HashPassword("Correct-Horse-9")
+	require.NoError(t, err)
+	totp := authServices.NewTOTPService()
+	key, err := totp.GenerateSecret("PasswordManager", "throttle-wiring")
+	require.NoError(t, err)
+	require.NoError(t, container.GetUserRepository().Create(ctx, &model.User{
+		ID: uuid.New(), Username: "throttle-wiring", PasswordHash: hash, TOTPSecret: key.Secret(),
+		Roles: []string{model.RoleUser}, CreatedAt: time.Now(),
+	}))
+	auth := container.GetAuthenticationService()
+
+	for _, username := range []string{"throttle-wiring", "no-such-user"} {
+		for i := 0; i < 6; i++ {
+			_, err = auth.AuthenticateUser(ctx, username, "wrong-password", "123456")
+			require.Error(t, err)
+			require.NotErrorIs(t, err, authServices.ErrLoginThrottled)
+		}
+		_, err = auth.AuthenticateUser(ctx, username, "wrong-password", "123456")
+		require.ErrorIs(t, err, authServices.ErrLoginThrottled, "user %q must be throttled after six failures", username)
+	}
+
+	// Correct credentials inside the window are refused as well.
+	code, err := totp.GenerateCode(key.Secret(), time.Now())
+	require.NoError(t, err)
+	_, err = auth.AuthenticateUser(ctx, "throttle-wiring", "Correct-Horse-9", code)
+	require.ErrorIs(t, err, authServices.ErrLoginThrottled)
+}

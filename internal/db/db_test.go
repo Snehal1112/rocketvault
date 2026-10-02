@@ -3,6 +3,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -212,12 +213,12 @@ func TestMigrateSchema_CreatesLoginFailures(t *testing.T) {
 	require.NoError(t, repo.migrateSchema(db))
 
 	var name string
-	err = db.QueryRow(
+	err = db.QueryRowContext(context.Background(),
 		`SELECT name FROM sqlite_master WHERE type='table' AND name='login_failures'`,
 	).Scan(&name)
 	require.NoError(t, err, "migrateSchema must create login_failures")
 
-	err = db.QueryRow(
+	err = db.QueryRowContext(context.Background(),
 		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_login_failures_last_failure_at'`,
 	).Scan(&name)
 	require.NoError(t, err, "migrateSchema must create idx_login_failures_last_failure_at")
@@ -235,12 +236,12 @@ func TestCreateOptimizedSchema_CreatesLoginFailures(t *testing.T) {
 	require.NoError(t, repo.createOptimizedSchema(db))
 
 	var name string
-	err = db.QueryRow(
+	err = db.QueryRowContext(context.Background(),
 		`SELECT name FROM sqlite_master WHERE type='table' AND name='login_failures'`,
 	).Scan(&name)
 	require.NoError(t, err, "createOptimizedSchema must create login_failures")
 
-	err = db.QueryRow(
+	err = db.QueryRowContext(context.Background(),
 		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_login_failures_last_failure_at'`,
 	).Scan(&name)
 	require.NoError(t, err, "createOptimizedSchema must create idx_login_failures_last_failure_at")

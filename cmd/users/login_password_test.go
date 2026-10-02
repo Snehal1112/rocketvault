@@ -72,3 +72,20 @@ func TestInitUsersLogin_RegistersOIDCFlag(t *testing.T) {
 	require.NotNil(t, flag)
 	assert.Equal(t, "false", flag.DefValue)
 }
+
+// A throttled login surfaces the wait to the CLI user and caches nothing.
+func TestPerformPasswordLogin_Throttled_SurfacesRetryHint(t *testing.T) {
+	common.SessionBaseDir = t.TempDir()
+	tc := testutils.NewTestContext(t)
+	tc.MockAuthService.On("AuthenticateUser", mock.Anything, "admin", "wrong", "123456").
+		Return(nil, &authServices.ThrottledError{RetryAfter: 90 * time.Second})
+
+	_, err := performPasswordLogin(context.Background(), tc.MockAuthService, "admin", "wrong", "123456")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, authServices.ErrLoginThrottled)
+	assert.Equal(t, "too many failed login attempts; retry in 1m30s", err.Error())
+	cached, loadErr := common.LoadSession("admin")
+	require.NoError(t, loadErr)
+	assert.Nil(t, cached)
+}

@@ -1899,3 +1899,39 @@ func TestRetryUserRepo_InvalidateBootstrapToken_Error(t *testing.T) {
 	assert.Error(t, err)
 	base.AssertExpectations(t)
 }
+
+// A throttled login must reach the caller as the typed error and must not be
+// retried, or the HTTP 429 mapping would degrade and the counter would be hit
+// again.
+func TestRetryAuth_AuthenticateUser_ThrottledErrorSurvivesWrapping(t *testing.T) {
+	v := viper.New()
+	v.Set("retry.database.enabled", true)
+	v.Set("retry.database.max_attempts", 3)
+	v.Set("retry.database.initial_delay", "1ms")
+	v.Set("retry.database.max_delay", "1ms")
+	v.Set("retry.database.backoff_multiplier", 1.0)
+	v.Set("retry.database.retryable_errors", []string{"connection refused", "timeout", "temporary failure", "retry"})
+	v.Set("retry.circuit_breaker.failure_threshold", 5)
+	v.Set("retry.circuit_breaker.timeout", "60s")
+	v.Set("retry.circuit_breaker.half_open_requests", 3)
+	rs, err := NewRetryService(v)
+	assert.NoError(t, err)
+
+	base := &MockAuthService{}
+	base.On("AuthenticateUser", mock.Anything, "alice", "wrong", "123456").
+		Return(nil, &auth.ThrottledError{RetryAfter: 37 * time.Second})
+
+	svc := NewRetryAuthenticationService(base, rs)
+	result, err := svc.AuthenticateUser(context.Background(), "alice", "wrong", "123456")
+
+	assert.Nil(t, result)
+	var te *auth.ThrottledError
+	assert.True(t, errors.As(err, &te), "errors.As must see the typed error through the retry wrapper")
+	if te != nil {
+		assert.Equal(t, 37*time.Second, te.RetryAfter)
+	}
+	assert.ErrorIs(t, err, auth.ErrLoginThrottled)
+	assert.Contains(t, err.Error(), "retry in 37s")
+	// Not retried, even though the message matches the "retry" pattern above.
+	base.AssertNumberOfCalls(t, "AuthenticateUser", 1)
+}

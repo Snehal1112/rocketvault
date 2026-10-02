@@ -24,7 +24,7 @@ func setupLoginFailureDB(t *testing.T) *sql.DB {
 	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_busy_timeout=10000&_journal_mode=WAL")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(8)
-	_, err = db.Exec(`CREATE TABLE login_failures (
+	_, err = db.ExecContext(context.Background(), `CREATE TABLE login_failures (
 		username        TEXT PRIMARY KEY,
 		failures        INTEGER NOT NULL,
 		last_failure_at TIMESTAMP NOT NULL

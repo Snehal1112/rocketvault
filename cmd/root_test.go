@@ -83,6 +83,23 @@ func TestResolveAuthentication_UsernamePassword_AuthFails_ReturnsError(t *testin
 	assert.Nil(t, cached, "a failed login must not cache a session")
 }
 
+// A throttled login reaches every CLI command with its wait, and caches nothing.
+func TestResolveAuthentication_UsernamePassword_Throttled_SurfacesRetryHint(t *testing.T) {
+	common.SessionBaseDir = t.TempDir()
+	tc := testutils.NewTestContext(t)
+	tc.MockAuthService.On("AuthenticateUser", mock.Anything, "admin", "wrong", "123456").
+		Return(nil, &authServices.ThrottledError{RetryAfter: 90 * time.Second})
+
+	c := newAuthTestCmd("admin", "wrong", "123456")
+	_, err := resolveAuthentication(c, tc.MockAuthService)
+
+	require.ErrorIs(t, err, authServices.ErrLoginThrottled)
+	assert.Contains(t, err.Error(), "retry in 1m30s")
+	cached, err := common.LoadSession("admin")
+	require.NoError(t, err)
+	assert.Nil(t, cached, "a throttled login must not cache a session")
+}
+
 func TestResolveAuthentication_UsernameOnly_LoadsNamedCachedSession(t *testing.T) {
 	common.SessionBaseDir = t.TempDir()
 	tc := testutils.NewTestContext(t)

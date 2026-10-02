@@ -102,6 +102,7 @@ type authenticationService struct {
 	totpStepRepo     repositories.TOTPStepRepositoryInterface
 	logger           *logging.Logger
 	auditService     auditServices.AuditServiceInterface
+	throttle         *LoginThrottle
 }
 
 // AuthenticationConfig holds the dependencies for authentication service.
@@ -117,6 +118,10 @@ type AuthenticationConfig struct {
 	TOTPStepRepository repositories.TOTPStepRepositoryInterface
 	Logger             *logging.Logger
 	AuditService       auditServices.AuditServiceInterface
+	// LoginThrottle applies per-account backoff to failed logins. It is
+	// optional: nil disables the backoff, which the constructor logs as a
+	// warning so a production wiring gap is never silent.
+	LoginThrottle *LoginThrottle
 }
 
 // NewAuthenticationService creates a new AuthenticationService with the provided dependencies.
@@ -130,6 +135,9 @@ type AuthenticationConfig struct {
 //
 //	An AuthenticationService implementation for user authentication.
 func NewAuthenticationService(config AuthenticationConfig) AuthenticationService {
+	if config.LoginThrottle == nil && config.Logger != nil {
+		config.Logger.Warn("Login throttle is not configured: failed logins are not rate limited per account")
+	}
 	return &authenticationService{
 		userRepo:         config.UserRepository,
 		sessionRepo:      config.SessionRepository,
@@ -140,6 +148,7 @@ func NewAuthenticationService(config AuthenticationConfig) AuthenticationService
 		totpStepRepo:     config.TOTPStepRepository,
 		logger:           config.Logger,
 		auditService:     config.AuditService,
+		throttle:         config.LoginThrottle,
 	}
 }
 
@@ -160,6 +169,17 @@ func NewAuthenticationService(config AuthenticationConfig) AuthenticationService
 func (s *authenticationService) AuthenticateUser(ctx context.Context, username, password, totpCode string) (*AuthenticationResult, error) {
 	s.logger.WithField("username", username).Info("Starting user authentication")
 
+	// The backoff check runs before the user lookup and the password hash,
+	// and for unknown usernames too, so a throttled answer looks the same
+	// whether or not the account exists. It never writes, so attempts made
+	// inside the window cannot extend it.
+	if s.throttle != nil {
+		if err := s.throttle.Check(ctx, username); err != nil {
+			s.logger.WithField("username", username).Warn("Authentication refused: account in backoff window")
+			return nil, err
+		}
+	}
+
 	// Retrieve user from repository
 	user, err := s.userRepo.ReadByUsername(ctx, username)
 	if err != nil {
@@ -170,6 +190,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			})
 		}
 		s.logger.WithField("username", username).Warn("Authentication failed: user not found")
+		s.recordLoginFailure(ctx, username)
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -185,6 +206,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			"username": username,
 			"user_id":  user.ID.String(),
 		}).Warn("Authentication failed: invalid password")
+		s.recordLoginFailure(ctx, username)
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
@@ -204,6 +226,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			"username": username,
 			"user_id":  user.ID.String(),
 		}).Warn("Authentication failed: TOTP not enrolled")
+		s.recordLoginFailure(ctx, username)
 		return nil, &concealedTOTPError{cause: ErrMFANotEnrolled}
 	}
 
@@ -217,6 +240,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			})
 		}
 		s.logger.WithError(err).Error("TOTP validation error")
+		s.recordLoginFailure(ctx, username)
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
@@ -231,6 +255,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			"username": username,
 			"user_id":  user.ID.String(),
 		}).Warn("Authentication failed: invalid TOTP code")
+		s.recordLoginFailure(ctx, username)
 		return nil, errors.New(invalidTOTPCodeMessage)
 	}
 
@@ -238,7 +263,10 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 	// later one was already accepted for the user. The claim runs only after
 	// the password and the code were both accepted, so a wrong guess never
 	// uses up a step.
+	// Every claim failure counts, a replay as well as a server fault, so no
+	// exit of a login that did not finish leaves the counter untouched.
 	if err := s.claimTOTPStep(ctx, &user, username, step); err != nil {
+		s.recordLoginFailure(ctx, username)
 		return nil, err
 	}
 
@@ -249,6 +277,11 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 		return nil, retry.NonRetryable(err)
 	}
 
+	// Only a login that issued a session clears the counter.
+	if s.throttle != nil {
+		s.throttle.Reset(ctx, username)
+	}
+
 	s.logger.WithFields(logrus.Fields{
 		"username": username,
 		"user_id":  user.ID.String(),
@@ -256,6 +289,13 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 	}).Info("User authenticated successfully with session")
 
 	return result, nil
+}
+
+// recordLoginFailure counts a failed attempt against the username.
+func (s *authenticationService) recordLoginFailure(ctx context.Context, username string) {
+	if s.throttle != nil {
+		s.throttle.RecordFailure(ctx, username)
+	}
 }
 
 // claimTOTPStep records step as used for user and fails closed. A missing

@@ -42,6 +42,13 @@ type replayRouter struct {
 // the developer's real key material.
 func newReplayRouter(t *testing.T) *replayRouter {
 	t.Helper()
+	return newReplayRouterWith(t, nil)
+}
+
+// newReplayRouterWith is newReplayRouter with a hook that adjusts the
+// container's configuration before it is built.
+func newReplayRouterWith(t *testing.T, configure func(v *viper.Viper)) *replayRouter {
+	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	restore := signing.UseFakeKeychainForTesting()
 	t.Cleanup(restore)
@@ -61,6 +68,9 @@ func newReplayRouter(t *testing.T) *replayRouter {
 	cacheCfg.Secrets.Enabled = false
 	v := viper.New()
 	v.Set("jwt.key_source", "os_store")
+	if configure != nil {
+		configure(v)
+	}
 	c, err := container.NewServiceContainer(container.Config{
 		Database: rawDB, Logger: logger, CacheConfig: &cacheCfg, Viper: v,
 	})

@@ -180,6 +180,7 @@ type ServiceContainer struct {
 	jwtService            authServices.JWTService
 	authenticationService authServices.AuthenticationService
 	oidcService           authServices.OIDCService
+	loginThrottle         *authServices.LoginThrottle
 
 	// Authorization services
 	rbacService              authzServices.RBACService
@@ -475,6 +476,10 @@ func (c *ServiceContainer) initializeServices() error {
 	// validate service-account tokens against the live client record.
 	c.oauth2ClientRepository = repositories.NewOAuth2ClientRepository(c.conn)
 
+	// Per-account failed-login backoff. The counter lives in the database, so
+	// it holds across restarts, server instances and the CLI.
+	c.loginThrottle = authServices.NewLoginThrottle(repositories.NewLoginFailureRepository(c.conn), time.Now)
+
 	// Initialize authentication service
 	baseAuthService := authServices.NewAuthenticationService(authServices.AuthenticationConfig{
 		UserRepository:         c.userRepository,
@@ -486,6 +491,7 @@ func (c *ServiceContainer) initializeServices() error {
 		TOTPStepRepository:     c.totpStepRepository,
 		Logger:                 c.logger,
 		AuditService:           c.auditService,
+		LoginThrottle:          c.loginThrottle,
 	})
 
 	// Wrap with retry logic if retry service is available.

@@ -72,6 +72,22 @@ func TestClientLogin_RejectionDoesNotEchoBody(t *testing.T) {
 	require.Contains(t, err.Error(), "401")
 }
 
+// A throttled login reports HTTP 429, so the remote CLI shows throttling
+// rather than a generic failure.
+func TestClientLogin_ThrottledReportsHTTP429(t *testing.T) {
+	srv := loginServer(t, func(w http.ResponseWriter, _ map[string]string) {
+		w.Header().Set("Retry-After", "37")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"message":"Too many failed login attempts"}`))
+	})
+	defer srv.Close()
+
+	c := newTestClient(t, srv.URL, srv.Client())
+	_, _, err := c.Login(context.Background(), "admin", "wrong", "000000", LoginOptions{Expiry: time.Hour})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "HTTP 429")
+}
+
 func TestClientLogin_MissingTokenInResponseIsAnError(t *testing.T) {
 	srv := loginServer(t, func(w http.ResponseWriter, _ map[string]string) {
 		w.Header().Set("Content-Type", "application/json")

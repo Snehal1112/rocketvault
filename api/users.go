@@ -25,6 +25,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -433,6 +434,15 @@ func loginUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	result, err := authSvc.AuthenticateUser(r.Context(), req.Username, req.Password, req.TOTPCode)
 	if err != nil {
 		c.Logger.Printf("Login failed for user %s: %v", req.Username, err)
+		// A throttled account gets 429 and a Retry-After rounded up to the
+		// second. The body is the same for every username, known or not.
+		var throttled *authServices.ThrottledError
+		if errors.As(err, &throttled) {
+			c.Err = common.NewAppError("api.login.throttled",
+				"Too many failed login attempts", nil, "", http.StatusTooManyRequests)
+			c.Err.RetryAfterSeconds = max(1, int(math.Ceil(throttled.RetryAfter.Seconds())))
+			return
+		}
 		c.SetPermissionError("authentication failed")
 		return
 	}

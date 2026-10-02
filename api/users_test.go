@@ -1325,6 +1325,28 @@ func TestLoginUser_AuthFailure_Returns403(t *testing.T) {
 	authSvc.AssertExpectations(t)
 }
 
+func TestLoginUser_Throttled_Returns429WithRetryAfter(t *testing.T) {
+	authSvc := &mockAuthService{}
+	authSvc.On("AuthenticateUser", mock.Anything, "alice", "wrong", "123456").
+		Return(nil, &authServices.ThrottledError{RetryAfter: 36*time.Second + 200*time.Millisecond})
+
+	c := newUserCtx(nil, authSvc, RequestClaims{})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/users/login", encodeBody(map[string]string{
+		"username": "alice", "password": "wrong", "totp_code": "123456",
+	}))
+
+	loginUser(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	assert.Equal(t, http.StatusTooManyRequests, w.Code)
+	assert.Equal(t, "37", w.Header().Get("Retry-After"), "a partial second rounds up")
+	assert.NotContains(t, w.Body.String(), "alice")
+	authSvc.AssertExpectations(t)
+}
+
 func TestLoginUser_Success_Returns200(t *testing.T) {
 	authSvc := &mockAuthService{}
 	authSvc.On("AuthenticateUser", mock.Anything, "alice", "goodpass", "123456").
