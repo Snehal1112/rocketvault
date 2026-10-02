@@ -64,7 +64,9 @@ still blocks it. Find policies that may need a companion deny:</p>
 </pre></div>
 <p>and look for rows with <code>&quot;operation&quot;: &quot;create&quot;</code> and <code>&quot;effect&quot;: &quot;deny&quot;</code>.</p>
 <h3 id="public-endpoints-are-matched-exactly">Public endpoints are matched exactly</h3>
-<p>Only these paths skip authentication: <code>/api/v1/health</code>,
+<p>Only these paths under <code>/api/v1</code> skip authentication (<code>/jwks.json</code> and
+<code>/metrics</code> sit outside <code>/api/v1</code>, are served by their own routers and are
+unaffected): <code>/api/v1/health</code>,
 <code>/api/v1/health/ready</code>, <code>/api/v1/health/live</code>, <code>/api/v1/users/login</code>,
 <code>/api/v1/users/refresh</code>, <code>/api/v1/oauth2/token</code>, <code>/api/v1/oidc/login</code>,
 <code>/api/v1/oidc/callback</code>, <code>/api/v1/oidc/cli/exchange</code> and <code>/api/v1/config</code>.
@@ -90,7 +92,17 @@ rollback rows written by <code>AssignRole</code> name the caller too.</li>
 <li>Access-policy changes write <code>create_access_policy</code>,
 <code>update_access_policy</code> and <code>delete_access_policy</code> rows.</li>
 <li>Refused vault, role-assignment, access-policy and vault-webhook operations
-write a row with status <code>denied</code>, on HTTP and the CLI alike.</li>
+write a row with status <code>denied</code>. Handler-level and CLI refusals use the
+same operation names (<code>create_vault</code>, <code>get_vault</code>, <code>update_vault</code>,
+<code>delete_vault</code>, <code>recover_vault</code>, <code>purge_vault</code> on the CLI,
+<code>manage_vault_webhook</code>, <code>assign_role</code>, <code>revoke_role_assignment</code>,
+<code>list_role_assignments</code>, <code>get_role_assignment</code>). Refusals made by the
+policy middleware keep the operation name <code>policy</code>, so an HTTP vault purge
+refusal does not appear under <code>action=purge_vault</code>, which shows CLI
+attempts only. Access-policy refusals log as <code>manage_access_policy</code>, while
+successes log <code>create_</code>, <code>update_</code> and <code>delete_access_policy</code>.</li>
+<li>CLI refusals of non-grantable roles on grant and revoke, and vault create
+quota and purge-protection refusals, are audited too.</li>
 <li>Not yet audited: refused vault-provisioning-grant operations, refusals in
 the audit, users, jwks and oauth2 handlers, and failures after the service
 call for revoke and vault delete, recover and purge. See § B81.</li>
@@ -103,7 +115,13 @@ or update their own profile over HTTP. It fails closed.</li>
 <li><strong>B97</strong>: <code>/health/database</code> returns raw driver error text to any
 authenticated caller.</li>
 </ul>
-<p>Both are described in <code>.claude/known-bugs.md</code>.</p>
+<p>Both are described in <code>.claude/known-bugs.md</code>. Also open:</p>
+<ul>
+<li><strong>B95</strong>: a deny on <code>get</code> does not block export, because export resolves to <code>create</code>.</li>
+<li><strong>B94</strong>: CLI and HTTP evaluate different policy operations for some commands, including <code>cmd/version.go</code> using <code>list</code>.</li>
+<li>Restore from a backup blob resolves to <code>recover</code>, so a deny on <code>restore</code> is not evaluated over HTTP (§ B79, &quot;Known unresolved gap&quot;).</li>
+<li><strong>B98</strong>: rows logged with status <code>denied</code> carry no outcome and cannot be filtered with <code>audit logs --outcome</code>; source is always <code>system</code>.</li>
+</ul>
 <h2 id="upgrade-procedure">Upgrade procedure</h2>
 <ol>
 <li>

@@ -5302,13 +5302,22 @@ or vault operation wrote nothing. `PATCH /audit/config` accepted
 session principal; the purge scheduler passes `uuid.Nil`, recorded as
 `system`. The access-policy service audits each mutation with the actor and
 the policy's principal, resource, operation, effect and scope, including the
-old effect on update. Handler and CLI refusals write a `denied` row under the
-same operation name on both paths, including the CLI vault-webhook commands
-(`manage_vault_webhook`). The `AssignRole` rollback rows now name the caller.
+old effect on update. Handler-level and CLI refusals write a `denied` row under
+the same operation names (`create_vault`, `get_vault`, `update_vault`,
+`delete_vault`, `recover_vault`, `purge_vault` on the CLI, `manage_vault_webhook`,
+`assign_role`, `revoke_role_assignment`, `list_role_assignments`,
+`get_role_assignment`). Two naming splits remain. Refusals made by
+`PolicyMiddleware` keep the middleware's operation name `policy`, so an HTTP
+vault purge refusal (the purge handler writes no refusal row of its own) is
+logged as `policy`, and filtering `action=purge_vault` shows CLI attempts
+only. Access-policy refusals log as `manage_access_policy`, while successes
+log `create_`, `update_` and `delete_access_policy`. The `AssignRole` rollback rows now name the caller.
 Audit retention has a 90-day floor on write, and a stored value below it is
 clamped on read.
 
 **Not covered (residual)**:
+- CLI refusals of `ErrRoleNotGrantable` on grant and revoke, and of vault
+  create quota and purge-protection errors, are now audited (not residual).
 - Refusals of vault-provisioning-grant operations, over HTTP
   (`api/vault_provisioning_grants.go`) and the CLI, write no audit row.
 - Refusals in the audit, users, jwks and oauth2 handlers and in the key,
@@ -5425,6 +5434,34 @@ map, and `DatabaseCheck` writes that map to the client unchanged.
 **Fix recipe**: admin-gate the route, or drop the error text from the response
 and log it server-side. Update the route's `nonDataPlaneRoutes` entry to
 match.
+
+---
+
+### B98 — `PersistAudit` never sets an outcome and always records source `system`
+
+**Status**: Open; GitHub #64
+**Severity**: Low to Medium — accountability and queryability; nothing is
+lost, but the rows cannot be filtered or counted the way operators expect.
+**Files**: `internal/services/audit/audit_service.go` (`PersistAudit`),
+`internal/services/audit/compliance_report_service.go`, `cmd/audit/logs.go`
+
+**Symptom**: rows written through the logger (`LogAuditError`/`LogAuditInfo`,
+which reach `PersistAudit`) have an empty `outcome` and `source` `system`.
+Rows with status `denied` (the B81 refusals and `PolicyMiddleware` policy
+denials) therefore do not match `audit logs --outcome` or `?outcome=`. The
+SOC 2 report counts `AuthFailures` only for `authenticate*` and
+`validate_session` actions and treats any outcome other than `success` as a
+failure, so denied rows are not counted and empty-outcome auth rows all count
+as failures. `source` cannot tell the soft-delete scheduler from human actors.
+
+**Root cause**: `PersistAudit` builds an `AuditEvent` with only user, action,
+details and a fixed `Source: "system"`; the logger's status argument is never
+passed through.
+
+**Fix recipe**: pass the status through the persister interface and map it to
+`Outcome` (`denied`, `failure`, `success`) in `PersistAudit`, and give the
+scheduler its own source value. Add tests for `--outcome denied` and the SOC 2
+counts.
 
 ---
 
