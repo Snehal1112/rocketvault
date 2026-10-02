@@ -51,17 +51,26 @@ includes the caller's own session when they change their own password, so
 the next CLI command or API call needs a new login. A username-only change
 keeps sessions, and so does re-submitting the roles the user already has.</li>
 <li><strong>Deleting a user ends their sessions first</strong>, and every authenticated
-user request now confirms that the token's user still exists. This costs
-two extra database queries per request (the revocation check plus the user
-read).</li>
+user request now confirms that the token's user still exists. The
+revocation check already ran on every request; the new cost is the user
+read, <code>UserRepository.Read</code>, which is two queries (the <code>users</code> row by
+primary key and its <code>user_roles</code>). It also loads the user's
+<code>password_hash</code> and <code>totp_secret</code> into memory for the duration of the
+check. No cache was added.</li>
 <li><strong>Each TOTP code works once.</strong> A second login with the same code, or with
 a code from an earlier 30-second step, fails with <code>invalid TOTP code</code>. Two
 local logins by the same user inside one 30-second step need two different
 codes, so automation that reuses a code will break. This applies to the CLI
-and the HTTP login alike.</li>
+and the HTTP login alike. If the server clock jumps forward, a login during
+the jump claims a far-future step, and every TOTP login of that user then
+fails until real time catches up with that step; see the known
+limitations below.</li>
 <li><strong>A wrong-length TOTP code is now treated as an invalid code.</strong> It is
-audited as an invalid code and answered with <code>invalid TOTP code</code>, instead
-of a validation error, on both the CLI and HTTP paths.</li>
+audited as <code>invalid TOTP code</code> instead of <code>TOTP validation error</code>. The HTTP
+response is unchanged: it was already, and still is, the generic <code>403</code>
+<code>authentication failed</code>. Only the CLI output changes: it now prints
+<code>invalid TOTP code</code> instead of an <code>authentication failed</code> wrapper around
+the library's length error.</li>
 <li><strong><code>DELETE /api/v1/users/sessions/{id}</code> is ownership-checked.</strong> Admins can
 still revoke any session. Anyone else gets <code>404</code> for a session they do not
 own, the same answer as for a missing session. An admin revoking a missing
@@ -83,14 +92,41 @@ WHERE (totp_secret IS NULL OR totp_secret = '') AND password_hash &lt;&gt; '';
 <li>
 <p>Revoke the sessions of each account the query returns. Sessions and
 refresh tokens issued before this release to such accounts are not
-revoked by the upgrade, and a refresh token stays usable for up to 7 days.</p>
+revoked by the upgrade, and a refresh token stays usable for up to 7 days.
+No API route or CLI command lets an admin list or revoke another user's
+sessions, so this step needs direct database access. Operators with that
+access run the following once, after taking a backup:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">sql</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">UPDATE user_sessions
+SET revoked = TRUE, revoked_at = CURRENT_TIMESTAMP,
+    revoked_reason = 'v4.8.0 upgrade'
+WHERE revoked = FALSE AND user_id IN (
+  SELECT id FROM users
+  WHERE (totp_secret IS NULL OR totp_secret = '') AND password_hash &lt;&gt; ''
+);
+</pre></div>
+<p>It works on SQLite and Postgres. It is deliberately not a migration in
+<code>migrateSchema</code>: that function runs on every start, so the statement
+would revoke these users' sessions again at every restart until they
+enroll, including sessions from their OIDC logins.</p>
 </li>
 <li>
-<p>Tell each of those users to sign in with <code>rocketvault users login --oidc</code>
-and set their password again with
-<code>rocketvault users update &lt;their-user-id&gt; --new-password &lt;password&gt;</code>. The
-command prints a TOTP secret; they add it to their authenticator app. Their
-OIDC login keeps working the whole time.</p>
+<p>Re-enroll each of those users. Setting a password on such an account
+generates a TOTP secret and prints it once, but only two kinds of caller
+can set it:</p>
+<ul>
+<li><strong>An admin</strong>, with <code>PUT /api/v1/users/{id}</code> or
+<code>rocketvault users update &lt;user-id&gt; --new-password &lt;password&gt;</code>. The
+admin receives the TOTP secret and must pass it to the user over a
+secure channel, so the admin learns it.</li>
+<li><strong>Someone with shell access to the server host</strong>, running
+<code>rocketvault users update</code> in local mode against the server's own
+configuration and database. A user can do this for their own account
+only if they have that access.</li>
+</ul>
+<p>A non-admin cannot do it remotely: <code>PUT /api/v1/users/{id}</code> requires the
+admin-only <code>users:update</code> permission, and <code>rocketvault users update</code> has
+no remote mode (only <code>users login</code> and <code>users logout</code> do). Their OIDC login
+keeps working the whole time.</p>
 </li>
 <li>
 <p>Expect every user to log in again after they change their password or an
@@ -102,13 +138,20 @@ admin changes their roles.</p>
 <li><strong>TOTP lockout is accepted and has no reset path.</strong> No command or endpoint
 resets a TOTP secret. A local account that has a password but no secret can
 only be recovered by editing the database; OIDC login still works for it.
-The same happens if the one-time enrollment URL is lost: when <code>GetUser</code>
-fails or a transient error occurs after the enrollment was written, the
-response carries no URL and the account is locked out for password login.</li>
-<li><strong>A stolen OIDC session token can set a password</strong> and receive the
-enrollment URL. A fresh IdP login is not required before setting a password
-(step 5 of <code>.claude/research-oidc-user-mfa-enrollment.md</code>), and enrollment is
-not confirmed with a first code (step 6). Both are deferred.</li>
+The same happens if the one-time enrollment URL is lost: when a transient
+error makes the retry wrapper re-run an update whose enrollment was already
+written, or when session revocation fails after it (see below), the
+response carries no URL and the account is locked out for password login.
+A failed read-back of the user after the update does not lose it: the
+<code>PUT /api/v1/users/{id}</code> response still carries the URL, with the other
+fields built from the request, and the read error is only logged.</li>
+<li><strong>A stolen session token of an OIDC user who holds the admin role can set
+a password</strong> for that user and receive the enrollment URL over HTTP. For a
+non-admin OIDC user this needs shell access to the server host, because
+<code>PUT /api/v1/users/{id}</code> is admin-only and <code>rocketvault users update</code> has no
+remote mode. A fresh IdP login is not required before setting a password
+(step 5 of <code>.claude/research-oidc-user-mfa-enrollment.md</code>), and enrollment
+is not confirmed with a first code (step 6). Both are deferred.</li>
 <li><strong>An admin who sets an OIDC user's password learns that user's TOTP
 secret</strong>, as with admin user creation.</li>
 <li><strong>Revocation can fail after the write succeeded.</strong> The password or role
@@ -118,6 +161,13 @@ update returns an error but the change stays, old sessions stay alive
 hour), and a retry of the same update skips revocation for a role change
 because the roles now read as unchanged. A generated enrollment URL is lost
 in that case too. Revoke the user's sessions by hand if you see this error.</li>
+<li><strong>A forward jump of the server clock locks a user out of TOTP login for a
+while.</strong> A login during the jump claims a step from the future. Codes from
+earlier steps are then refused as replays, so every TOTP login of that user
+fails until real time reaches the claimed step. OIDC login is unaffected.
+Keep the server clock synchronized.</li>
+<li><strong>Deleting a user revokes first.</strong> If the delete then fails, the user is
+logged out but not deleted. This is fail-safe; repeat the delete.</li>
 <li><strong>A login that races a user delete</strong> can leave one unrevoked session
 until the token expires; the user-exists check on every request still
 rejects it.</li>
