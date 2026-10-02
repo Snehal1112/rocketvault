@@ -651,18 +651,18 @@ func (m *MockVaultService) UpdateVault(ctx context.Context, name string, req mod
 	return args.Get(0).(*model.Vault), args.Error(1)
 }
 
-func (m *MockVaultService) DeleteVault(ctx context.Context, name string) error {
-	args := m.Called(ctx, name)
+func (m *MockVaultService) DeleteVault(ctx context.Context, name string, actorID uuid.UUID) error {
+	args := m.Called(ctx, name, actorID)
 	return args.Error(0)
 }
 
-func (m *MockVaultService) RecoverVault(ctx context.Context, name string) error {
-	args := m.Called(ctx, name)
+func (m *MockVaultService) RecoverVault(ctx context.Context, name string, actorID uuid.UUID) error {
+	args := m.Called(ctx, name, actorID)
 	return args.Error(0)
 }
 
-func (m *MockVaultService) PurgeVault(ctx context.Context, name string) error {
-	args := m.Called(ctx, name)
+func (m *MockVaultService) PurgeVault(ctx context.Context, name string, actorID uuid.UUID) error {
+	args := m.Called(ctx, name, actorID)
 	return args.Error(0)
 }
 

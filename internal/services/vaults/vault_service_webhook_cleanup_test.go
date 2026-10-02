@@ -37,7 +37,7 @@ func TestPurgeVault_RemovesWebhookConfig(t *testing.T) {
 	spy := &spyWebhookCleaner{}
 	svc.SetWebhookCleaner(spy)
 
-	if err := svc.PurgeVault(context.Background(), "doomed"); err != nil {
+	if err := svc.PurgeVault(context.Background(), "doomed", uuid.New()); err != nil {
 		t.Fatalf("PurgeVault: %v", err)
 	}
 
@@ -65,7 +65,7 @@ func TestPurgeVault_WebhookCleanerErrorSurfaces(t *testing.T) {
 
 	svc.SetWebhookCleaner(&spyWebhookCleaner{err: errors.New("boom")})
 
-	err := svc.PurgeVault(context.Background(), "doomed")
+	err := svc.PurgeVault(context.Background(), "doomed", uuid.New())
 	if err == nil {
 		t.Fatal("expected the webhook cleaner error to surface")
 	}
@@ -84,7 +84,7 @@ func TestPurgeVault_NoWebhookCleanerIsFine(t *testing.T) {
 	repo.byID[id.String()] = repo.byName["doomed"]
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 
-	if err := svc.PurgeVault(context.Background(), "doomed"); err != nil {
+	if err := svc.PurgeVault(context.Background(), "doomed", uuid.New()); err != nil {
 		t.Fatalf("expected purge to succeed without a webhook cleaner set, got %v", err)
 	}
 }

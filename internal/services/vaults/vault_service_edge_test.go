@@ -85,7 +85,7 @@ func TestDeleteVault_SoftDeleteRepoError(t *testing.T) {
 	repo := &errVaultRepo{fakeVaultRepo: inner, softDeleteErr: errors.New("db error")}
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 
-	err := svc.DeleteVault(context.Background(), "x")
+	err := svc.DeleteVault(context.Background(), "x", uuid.New())
 	if err == nil {
 		t.Fatal("expected error from SoftDelete")
 	}
@@ -100,7 +100,7 @@ func TestDeleteVault_ReadByIDAfterSoftDeleteError(t *testing.T) {
 	repo := &errVaultRepo{fakeVaultRepo: inner, readByIDErr: errors.New("db error")}
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 
-	err := svc.DeleteVault(context.Background(), "x")
+	err := svc.DeleteVault(context.Background(), "x", uuid.New())
 	if err == nil {
 		t.Fatal("expected error from ReadByID after soft-delete")
 	}
@@ -116,7 +116,7 @@ func TestDeleteVault_CascadeError(t *testing.T) {
 	casc := &failingCascade{err: boom}
 	svc := NewVaultService(inner, casc, nil)
 
-	err := svc.DeleteVault(context.Background(), "x")
+	err := svc.DeleteVault(context.Background(), "x", uuid.New())
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected cascade error, got %v", err)
 	}
@@ -134,7 +134,7 @@ func TestRecoverVault_RecoverRepoError(t *testing.T) {
 	repo := &errVaultRepo{fakeVaultRepo: inner, recoverErr: errors.New("db error")}
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 
-	err := svc.RecoverVault(context.Background(), "r")
+	err := svc.RecoverVault(context.Background(), "r", uuid.New())
 	if err == nil {
 		t.Fatal("expected error from Recover repo call")
 	}
@@ -151,7 +151,7 @@ func TestRecoverVault_CascadeError(t *testing.T) {
 	casc := &failingCascade{err: boom}
 	svc := NewVaultService(inner, casc, nil)
 
-	err := svc.RecoverVault(context.Background(), "r")
+	err := svc.RecoverVault(context.Background(), "r", uuid.New())
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected cascade recover error, got %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRecoverVault_CascadeError(t *testing.T) {
 
 func TestPurgeVault_RefusesDefault(t *testing.T) {
 	svc := NewVaultService(newFakeRepo(), &noopCascade{}, nil)
-	err := svc.PurgeVault(context.Background(), model.DefaultVaultName)
+	err := svc.PurgeVault(context.Background(), model.DefaultVaultName, uuid.New())
 	if err == nil {
 		t.Fatal("expected refusal to purge the default vault")
 	}
@@ -175,7 +175,7 @@ func TestPurgeVault_ActiveVaultFallback(t *testing.T) {
 	inner.byID[id.String()] = inner.byName["active"]
 
 	svc := NewVaultService(inner, &noopCascade{}, nil)
-	if err := svc.PurgeVault(context.Background(), "active"); err != nil {
+	if err := svc.PurgeVault(context.Background(), "active", uuid.New()); err != nil {
 		t.Fatalf("PurgeVault active vault: %v", err)
 	}
 }
@@ -190,7 +190,7 @@ func TestPurgeVault_PurgeRepoError(t *testing.T) {
 	repo := &errVaultRepo{fakeVaultRepo: inner, purgeErr: errors.New("db error")}
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 
-	err := svc.PurgeVault(context.Background(), "d")
+	err := svc.PurgeVault(context.Background(), "d", uuid.New())
 	if err == nil {
 		t.Fatal("expected error from Purge repo call")
 	}
@@ -198,7 +198,7 @@ func TestPurgeVault_PurgeRepoError(t *testing.T) {
 
 func TestPurgeVault_NotFoundInBothLists(t *testing.T) {
 	svc := NewVaultService(newFakeRepo(), &noopCascade{}, nil)
-	err := svc.PurgeVault(context.Background(), "nonexistent")
+	err := svc.PurgeVault(context.Background(), "nonexistent", uuid.New())
 	if err == nil {
 		t.Fatal("expected not-found error")
 	}
@@ -218,7 +218,7 @@ func TestPurgeVault_CascadesContentPurge(t *testing.T) {
 	cascade := &noopCascade{}
 	svc := NewVaultService(inner, cascade, nil)
 
-	if err := svc.PurgeVault(context.Background(), "d"); err != nil {
+	if err := svc.PurgeVault(context.Background(), "d", uuid.New()); err != nil {
 		t.Fatalf("PurgeVault: %v", err)
 	}
 	if cascade.purge != 1 {
@@ -238,7 +238,7 @@ func TestPurgeVault_CascadePurgeError(t *testing.T) {
 	boom := errors.New("cascade purge failed")
 	svc := NewVaultService(inner, &failingCascade{err: boom}, nil)
 
-	err := svc.PurgeVault(context.Background(), "d")
+	err := svc.PurgeVault(context.Background(), "d", uuid.New())
 	if err == nil || !errors.Is(err, boom) {
 		t.Fatalf("expected cascade purge error to propagate, got %v", err)
 	}
@@ -259,7 +259,7 @@ func TestPurgeVault_RefusesWhenContentsProtected(t *testing.T) {
 	cascade := &noopCascade{protected: true}
 	svc := NewVaultService(inner, cascade, nil)
 
-	err := svc.PurgeVault(context.Background(), "d")
+	err := svc.PurgeVault(context.Background(), "d", uuid.New())
 	if !errors.Is(err, ErrVaultContentsPurgeProtected) {
 		t.Fatalf("expected ErrVaultContentsPurgeProtected, got %v", err)
 	}
@@ -286,7 +286,7 @@ func TestPurgeVault_ContentsProtectionCheckError_FailsClosed(t *testing.T) {
 	cascade := &noopCascade{protectedErr: boom}
 	svc := NewVaultService(inner, cascade, nil)
 
-	err := svc.PurgeVault(context.Background(), "d")
+	err := svc.PurgeVault(context.Background(), "d", uuid.New())
 	if !errors.Is(err, boom) {
 		t.Fatalf("expected the check error to propagate, got %v", err)
 	}

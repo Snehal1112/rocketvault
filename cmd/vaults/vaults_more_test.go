@@ -50,7 +50,7 @@ func TestPurgeCmd_Success(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	tc.MockVaultService.On("ListVaults", mock.Anything, true).
 		Return([]model.Vault{{ID: uuid.New(), Name: "my-vault"}}, nil)
-	tc.MockVaultService.On("PurgeVault", mock.Anything, "my-vault").Return(nil)
+	tc.MockVaultService.On("PurgeVault", mock.Anything, "my-vault", tc.TestUserID).Return(nil)
 
 	cmd, buf := newVltCmd(purgeCmd.RunE, []string{"my-vault"})
 	cmd.Args = cobra.ExactArgs(1)
@@ -66,7 +66,7 @@ func TestPurgeCmd_ServiceError(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	tc.MockVaultService.On("ListVaults", mock.Anything, true).
 		Return([]model.Vault{{ID: uuid.New(), Name: "my-vault"}}, nil)
-	tc.MockVaultService.On("PurgeVault", mock.Anything, "my-vault").
+	tc.MockVaultService.On("PurgeVault", mock.Anything, "my-vault", tc.TestUserID).
 		Return(fmt.Errorf("cannot purge"))
 
 	cmd, _ := newVltCmd(purgeCmd.RunE, []string{"my-vault"})
@@ -84,7 +84,7 @@ func TestRecoverCmd_Success(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	tc.MockVaultService.On("ListVaults", mock.Anything, true).
 		Return([]model.Vault{{ID: uuid.New(), Name: "my-vault"}}, nil)
-	tc.MockVaultService.On("RecoverVault", mock.Anything, "my-vault").Return(nil)
+	tc.MockVaultService.On("RecoverVault", mock.Anything, "my-vault", tc.TestUserID).Return(nil)
 
 	cmd, buf := newVltCmd(recoverCmd.RunE, []string{"my-vault"})
 	cmd.Args = cobra.ExactArgs(1)
@@ -100,7 +100,7 @@ func TestRecoverCmd_ServiceError(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	tc.MockVaultService.On("ListVaults", mock.Anything, true).
 		Return([]model.Vault{{ID: uuid.New(), Name: "broken-vault"}}, nil)
-	tc.MockVaultService.On("RecoverVault", mock.Anything, "broken-vault").
+	tc.MockVaultService.On("RecoverVault", mock.Anything, "broken-vault", tc.TestUserID).
 		Return(fmt.Errorf("vault not found"))
 
 	cmd, _ := newVltCmd(recoverCmd.RunE, []string{"broken-vault"})
@@ -315,7 +315,7 @@ func TestVaultsDelete_ServiceError(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	tc.MockVaultService.On("ListVaults", mock.Anything, true).
 		Return([]model.Vault{{ID: uuid.New(), Name: "locked-vault"}}, nil)
-	tc.MockVaultService.On("DeleteVault", mock.Anything, "locked-vault").
+	tc.MockVaultService.On("DeleteVault", mock.Anything, "locked-vault", tc.TestUserID).
 		Return(fmt.Errorf("vault is protected"))
 
 	cmd := &cobra.Command{Use: "delete", Args: cobra.ExactArgs(1), RunE: deleteCmd.RunE}
@@ -419,7 +419,7 @@ func TestVaultsDelete_ForbiddenWithoutGrant(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "permission denied")
-	tc.MockVaultService.AssertNotCalled(t, "DeleteVault", mock.Anything, mock.Anything)
+	tc.MockVaultService.AssertNotCalled(t, "DeleteVault", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestVaultsRecover_ForbiddenWithoutGrant mirrors the delete case for recover.
@@ -437,7 +437,7 @@ func TestVaultsRecover_ForbiddenWithoutGrant(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "permission denied")
-	tc.MockVaultService.AssertNotCalled(t, "RecoverVault", mock.Anything, mock.Anything)
+	tc.MockVaultService.AssertNotCalled(t, "RecoverVault", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // stubRoleAssignmentService is a minimal RoleAssignmentService test double
@@ -478,7 +478,7 @@ func TestVaultsPurge_ForbiddenWithoutGrant(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "permission denied")
-	tc.MockVaultService.AssertNotCalled(t, "PurgeVault", mock.Anything, mock.Anything)
+	tc.MockVaultService.AssertNotCalled(t, "PurgeVault", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestVaultsPurge_AllowedWithPurgeOperatorGrant proves a non-admin holding
@@ -489,7 +489,7 @@ func TestVaultsPurge_AllowedWithPurgeOperatorGrant(t *testing.T) {
 	tc.MockContainer.RoleAssignmentService = &stubRoleAssignmentService{allowed: true}
 	tc.MockVaultService.On("ListVaults", mock.Anything, true).
 		Return([]model.Vault{{ID: uuid.New(), Name: "my-vault"}}, nil)
-	tc.MockVaultService.On("PurgeVault", mock.Anything, "my-vault").Return(nil)
+	tc.MockVaultService.On("PurgeVault", mock.Anything, "my-vault", tc.TestUserID).Return(nil)
 
 	cmd, buf := newVltCmd(purgeCmd.RunE, []string{"my-vault"})
 	cmd.Args = cobra.ExactArgs(1)

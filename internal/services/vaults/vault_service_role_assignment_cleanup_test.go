@@ -38,7 +38,7 @@ func TestPurgeVault_RemovesRoleAssignments(t *testing.T) {
 	spy := &spyRoleAssignmentCleaner{}
 	svc.SetRoleAssignmentCleaner(spy)
 
-	if err := svc.PurgeVault(context.Background(), "doomed"); err != nil {
+	if err := svc.PurgeVault(context.Background(), "doomed", uuid.New()); err != nil {
 		t.Fatalf("PurgeVault: %v", err)
 	}
 
@@ -66,7 +66,7 @@ func TestPurgeVault_RoleAssignmentCleanerErrorSurfaces(t *testing.T) {
 
 	svc.SetRoleAssignmentCleaner(&spyRoleAssignmentCleaner{err: errors.New("boom")})
 
-	err := svc.PurgeVault(context.Background(), "doomed")
+	err := svc.PurgeVault(context.Background(), "doomed", uuid.New())
 	if err == nil {
 		t.Fatal("expected the role-assignment cleaner error to surface")
 	}
@@ -86,7 +86,7 @@ func TestPurgeVault_NoRoleAssignmentCleanerIsFine(t *testing.T) {
 	repo.byID[id.String()] = repo.byName["doomed"]
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 
-	if err := svc.PurgeVault(context.Background(), "doomed"); err != nil {
+	if err := svc.PurgeVault(context.Background(), "doomed", uuid.New()); err != nil {
 		t.Fatalf("expected purge to succeed without a role-assignment cleaner set, got %v", err)
 	}
 }

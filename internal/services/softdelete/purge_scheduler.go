@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"rocketvault/config"
 	rvdb "rocketvault/internal/db"
 	"rocketvault/internal/logging"
@@ -19,7 +21,7 @@ import (
 // importing the vaults service package.
 type VaultPurger interface {
 	ListVaults(ctx context.Context, includeDeleted bool) ([]model.Vault, error)
-	PurgeVault(ctx context.Context, name string) error
+	PurgeVault(ctx context.Context, name string, actorID uuid.UUID) error
 }
 
 // PurgeScheduler runs daily and permanently deletes soft-deleted items
@@ -168,7 +170,9 @@ func (s *PurgeScheduler) purgeExpiredVaults(ctx context.Context) {
 		if !v.DeletedAt.AddDate(0, 0, retentionDays).Before(now) {
 			continue
 		}
-		if err := s.vaults.PurgeVault(ctx, v.Name); err != nil {
+		// The scheduler acts for no principal, which the vault service
+		// records as "system".
+		if err := s.vaults.PurgeVault(ctx, v.Name, uuid.Nil); err != nil {
 			s.log.WithError(err).Errorf("auto-purge failed for vault %s", v.Name)
 			continue
 		}

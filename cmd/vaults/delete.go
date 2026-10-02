@@ -35,12 +35,13 @@ The default vault cannot be deleted.`,
 		if !ok || serviceContainer == nil {
 			return fmt.Errorf("service container not available in context")
 		}
-		if err := requireCanManageVault(ctx, serviceContainer, name); err != nil {
+		actorID, err := requireCanManageVault(ctx, serviceContainer, name)
+		if err != nil {
 			return err
 		}
 		vaultService := serviceContainer.GetVaultService()
 
-		if err := vaultService.DeleteVault(ctx, name); err != nil {
+		if err := vaultService.DeleteVault(ctx, name, actorID); err != nil {
 			return fmt.Errorf("failed to delete vault %q: %w", name, err)
 		}
 

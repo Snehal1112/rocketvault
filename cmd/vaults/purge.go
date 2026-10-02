@@ -41,12 +41,13 @@ too if it matches by name.`,
 		if !ok || serviceContainer == nil {
 			return fmt.Errorf("service container not available in context")
 		}
-		if err := requireCanPurgeVault(ctx, serviceContainer, name); err != nil {
+		actorID, err := requireCanPurgeVault(ctx, serviceContainer, name)
+		if err != nil {
 			return err
 		}
 		vaultService := serviceContainer.GetVaultService()
 
-		if err := vaultService.PurgeVault(ctx, name); err != nil {
+		if err := vaultService.PurgeVault(ctx, name, actorID); err != nil {
 			return fmt.Errorf("failed to purge vault %q: %w", name, err)
 		}
 

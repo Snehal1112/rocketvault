@@ -161,7 +161,7 @@ func TestDeleteVault_RefusesDefault(t *testing.T) {
 	repo.byName["default"] = &model.Vault{ID: defID, Name: "default"}
 	repo.byID[defID.String()] = repo.byName["default"]
 	svc := NewVaultService(repo, &noopCascade{}, nil)
-	if err := svc.DeleteVault(context.Background(), "default"); err == nil {
+	if err := svc.DeleteVault(context.Background(), "default", uuid.New()); err == nil {
 		t.Fatal("expected refusal to delete the default vault")
 	}
 }
@@ -173,7 +173,7 @@ func TestDeleteVault_CascadesContents(t *testing.T) {
 	repo.byID[id.String()] = repo.byName["stg"]
 	casc := &noopCascade{}
 	svc := NewVaultService(repo, casc, nil)
-	if err := svc.DeleteVault(context.Background(), "stg"); err != nil {
+	if err := svc.DeleteVault(context.Background(), "stg", uuid.New()); err != nil {
 		t.Fatalf("DeleteVault: %v", err)
 	}
 	if casc.soft != 1 {
@@ -187,7 +187,7 @@ func TestPurgeVault_RefusedWhenProtected(t *testing.T) {
 	repo.byName["p"] = &model.Vault{ID: id, Name: "p", PurgeProtection: true}
 	repo.byID[id.String()] = repo.byName["p"]
 	svc := NewVaultService(repo, &noopCascade{}, nil)
-	if err := svc.PurgeVault(context.Background(), "p"); err == nil {
+	if err := svc.PurgeVault(context.Background(), "p", uuid.New()); err == nil {
 		t.Fatal("expected purge refusal when purge protection is on")
 	}
 }
@@ -203,7 +203,7 @@ func TestPurgeVault_RefusedWhenGlobalPurgeProtectionEnabled(t *testing.T) {
 	repo.byID[id.String()] = repo.byName["p"]
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 	svc.SetGlobalPurgeProtection(true)
-	err := svc.PurgeVault(context.Background(), "p")
+	err := svc.PurgeVault(context.Background(), "p", uuid.New())
 	if err == nil {
 		t.Fatal("expected purge refusal when global purge protection is on")
 	}
@@ -220,7 +220,7 @@ func TestRecoverVault_RestoresAndCascades(t *testing.T) {
 	repo.byID[id.String()] = repo.byName["r"]
 	casc := &noopCascade{}
 	svc := NewVaultService(repo, casc, nil)
-	if err := svc.RecoverVault(context.Background(), "r"); err != nil {
+	if err := svc.RecoverVault(context.Background(), "r", uuid.New()); err != nil {
 		t.Fatalf("RecoverVault: %v", err)
 	}
 	if casc.recover != 1 {
@@ -254,7 +254,7 @@ func TestGetVault_NonNotFoundRepoErrorIsNotMaskedAsSentinel(t *testing.T) {
 
 func TestRecoverVault_UnknownReturnsSentinel(t *testing.T) {
 	svc := NewVaultService(newFakeRepo(), &noopCascade{}, nil)
-	err := svc.RecoverVault(context.Background(), "nope")
+	err := svc.RecoverVault(context.Background(), "nope", uuid.New())
 	if !errors.Is(err, ErrVaultNotFound) {
 		t.Fatalf("expected ErrVaultNotFound, got %v", err)
 	}
@@ -397,7 +397,7 @@ func TestPurgeVault_DeletedVaultSucceeds(t *testing.T) {
 	repo.byID[id.String()] = repo.byName["d"]
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 
-	if err := svc.PurgeVault(context.Background(), "d"); err != nil {
+	if err := svc.PurgeVault(context.Background(), "d", uuid.New()); err != nil {
 		t.Fatalf("PurgeVault: %v", err)
 	}
 	if _, ok := repo.byID[id.String()]; ok {
@@ -427,7 +427,7 @@ func TestPurgeVault_DeletesVaultPolicies(t *testing.T) {
 	cleaner := &fakePolicyCleaner{}
 	svc.SetPolicyCleaner(cleaner)
 
-	if err := svc.PurgeVault(context.Background(), "prod"); err != nil {
+	if err := svc.PurgeVault(context.Background(), "prod", uuid.New()); err != nil {
 		t.Fatalf("purge: %v", err)
 	}
 	if !cleaner.called {
@@ -447,7 +447,7 @@ func TestRecoverVault_RestoresFromDeleted(t *testing.T) {
 	casc := &noopCascade{}
 	svc := NewVaultService(repo, casc, nil)
 
-	if err := svc.RecoverVault(context.Background(), "rec"); err != nil {
+	if err := svc.RecoverVault(context.Background(), "rec", uuid.New()); err != nil {
 		t.Fatalf("RecoverVault: %v", err)
 	}
 	if repo.byID[id.String()].DeletedAt != nil {
@@ -460,7 +460,7 @@ func TestRecoverVault_RestoresFromDeleted(t *testing.T) {
 
 func TestDeleteVault_NotFound(t *testing.T) {
 	svc := NewVaultService(newFakeRepo(), &noopCascade{}, nil)
-	err := svc.DeleteVault(context.Background(), "missing")
+	err := svc.DeleteVault(context.Background(), "missing", uuid.New())
 	if !errors.Is(err, ErrVaultNotFound) {
 		t.Fatalf("expected ErrVaultNotFound, got %v", err)
 	}
@@ -493,14 +493,14 @@ func TestDeleteAndRecoverVaultFlushTheSecretCache(t *testing.T) {
 	svc := NewVaultService(repo, &noopCascade{}, nil)
 	svc.SetSecretCacheFlusher(flusher)
 
-	if err := svc.DeleteVault(context.Background(), "stg"); err != nil {
+	if err := svc.DeleteVault(context.Background(), "stg", uuid.New()); err != nil {
 		t.Fatalf("DeleteVault: %v", err)
 	}
 	if flusher.flushes != 1 {
 		t.Fatalf("expected one flush after the delete cascade, got %d", flusher.flushes)
 	}
 
-	if err := svc.RecoverVault(context.Background(), "stg"); err != nil {
+	if err := svc.RecoverVault(context.Background(), "stg", uuid.New()); err != nil {
 		t.Fatalf("RecoverVault: %v", err)
 	}
 	if flusher.flushes != 2 {
@@ -616,7 +616,7 @@ func TestVaultCascadeToleratesADisabledCache(t *testing.T) {
 	repo.byID[id.String()] = repo.byName["stg"]
 
 	svc := NewVaultService(repo, &noopCascade{}, nil)
-	if err := svc.DeleteVault(context.Background(), "stg"); err != nil {
+	if err := svc.DeleteVault(context.Background(), "stg", uuid.New()); err != nil {
 		t.Fatalf("DeleteVault: %v", err)
 	}
 }

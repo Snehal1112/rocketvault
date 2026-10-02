@@ -690,8 +690,8 @@ func TestNewServiceContainer_PurgeRemovesWebhookConfig(t *testing.T) {
 	).Scan(&countBefore))
 	require.Equal(t, 1, countBefore, "webhook config row must exist before purge")
 
-	require.NoError(t, vaultSvc.DeleteVault(ctx, name))
-	require.NoError(t, vaultSvc.PurgeVault(ctx, name))
+	require.NoError(t, vaultSvc.DeleteVault(ctx, name, uuid.New()))
+	require.NoError(t, vaultSvc.PurgeVault(ctx, name, uuid.New()))
 
 	var countAfter int
 	require.NoError(t, rawDB.QueryRow(

@@ -298,7 +298,7 @@ func deleteVault(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := svc.DeleteVault(r.Context(), name); err != nil {
+	if err := svc.DeleteVault(r.Context(), name, userID); err != nil {
 		// The not-found sentinel maps to 404; the protected-vault refusal is a
 		// client error (400). Anything else (a transaction/DB failure) is an
 		// internal error (500) -- it must not be reported as if the caller did
@@ -335,7 +335,15 @@ func purgeVault(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := svc.PurgeVault(r.Context(), name); err != nil {
+	// PolicyMiddleware authorized the request; the identity is read here only
+	// to attribute the audit row.
+	_, actorID, ok := callerIdentity(c)
+	if !ok {
+		c.SetInternalError(nil)
+		return
+	}
+
+	if err := svc.PurgeVault(r.Context(), name, actorID); err != nil {
 		switch {
 		case errors.Is(err, vaultServices.ErrVaultNotFound):
 			c.SetNotFound("vault")

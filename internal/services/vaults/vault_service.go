@@ -170,9 +170,12 @@ type VaultService interface {
 	// where principalID holds a vault-scoped vaults:manage allow.
 	ListVaultsScoped(ctx context.Context, principalID uuid.UUID, includeDeleted, all bool) ([]model.Vault, error)
 	UpdateVault(ctx context.Context, name string, req model.UpdateVaultRequest, updatedBy uuid.UUID) (*model.Vault, error)
-	DeleteVault(ctx context.Context, name string) error
-	RecoverVault(ctx context.Context, name string) error
-	PurgeVault(ctx context.Context, name string) error
+	// DeleteVault, RecoverVault and PurgeVault record actorID in the audit
+	// row. uuid.Nil is recorded as "system" and is reserved for the
+	// background purge scheduler.
+	DeleteVault(ctx context.Context, name string, actorID uuid.UUID) error
+	RecoverVault(ctx context.Context, name string, actorID uuid.UUID) error
+	PurgeVault(ctx context.Context, name string, actorID uuid.UUID) error
 	SetPolicyCleaner(p PolicyCleaner)
 	SetRoleAssignmentCleaner(c RoleAssignmentCleaner)
 	SetWebhookCleaner(c WebhookCleaner)
@@ -624,7 +627,7 @@ func (s *vaultService) UpdateVault(ctx context.Context, name string, req model.U
 }
 
 // DeleteVault soft-deletes a vault and cascades the soft-delete to its contents.
-func (s *vaultService) DeleteVault(ctx context.Context, name string) error {
+func (s *vaultService) DeleteVault(ctx context.Context, name string, actorID uuid.UUID) error {
 	if name == model.DefaultVaultName {
 		return fmt.Errorf("the default vault cannot be deleted: %w", ErrDefaultVaultProtected)
 	}
@@ -685,13 +688,13 @@ func (s *vaultService) DeleteVault(ctx context.Context, name string) error {
 	}
 
 	if s.log != nil {
-		s.log.LogAuditInfo("", "delete_vault", "success", fmt.Sprintf("Vault deleted: %s", name))
+		s.log.LogAuditInfo(auditActor(actorID), "delete_vault", "success", fmt.Sprintf("Vault deleted: %s", name))
 	}
 	return nil
 }
 
 // RecoverVault restores a soft-deleted vault and cascades the recovery to its contents.
-func (s *vaultService) RecoverVault(ctx context.Context, name string) error {
+func (s *vaultService) RecoverVault(ctx context.Context, name string, actorID uuid.UUID) error {
 	v, err := s.findDeleted(ctx, name)
 	if err != nil {
 		return err
@@ -737,13 +740,13 @@ func (s *vaultService) RecoverVault(ctx context.Context, name string) error {
 	}
 
 	if s.log != nil {
-		s.log.LogAuditInfo("", "recover_vault", "success", fmt.Sprintf("Vault recovered: %s", name))
+		s.log.LogAuditInfo(auditActor(actorID), "recover_vault", "success", fmt.Sprintf("Vault recovered: %s", name))
 	}
 	return nil
 }
 
 // PurgeVault permanently removes a vault, refusing the default and purge-protected vaults.
-func (s *vaultService) PurgeVault(ctx context.Context, name string) error {
+func (s *vaultService) PurgeVault(ctx context.Context, name string, actorID uuid.UUID) error {
 	if s.globalPurgeProtection {
 		return fmt.Errorf("vault %q: %w", name, model.ErrGlobalPurgeProtectionEnabled)
 	}
@@ -817,7 +820,7 @@ func (s *vaultService) PurgeVault(ctx context.Context, name string) error {
 		}
 	}
 	if s.log != nil {
-		s.log.LogAuditInfo("", "purge_vault", "success", fmt.Sprintf("Vault purged: %s", name))
+		s.log.LogAuditInfo(auditActor(actorID), "purge_vault", "success", fmt.Sprintf("Vault purged: %s", name))
 	}
 	return nil
 }
@@ -834,4 +837,17 @@ func (s *vaultService) findDeleted(ctx context.Context, name string) (*model.Vau
 		}
 	}
 	return nil, fmt.Errorf("vault %q: %w", name, ErrVaultNotFound)
+}
+
+// systemActor is the audit actor for work no principal requested, matching
+// the expiration service's background rows.
+const systemActor = "system"
+
+// auditActor renders actorID for an audit row. Only the purge scheduler
+// passes uuid.Nil.
+func auditActor(actorID uuid.UUID) string {
+	if actorID == uuid.Nil {
+		return systemActor
+	}
+	return actorID.String()
 }

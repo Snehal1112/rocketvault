@@ -38,7 +38,7 @@ flag.`,
 		if !ok || serviceContainer == nil {
 			return fmt.Errorf("service container not available in context")
 		}
-		if err := requireCanManageVault(ctx, serviceContainer, name); err != nil {
+		if _, err := requireCanManageVault(ctx, serviceContainer, name); err != nil {
 			return err
 		}
 		vaultService := serviceContainer.GetVaultService()

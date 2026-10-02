@@ -138,7 +138,7 @@ func TestDeleteVault_InvalidatesCache(t *testing.T) {
 	_, err := svc.GetVault(context.Background(), "notdefault")
 	require.NoError(t, err)
 
-	err = svc.DeleteVault(context.Background(), "notdefault")
+	err = svc.DeleteVault(context.Background(), "notdefault", uuid.New())
 	require.NoError(t, err)
 
 	assert.Contains(t, spy.invalidated, "notdefault")

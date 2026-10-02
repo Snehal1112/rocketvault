@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -72,6 +73,7 @@ type fakeVaultPurger struct {
 	vaults []model.Vault
 	mu     sync.Mutex
 	purged []string
+	actors []uuid.UUID
 	err    error
 }
 
@@ -82,10 +84,11 @@ func (f *fakeVaultPurger) ListVaults(_ context.Context, _ bool) ([]model.Vault, 
 	return f.vaults, nil
 }
 
-func (f *fakeVaultPurger) PurgeVault(_ context.Context, name string) error {
+func (f *fakeVaultPurger) PurgeVault(_ context.Context, name string, actorID uuid.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.purged = append(f.purged, name)
+	f.actors = append(f.actors, actorID)
 	return nil
 }
 
@@ -427,4 +430,24 @@ func TestPurgeExpired_DeletesCertificateVersions(t *testing.T) {
 	assert.Equal(t, 1, count("recent"))
 	assert.Equal(t, 1, count("protected"))
 	assert.Equal(t, 1, count("live"))
+}
+
+// TestPurgeExpiredVaults_PassesSystemActor pins that the scheduler purges as
+// uuid.Nil, which the vault service audits as "system" (B81).
+func TestPurgeExpiredVaults_PassesSystemActor(t *testing.T) {
+	rawDB := newTestDB(t)
+	createPurgeTables(rawDB)
+	conn := newTestConn(t, rawDB)
+
+	deletedAt := time.Now().AddDate(0, 0, -40)
+	vaults := &fakeVaultPurger{vaults: []model.Vault{{Name: "expired", DeletedAt: &deletedAt, RetentionDays: 30}}}
+
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults)
+	s.Start(context.Background())
+	time.Sleep(30 * time.Millisecond)
+	s.Stop()
+
+	vaults.mu.Lock()
+	defer vaults.mu.Unlock()
+	require.Equal(t, []uuid.UUID{uuid.Nil}, vaults.actors)
 }

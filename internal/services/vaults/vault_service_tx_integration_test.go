@@ -120,7 +120,7 @@ func TestDeleteVault_CascadeFailureRollsBackEverything(t *testing.T) {
 	svc := vaultServices.NewVaultService(vaultRepo, cascade, log)
 	svc.SetTxBeginner(conn)
 
-	err := svc.DeleteVault(ctx, "prod")
+	err := svc.DeleteVault(ctx, "prod", uuid.New())
 	require.Error(t, err)
 	require.ErrorIs(t, err, boom)
 
@@ -169,7 +169,7 @@ func TestRecoverVault_CascadeFailureRollsBackEverything(t *testing.T) {
 	svc := vaultServices.NewVaultService(vaultRepo, cascade, log)
 	svc.SetTxBeginner(conn)
 
-	err := svc.RecoverVault(ctx, "prod")
+	err := svc.RecoverVault(ctx, "prod", uuid.New())
 	require.Error(t, err)
 	require.ErrorIs(t, err, boom)
 
@@ -200,7 +200,7 @@ func TestDeleteVault_CascadeSuccessCommitsEverything(t *testing.T) {
 	svc := vaultServices.NewVaultService(vaultRepo, cascade, log)
 	svc.SetTxBeginner(conn)
 
-	require.NoError(t, svc.DeleteVault(ctx, "prod"))
+	require.NoError(t, svc.DeleteVault(ctx, "prod", uuid.New()))
 
 	require.NotNil(t, deletedAtColumn(t, sqlDB, "vaults", vaultID), "vault must be soft-deleted after commit")
 	require.NotNil(t, deletedAtColumn(t, sqlDB, "secrets", secretID), "secret must be soft-deleted after commit")

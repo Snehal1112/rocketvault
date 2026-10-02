@@ -88,36 +88,36 @@ func requireCanListVaults(ctx context.Context, sc container.ServiceContainerInte
 	return false, nil
 }
 
-// requireCanManageVault resolves vaultName to an ID and checks CanManageVault
-// against it.
-func requireCanManageVault(ctx context.Context, sc container.ServiceContainerInterface, vaultName string) error {
+// requireCanManageVault resolves vaultName to an ID, checks CanManageVault
+// against it, and returns the caller's principal for audit attribution.
+func requireCanManageVault(ctx context.Context, sc container.ServiceContainerInterface, vaultName string) (uuid.UUID, error) {
 	roles, principalID, err := vaultcli.CallerIdentity(ctx)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	vaultID, err := resolveTargetVaultID(ctx, sc.GetVaultService(), vaultName)
 	if err != nil {
-		return fmt.Errorf("resolve vault %q: %w", vaultName, err)
+		return uuid.Nil, fmt.Errorf("resolve vault %q: %w", vaultName, err)
 	}
 	if !authz.CanManageVault(ctx, roles, sc.GetAccessPolicyService(), principalID, vaultID) {
-		return fmt.Errorf("permission denied: admin or vaults/manage required for vault %q", vaultName)
+		return uuid.Nil, fmt.Errorf("permission denied: admin or vaults/manage required for vault %q", vaultName)
 	}
-	return nil
+	return principalID, nil
 }
 
-// requireCanPurgeVault resolves vaultName to an ID and checks CanPurgeVault
-// against it.
-func requireCanPurgeVault(ctx context.Context, sc container.ServiceContainerInterface, vaultName string) error {
+// requireCanPurgeVault resolves vaultName to an ID, checks CanPurgeVault
+// against it, and returns the caller's principal for audit attribution.
+func requireCanPurgeVault(ctx context.Context, sc container.ServiceContainerInterface, vaultName string) (uuid.UUID, error) {
 	roles, principalID, err := vaultcli.CallerIdentity(ctx)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 	vaultID, err := resolveTargetVaultID(ctx, sc.GetVaultService(), vaultName)
 	if err != nil {
-		return fmt.Errorf("resolve vault %q: %w", vaultName, err)
+		return uuid.Nil, fmt.Errorf("resolve vault %q: %w", vaultName, err)
 	}
 	if !authz.CanPurgeVault(ctx, roles, sc.GetRoleAssignmentService(), principalID, vaultID) {
-		return fmt.Errorf("permission denied: admin or Key Vault Purge Operator required for vault %q", vaultName)
+		return uuid.Nil, fmt.Errorf("permission denied: admin or Key Vault Purge Operator required for vault %q", vaultName)
 	}
-	return nil
+	return principalID, nil
 }
