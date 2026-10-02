@@ -39,6 +39,12 @@ func (s *keyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.U
 	if err != nil {
 		return nil, err
 	}
+	// A revoked key is refused before anything is decrypted, matching the
+	// crypto operations, which refuse it with ErrKeyRevoked.
+	if key.Revoked {
+		s.logger.LogAuditError(actor, "export_key", "denied", fmt.Sprintf("Key %s is revoked", id), nil)
+		return nil, fmt.Errorf("%w", ErrKeyLifecycleDenied)
+	}
 	refuse := func(reason string) error {
 		s.logger.LogAuditError(actor, "export_key", "denied", fmt.Sprintf("Key %s not exportable: %s", id, reason), nil)
 		return &model.ExportRefusedError{Sentinel: model.ErrKeyNotExportable, Reason: reason, Name: key.Name, KeyAlgorithm: key.KeyAlgorithm()}
@@ -48,6 +54,9 @@ func (s *keyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.U
 	if key.Type == model.KeyTypeOct {
 		return nil, refuse("symmetric oct keys are not exportable")
 	}
+	if key.Type == model.KeyTypeES256K {
+		return nil, refuse("ES256K (secp256k1) keys cannot be encoded as PKCS#8")
+	}
 	if strings.HasPrefix(key.Value, pkcs11Prefix) {
 		return nil, refuse("HSM-backed keys never leave the token")
 	}
@@ -55,7 +64,12 @@ func (s *keyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.U
 		return nil, refuse("the key was not created with exportable: true")
 	}
 
-	// Resolve the version. The scoped read above authorizes the version row.
+	// Resolve the version number first, then read that version's own row.
+	// RotateKey writes the new version's row before it updates keys.value,
+	// and ReadVersionValue falls back to keys.value only for a never-rotated
+	// version 1. The number and the material therefore always come from the
+	// same row, even during a concurrent rotation. The scoped read above
+	// authorizes the version row.
 	current, err := s.keyRepo.CurrentVersion(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("resolve current version: %w", err)
@@ -66,18 +80,12 @@ func (s *keyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.U
 	if version > current {
 		return nil, fmt.Errorf("%w: key %s has no version %d", model.ErrKeyVersionNotFound, id, version)
 	}
-	stored := key.Value
-	if version != current {
-		stored, err = s.keyRepo.ReadVersionValue(ctx, id, version)
-		if err != nil {
-			return nil, err
-		}
+	stored, err := s.keyRepo.ReadVersionValue(ctx, id, version)
+	if err != nil {
+		return nil, err
 	}
 	if strings.HasPrefix(stored, pkcs11Prefix) {
 		return nil, refuse("HSM-backed keys never leave the token")
-	}
-	if key.Type == model.KeyTypeES256K {
-		return nil, refuse("ES256K (secp256k1) keys cannot be encoded as PKCS#8")
 	}
 
 	keyPEM, err := common.DecryptSecret(stored)

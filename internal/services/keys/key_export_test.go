@@ -2,8 +2,10 @@ package keys
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"database/sql"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"strings"
@@ -21,6 +23,13 @@ import (
 	"rocketvault/internal/repositories"
 	"rocketvault/model"
 )
+
+// pemDigest hashes exported material, so a failing comparison prints a
+// digest and never the private key itself.
+func pemDigest(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 type keyExportHarness struct {
 	raw   *sql.DB
@@ -152,17 +161,17 @@ func TestExportKey_ArchivedVersion(t *testing.T) {
 
 	v1, err := h.svc.ExportKey(ctx, h.scope, id, 1)
 	require.NoError(t, err)
-	assert.Equal(t, first.PrivateKeyPEM, v1.PrivateKeyPEM, "an archived version exports its own material")
+	assert.Equal(t, pemDigest(first.PrivateKeyPEM), pemDigest(v1.PrivateKeyPEM), "an archived version exports its own material")
 	assert.Equal(t, 1, v1.Version)
 
 	current, err := h.svc.ExportKey(ctx, h.scope, id, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, current.Version)
-	assert.NotEqual(t, first.PrivateKeyPEM, current.PrivateKeyPEM)
+	assert.NotEqual(t, pemDigest(first.PrivateKeyPEM), pemDigest(current.PrivateKeyPEM))
 
 	explicit, err := h.svc.ExportKey(ctx, h.scope, id, 2)
 	require.NoError(t, err)
-	assert.Equal(t, current.PrivateKeyPEM, explicit.PrivateKeyPEM, "the current number equals 0")
+	assert.Equal(t, pemDigest(current.PrivateKeyPEM), pemDigest(explicit.PrivateKeyPEM), "the current number equals 0")
 
 	_, err = h.svc.ExportKey(ctx, h.scope, id, 3)
 	require.ErrorIs(t, err, model.ErrKeyVersionNotFound)
@@ -203,4 +212,49 @@ func TestExportKey_NeverTouchesTheKeyCache(t *testing.T) {
 	}
 	assert.Zero(t, spy.gets)
 	assert.Zero(t, spy.sets)
+}
+
+// TestExportKey_LifecycleStates pins the lifecycle gate beyond disabled and
+// expired: revoked, soft-deleted and not-yet-valid keys export nothing.
+func TestExportKey_LifecycleStates(t *testing.T) {
+	h := newKeyExportHarness(t, nil)
+	ctx := context.Background()
+
+	revoked := h.create(t, "RSA", "", true)
+	require.NoError(t, h.repo.UpdateRevocationStatus(ctx, revoked, true))
+	res, err := h.svc.ExportKey(ctx, h.scope, revoked, 0)
+	require.ErrorIs(t, err, ErrKeyLifecycleDenied)
+	assert.Nil(t, res, "a revoked key returns no material")
+
+	deleted := h.create(t, "RSA", "", true)
+	_, err = h.svc.DeleteKey(ctx, deleted, h.scope)
+	require.NoError(t, err)
+	res, err = h.svc.ExportKey(ctx, h.scope, deleted, 0)
+	require.ErrorIs(t, err, ErrKeyNotFound)
+	assert.Nil(t, res)
+
+	future := time.Now().Add(time.Hour)
+	pending := uuid.New()
+	require.NoError(t, h.repo.Create(ctx, &model.Key{ID: pending, UserID: h.user, VaultID: h.vault, Name: "pending", Type: model.KeyTypeRSA,
+		Value: "enc", Enabled: true, CreatedAt: time.Now(), NotBefore: &future, Bits: 2048, Exportable: true}))
+	res, err = h.svc.ExportKey(ctx, h.scope, pending, 0)
+	require.ErrorIs(t, err, ErrKeyLifecycleDenied)
+	assert.Nil(t, res)
+}
+
+// TestExportKey_MaterialComesFromTheVersionRow pins that the exported
+// material is read from the resolved version's own row, so the version
+// number and the material cannot come from two different reads.
+func TestExportKey_MaterialComesFromTheVersionRow(t *testing.T) {
+	h := newKeyExportHarness(t, nil)
+	ctx := context.Background()
+	id := h.create(t, "RSA", "", true)
+	_, err := h.svc.RotateKey(ctx, id, h.scope)
+	require.NoError(t, err)
+	_, err = h.raw.Exec("UPDATE keys SET value = ? WHERE id = ?", "not-the-version-row", id.String())
+	require.NoError(t, err)
+
+	res, err := h.svc.ExportKey(ctx, h.scope, id, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Version)
 }
