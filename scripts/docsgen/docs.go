@@ -46,6 +46,7 @@ var docsList = []docEntry{
 	{"docs/release-notes/v4.7.1-secrets-and-error-responses.md", "docs/release-notes/v4.7.1-secrets-and-error-responses.html"},
 	{"docs/release-notes/v4.8.0-identity-sessions-hardening.md", "docs/release-notes/v4.8.0-identity-sessions-hardening.html"},
 	{"docs/release-notes/v4.9.0-login-rate-limiting.md", "docs/release-notes/v4.9.0-login-rate-limiting.html"},
+	{"docs/release-notes/v4.10.0-authorization-policy-and-audit.md", "docs/release-notes/v4.10.0-authorization-policy-and-audit.html"},
 	{"docs/runbooks/hsm-pin-rotation.md", "docs/runbooks/hsm-pin-rotation.html"},
 	{"docs/runbooks/master-key-rotation.md", "docs/runbooks/master-key-rotation.html"},
 	{"docs/usage-guide.md", "docs/usage-guide.html"},

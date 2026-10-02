@@ -3433,7 +3433,10 @@ assignment without also holding the matching global account role.
 
 ### B58 — Vault delete, recover, and purge audit as an unattributed actor
 
-**Status**: Open, found 2026-09-04
+**Status**: Superseded by B81 (fixed 2026-10-02, GitHub #49; closes #18). The
+fix recipe below was followed, with one correction: `cmd/vaults/delete.go`
+did not have `principalID` in scope, because `requireCanManageVault` returned
+only an error; it now returns the principal.
 **Severity**: Medium. This is not an access-control hole — authorization is
 unaffected; a refused delete/recover/purge is still refused, and the
 boundary tests around each all pass. It is an accountability gap: the three
@@ -5265,6 +5268,54 @@ behind the authentication chain and checks that against the public route
 table, so the check's signature was not widened. Building the allow-list surfaced two follow-ups, tracked as B96
 (self-service user routes are admin-only) and B97 (`/health/database` leaks
 driver error text).
+
+---
+
+### B81 — Security-relevant changes were unattributed or unaudited
+
+**Status**: Fixed 2026-10-02 (GitHub #49, supersedes B58 and #18)
+**Severity**: Medium — accountability gap. Authorization was unaffected, but
+the audit log could not say who revoked a role, deleted, recovered or purged
+a vault, or created, changed or removed an explicit-deny policy, and it
+recorded no trace of refused grants, revokes or vault changes.
+**Files**: `internal/services/authorization/role_assignment_service.go`,
+`internal/services/vaults/vault_service.go`,
+`internal/services/authorization/access_policy_service.go`,
+`internal/services/softdelete/purge_scheduler.go`, `api/context.go`,
+`api/vault.go`, `api/role_assignments.go`, `api/access_policies.go`,
+`api/vault_webhook.go`, `api/audit.go`, `cmd/vaults/*.go`,
+`cmd/vault-access/*.go`, `cmd/vault-webhook/authz.go`, `cmd/audit/config.go`,
+`internal/services/audit/compliance_report_service.go`
+
+**Symptom**: `revoke_role_assignment`, `delete_vault`, `recover_vault` and
+`purge_vault` rows carried an empty `user_id`. Access-policy create, update
+and delete wrote no audit row at all. A handler-level 403 on a grant, revoke
+or vault operation wrote nothing. `PATCH /audit/config` accepted
+`retention_days: 1`.
+
+**Root cause**: the four destructive service methods had no actor parameter
+(B58), the access-policy service had no logger, handler refusals called only
+`SetPermissionError`, and retention was validated only as positive.
+
+**What was fixed**: `RevokeAssignment`, `DeleteVault`, `RecoverVault` and
+`PurgeVault` take an `actorID`, and every HTTP and CLI caller passes the
+session principal; the purge scheduler passes `uuid.Nil`, recorded as
+`system`. The access-policy service audits each mutation with the actor and
+the policy's principal, resource, operation, effect and scope, including the
+old effect on update. Handler and CLI refusals write a `denied` row under the
+same operation name on both paths, including the CLI vault-webhook commands
+(`manage_vault_webhook`). The `AssignRole` rollback rows now name the caller.
+Audit retention has a 90-day floor on write, and a stored value below it is
+clamped on read.
+
+**Not covered (residual)**:
+- Refusals of vault-provisioning-grant operations, over HTTP
+  (`api/vault_provisioning_grants.go`) and the CLI, write no audit row.
+- Refusals in the audit, users, jwks and oauth2 handlers and in the key,
+  certificate and secret error mappers (`errors_*`) remain unaudited.
+- Revoke writes no failure rows, and vault delete, recover and purge write
+  none either; only refusals before the service call are recorded.
+- `GET /audit/config` reports the clamped value (90), not the stored one.
 
 ---
 

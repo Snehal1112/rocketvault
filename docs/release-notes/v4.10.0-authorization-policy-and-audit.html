@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>v4.10.0 — Explicit-deny coverage, route authorization, and audit attribution — RocketVault Docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="../assets/doc-theme.css"/>
+</head>
+<body>
+<header class="doc-header">
+  <a class="doc-back" href="../admin-manual.html">&larr; Admin Manual</a>
+  <div class="doc-brand">
+    <div class="doc-mark" aria-hidden="true"></div>
+    <span class="doc-kicker">RocketVault Docs</span>
+  </div>
+  <h1 class="doc-title">v4.10.0 — Explicit-deny coverage, route authorization, and audit attribution</h1>
+  <div class="doc-meta"><span class="doc-chip">docs/release-notes/v4.10.0-authorization-policy-and-audit.md</span></div>
+  <hr/>
+</header>
+<nav class="doc-toc"><div class="doc-toc-label">On this page</div><ol><li><a href="#breaking-changes">Breaking changes</a></li><li><a href="#behavior-changes-for-existing-deployments">Behavior changes for existing deployments</a></li><li><a href="#known-issues">Known issues</a></li><li><a href="#upgrade-procedure">Upgrade procedure</a></li></ol></nav>
+<main class="doc">
+<blockquote>
+<p>The version number is provisional and may change before tagging.</p>
+</blockquote>
+<p>This release fixes three findings from the 2026-09-30 static audit of <code>api/</code>:
+GitHub #42 (<code>.claude/known-bugs.md</code> § B79), #50 (§ B80) and #49 (§ B81, which
+supersedes § B58 and closes #18).</p>
+<h2 id="breaking-changes">Breaking changes</h2>
+<ol>
+<li><strong>Audit retention has a floor of 90 days.</strong> <code>PATCH /api/v1/audit/config</code>
+and <code>rocketvault audit config --retention-days</code> refuse a value below 90. A
+value below 90 saved by an earlier version is read as 90, and
+<code>GET /api/v1/audit/config</code> reports 90 for it, not the stored number. The
+default stays 365.</li>
+<li><strong>A deny on <code>create</code> no longer blocks five other operations.</strong> See
+&quot;Access policies&quot; below. This loosens existing denies; audit them before
+deploying.</li>
+</ol>
+<h2 id="behavior-changes-for-existing-deployments">Behavior changes for existing deployments</h2>
+<h3 id="access-policies-five-operations-now-have-their-own-names">Access policies: five operations now have their own names</h3>
+<p><code>POST .../keys/{id}/encrypt</code>, <code>/decrypt</code>, <code>/wrap</code>, <code>/unwrap</code> and
+<code>POST .../{secrets|keys|certificates}/{id}/backup</code> used to be evaluated
+against the <code>create</code> operation. They now resolve to <code>encrypt</code>, <code>decrypt</code>,
+<code>wrap</code>, <code>unwrap</code> and <code>backup</code>. <code>wrap</code> and <code>unwrap</code> are new operation values.
+The CLI <code>keys wrap</code> and <code>keys unwrap</code> commands changed the same way, and
+<code>keys import</code> now passes <code>import</code>, as the HTTP route does (B94), so both
+entry points agree.</p>
+<p>What this means for you:</p>
+<ol>
+<li>A deny naming <code>encrypt</code>, <code>decrypt</code> or <code>backup</code> now takes effect over HTTP.
+Before, it was silently ignored there.</li>
+<li>A deny on <code>(keys, create)</code> no longer blocks the five operations above, and
+a deny on <code>(secrets, create)</code> or <code>(certificates, create)</code> no longer blocks
+item backup. If you relied on that, add denies naming the operations.</li>
+<li>A deny on <code>(keys, create)</code> no longer blocks <code>keys import</code> over the CLI;
+deny <code>import</code> instead.</li>
+</ol>
+<p>Export is unchanged: it still resolves to <code>create</code>, so a deny on <code>create</code>
+still blocks it. Find policies that may need a companion deny:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">text</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">GET /api/v1/access-policies
+</pre></div>
+<p>and look for rows with <code>&quot;operation&quot;: &quot;create&quot;</code> and <code>&quot;effect&quot;: &quot;deny&quot;</code>.</p>
+<h3 id="public-endpoints-are-matched-exactly">Public endpoints are matched exactly</h3>
+<p>Only these paths skip authentication: <code>/api/v1/health</code>,
+<code>/api/v1/health/ready</code>, <code>/api/v1/health/live</code>, <code>/api/v1/users/login</code>,
+<code>/api/v1/users/refresh</code>, <code>/api/v1/oauth2/token</code>, <code>/api/v1/oidc/login</code>,
+<code>/api/v1/oidc/callback</code>, <code>/api/v1/oidc/cli/exchange</code> and <code>/api/v1/config</code>.
+Before, any path ending in <code>/login</code>, <code>/refresh</code>, <code>/register</code> or <code>/health</code>
+skipped it, which made a vault with one of those names impossible to manage
+over HTTP. Such vaults are manageable again with no action.</p>
+<h3 id="reserved-vault-names">Reserved vault names</h3>
+<p>New vaults may not be named <code>login</code>, <code>health</code>, <code>refresh</code> or <code>register</code>.
+<strong>Existing vaults with these names keep working</strong> everywhere, including the
+MCP server; nothing is renamed and no migration runs. After such a vault is
+purged, its name cannot be reused.</p>
+<h3 id="startup-refuses-an-unclassified-route">Startup refuses an unclassified route</h3>
+<p>The server now refuses to start if any registered route is neither a mapped
+vault data-plane route nor on the non-data-plane allow-list in
+<code>api/route_authorization.go</code>. This affects only builds that add routes; a
+stock build always passes.</p>
+<h3 id="audit-trail">Audit trail</h3>
+<ul>
+<li><code>revoke_role_assignment</code>, <code>delete_vault</code>, <code>recover_vault</code> and
+<code>purge_vault</code> rows now name the acting principal. Automatic vault purges by
+the soft-delete scheduler are recorded as <code>system</code>. Role-assignment
+rollback rows written by <code>AssignRole</code> name the caller too.</li>
+<li>Access-policy changes write <code>create_access_policy</code>,
+<code>update_access_policy</code> and <code>delete_access_policy</code> rows.</li>
+<li>Refused vault, role-assignment, access-policy and vault-webhook operations
+write a row with status <code>denied</code>, on HTTP and the CLI alike.</li>
+<li>Not yet audited: refused vault-provisioning-grant operations, refusals in
+the audit, users, jwks and oauth2 handlers, and failures after the service
+call for revoke and vault delete, recover and purge. See § B81.</li>
+</ul>
+<h2 id="known-issues">Known issues</h2>
+<p>Building the route allow-list found two problems that are not fixed here:</p>
+<ul>
+<li><strong>B96</strong>: non-admin users cannot list or revoke their own sessions or read
+or update their own profile over HTTP. It fails closed.</li>
+<li><strong>B97</strong>: <code>/health/database</code> returns raw driver error text to any
+authenticated caller.</li>
+</ul>
+<p>Both are described in <code>.claude/known-bugs.md</code>.</p>
+<h2 id="upgrade-procedure">Upgrade procedure</h2>
+<ol>
+<li>
+<p>Review explicit-deny policies on <code>create</code> as described above.</p>
+</li>
+<li>
+<p>Deploy. No schema change runs.</p>
+</li>
+<li>
+<p>Optionally, re-save audit retention if it was below 90:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">text</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault audit config --retention-days 90
+</pre></div>
+</li>
+</ol>
+
+</main>
+<footer class="doc-footer"><a href="../admin-manual.html">&larr; Back to the Admin Manual</a></footer>
+<script src="../assets/doc-theme.js"></script>
+</body>
+</html>
