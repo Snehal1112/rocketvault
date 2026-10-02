@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
@@ -13,7 +14,11 @@ import (
 
 	"rocketvault/cmd/testutils"
 	"rocketvault/common"
+	"rocketvault/internal/container"
+	"rocketvault/internal/logging"
+	authServices "rocketvault/internal/services/auth"
 	userService "rocketvault/internal/services/users"
+	internaltestutils "rocketvault/internal/testutils"
 	"rocketvault/model"
 )
 
@@ -105,4 +110,55 @@ func TestUpdateUserCommand_MultipleRoles_AdminAllowed(t *testing.T) {
 	err := cmd.Execute()
 	require.NoError(t, err)
 	tc.MockUserService.AssertExpectations(t)
+}
+
+// cliRecordingRevoker records which users had their sessions revoked.
+type cliRecordingRevoker struct {
+	revoked []uuid.UUID
+}
+
+func (r *cliRecordingRevoker) RevokeAllUserSessions(_ context.Context, userID uuid.UUID, _ string) error {
+	r.revoked = append(r.revoked, userID)
+	return nil
+}
+
+// A user changing their own password on the CLI loses every session, including
+// the cached one the command ran under, the same as over HTTP (B74).
+func TestUpdateUserCommand_SelfPasswordChange_RevokesOwnSessions(t *testing.T) {
+	viper.Reset()
+	userID := uuid.New()
+
+	repo := &internaltestutils.MockUserRepository{}
+	repo.On("Read", mock.Anything, userID).Return(&model.User{
+		ID: userID, Username: "alice", PasswordHash: "old", TOTPSecret: "SECRET", Roles: []string{model.RoleUser},
+	}, nil)
+	repo.On("Update", mock.Anything, mock.Anything).Return(nil)
+	revoker := &cliRecordingRevoker{}
+	realSvc := userService.NewUserService(userService.UserServiceConfig{
+		UserRepository:  repo,
+		PasswordService: authServices.NewPasswordService(),
+		TOTPService:     authServices.NewTOTPService(),
+		SessionRevoker:  revoker,
+		Logger:          &logging.Logger{Logger: logrus.New()},
+	})
+
+	mc := &testutils.MockServiceContainer{}
+	mc.On("GetUserService").Return(realSvc)
+	mc.On("GetLogger").Return(&logging.Logger{Logger: logrus.New()})
+	ctx := context.WithValue(context.Background(), common.ServiceContainerKey, container.ServiceContainerInterface(mc))
+	ctx = context.WithValue(ctx, common.ClaimsKey, &model.Claims{UserID: userID, Username: "alice", Roles: []string{model.RoleUser}})
+
+	cmd := &cobra.Command{
+		Use:  "update",
+		Args: cobra.ExactArgs(1),
+		RunE: updateCmd.RunE,
+	}
+	cmd.Flags().String("new-username", "", "")
+	cmd.Flags().String("new-password", "", "")
+	cmd.Flags().StringArray("new-role", []string{}, "")
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{userID.String(), "--new-password=newpass123"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, []uuid.UUID{userID}, revoker.revoked)
 }

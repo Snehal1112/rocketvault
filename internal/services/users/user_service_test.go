@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"rocketvault/internal/logging"
+	"rocketvault/internal/retry"
 	"rocketvault/model"
 )
 
@@ -121,6 +122,18 @@ func (m *mockTOTPService) GenerateCode(secret string, currentTime time.Time) (st
 }
 
 // ---------------------------------------------------------------------------
+// Mock: SessionRevoker
+// ---------------------------------------------------------------------------
+
+type mockSessionRevoker struct {
+	mock.Mock
+}
+
+func (m *mockSessionRevoker) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID, reason string) error {
+	return m.Called(ctx, userID, reason).Error(0)
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -145,12 +158,30 @@ func newService(
 	pw *mockPasswordService,
 	totpSvc *mockTOTPService,
 ) UserService {
+	// Tests that do not care about revocation get a revoker that accepts anything.
+	return newServiceWithRevoker(repo, pw, totpSvc, acceptingRevoker())
+}
+
+func newServiceWithRevoker(
+	repo *mockUserRepository,
+	pw *mockPasswordService,
+	totpSvc *mockTOTPService,
+	revoker *mockSessionRevoker,
+) UserService {
 	return NewUserService(UserServiceConfig{
 		UserRepository:  repo,
 		PasswordService: pw,
 		TOTPService:     totpSvc,
+		SessionRevoker:  revoker,
 		Logger:          testLogger(),
 	})
+}
+
+// acceptingRevoker returns a revoker that accepts every call.
+func acceptingRevoker() *mockSessionRevoker {
+	revoker := &mockSessionRevoker{}
+	revoker.On("RevokeAllUserSessions", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	return revoker
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,6 +1300,7 @@ func TestUpdateUser_Enrollment_NeverLogsOrAuditsSecret(t *testing.T) {
 		UserRepository:  repo,
 		PasswordService: pw,
 		TOTPService:     totpSvc,
+		SessionRevoker:  acceptingRevoker(),
 		Logger:          logger,
 	})
 
@@ -1294,4 +1326,256 @@ func TestUpdateUser_Enrollment_NeverLogsOrAuditsSecret(t *testing.T) {
 		assert.NotContains(t, rec, key.Secret())
 		assert.NotContains(t, rec, "otpauth://")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Session revocation on credential and privilege changes (B74)
+// ---------------------------------------------------------------------------
+
+func TestUpdateUser_PasswordChange_RevokesSessions(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	pw := &mockPasswordService{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, pw, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleUser}, TOTPSecret: "S"}, nil)
+	pw.On("HashPassword", "newpass123").Return("hashed-new", nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "password or roles changed").Return(nil)
+
+	newPw := "newpass123"
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{UserID: userID, CallerRoles: []string{model.RoleUser}, Password: &newPw})
+
+	require.NoError(t, err)
+	revoker.AssertExpectations(t)
+}
+
+// A user who changes their own password loses the session they used for it too.
+func TestUpdateUser_SelfPasswordChange_RevokesOwnSessions(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	pw := &mockPasswordService{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, pw, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleUser}, TOTPSecret: "S"}, nil)
+	pw.On("HashPassword", "newpass123").Return("hashed-new", nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "password or roles changed").Return(nil).Once()
+
+	newPw := "newpass123"
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerID: userID, CallerRoles: []string{model.RoleUser}, Password: &newPw,
+	})
+
+	require.NoError(t, err)
+	revoker.AssertExpectations(t)
+}
+
+func TestUpdateUser_RoleChange_RevokesSessions(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, &mockPasswordService{}, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleAdmin}}, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "password or roles changed").Return(nil)
+
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerRoles: []string{model.RoleAdmin}, Roles: []string{model.RoleUser},
+	})
+
+	require.NoError(t, err)
+	revoker.AssertExpectations(t)
+}
+
+// Adding a role to an existing set is a change even though the old roles remain.
+func TestUpdateUser_RoleAdded_RevokesSessions(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, &mockPasswordService{}, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleUser}}, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "password or roles changed").Return(nil)
+
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerRoles: []string{model.RoleAdmin}, Roles: []string{model.RoleUser, model.RoleSecretsManager},
+	})
+
+	require.NoError(t, err)
+	revoker.AssertExpectations(t)
+}
+
+// Resubmitting the same role set, in any order or with duplicates, changes no
+// privilege, so sessions stay.
+func TestUpdateUser_SameRoles_KeepsSessions(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, &mockPasswordService{}, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{
+		ID: userID, Username: "alice", Roles: []string{model.RoleUser, model.RoleSecretsManager},
+	}, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerRoles: []string{model.RoleAdmin},
+		Roles: []string{model.RoleSecretsManager, " " + model.RoleUser, model.RoleSecretsManager},
+	})
+
+	require.NoError(t, err)
+	revoker.AssertNotCalled(t, "RevokeAllUserSessions", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestUpdateUser_UsernameOnly_KeepsSessions(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, &mockPasswordService{}, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleUser}}, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+
+	newName := "alice2"
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{UserID: userID, CallerRoles: []string{model.RoleUser}, Username: &newName})
+
+	require.NoError(t, err)
+	revoker.AssertNotCalled(t, "RevokeAllUserSessions", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestUpdateUser_FailedWrite_KeepsSessions(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	pw := &mockPasswordService{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, pw, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleUser}, TOTPSecret: "S"}, nil)
+	pw.On("HashPassword", "newpass123").Return("hashed-new", nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(errors.New("db error"))
+
+	newPw := "newpass123"
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{UserID: userID, CallerRoles: []string{model.RoleUser}, Password: &newPw})
+
+	require.Error(t, err)
+	revoker.AssertNotCalled(t, "RevokeAllUserSessions", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestUpdateUser_RevocationFails_ReturnsError(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	pw := &mockPasswordService{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, pw, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleUser}, TOTPSecret: "S"}, nil)
+	pw.On("HashPassword", "newpass123").Return("hashed-new", nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "password or roles changed").Return(errors.New("db error"))
+
+	newPw := "newpass123"
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{UserID: userID, CallerRoles: []string{model.RoleUser}, Password: &newPw})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to revoke user sessions")
+}
+
+// The write has already committed when revocation fails. A retry of the whole
+// update would see the new roles as unchanged and skip revocation, so the
+// error must tell the retry layer to stop, even for a transient cause.
+func TestUpdateUser_RevocationFails_IsNotRetryable(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, &mockPasswordService{}, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleAdmin}}, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil)
+	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "password or roles changed").Return(errors.New("database is locked"))
+
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerRoles: []string{model.RoleAdmin}, Roles: []string{model.RoleUser},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to revoke user sessions")
+	assert.False(t, retry.IsRetryable(err, retry.Policy{RetryableErrors: []string{"database is locked"}}))
+}
+
+func TestDeleteUser_RevokesSessionsFirst(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, &mockPasswordService{}, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	var order []string
+	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "user deleted").
+		Run(func(mock.Arguments) { order = append(order, "revoke") }).Return(nil)
+	repo.On("Delete", mock.Anything, userID).
+		Run(func(mock.Arguments) { order = append(order, "delete") }).Return(nil)
+
+	require.NoError(t, svc.DeleteUser(context.Background(), userID))
+	assert.Equal(t, []string{"revoke", "delete"}, order)
+}
+
+func TestDeleteUser_RevocationFails_DoesNotDelete(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	revoker := &mockSessionRevoker{}
+	svc := newServiceWithRevoker(repo, &mockPasswordService{}, &mockTOTPService{}, revoker)
+
+	userID := uuid.New()
+	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "user deleted").Return(errors.New("db error"))
+
+	err := svc.DeleteUser(context.Background(), userID)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to revoke user sessions")
+	repo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
+func TestUpdateUser_NoRevokerConfigured_FailsClosed(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger()})
+
+	userID := uuid.New()
+	repo.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "alice", Roles: []string{model.RoleAdmin}}, nil)
+	repo.On("Update", mock.Anything, mock.AnythingOfType("*model.User")).Return(nil).Maybe()
+
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerRoles: []string{model.RoleAdmin}, Roles: []string{model.RoleUser},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session revocation is not configured")
+	// The check runs before the write, so nothing is left half done.
+	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+}
+
+func TestDeleteUser_NoRevokerConfigured_FailsClosed(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger()})
+
+	err := svc.DeleteUser(context.Background(), uuid.New())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session revocation is not configured")
+	repo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
 }

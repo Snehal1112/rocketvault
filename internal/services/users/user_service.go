@@ -5,6 +5,7 @@ package users
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"rocketvault/common"
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
+	"rocketvault/internal/retry"
 	authService "rocketvault/internal/services/auth"
 	"rocketvault/model"
 )
@@ -84,6 +86,40 @@ func guardSystemUser(userID uuid.UUID, verb string) error {
 	return nil
 }
 
+// errSessionRevokerMissing fails any change that needs revocation when no
+// revoker is configured, because skipping it would leave old credentials usable.
+var errSessionRevokerMissing = errors.New("session revocation is not configured")
+
+// revokeSessions ends every session of userID.
+func (s *userService) revokeSessions(ctx context.Context, userID uuid.UUID, reason string) error {
+	if s.sessionRevoker == nil {
+		return errSessionRevokerMissing
+	}
+	if err := s.sessionRevoker.RevokeAllUserSessions(ctx, userID, reason); err != nil {
+		s.logger.LogAuditError(userID.String(), "revoke_user_sessions", "failed", "Failed to revoke sessions", err)
+		return fmt.Errorf("failed to revoke user sessions: %w", err)
+	}
+	return nil
+}
+
+// sameRoles reports whether two role lists hold the same set of roles.
+// Both lists must already be trimmed and free of duplicates.
+func sameRoles(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]bool, len(a))
+	for _, r := range a {
+		set[r] = true
+	}
+	for _, r := range b {
+		if !set[r] {
+			return false
+		}
+	}
+	return true
+}
+
 // UserService handles user management operations.
 // It orchestrates user creation and updates by coordinating
 // with authentication services and user repositories.
@@ -103,12 +139,19 @@ type UserService interface {
 	InvalidateBootstrapToken(ctx context.Context, token string) error
 }
 
+// SessionRevoker revokes every session a user holds.
+// repositories.SessionRepositoryInterface satisfies it.
+type SessionRevoker interface {
+	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID, reason string) error
+}
+
 // userService implements UserService by coordinating authentication
 // services and user repository operations.
 type userService struct {
 	userRepo        repositories.UserRepositoryInterface
 	passwordService authService.PasswordService
 	totpService     authService.TOTPService
+	sessionRevoker  SessionRevoker
 	logger          *logging.Logger
 }
 
@@ -117,7 +160,9 @@ type UserServiceConfig struct {
 	UserRepository  repositories.UserRepositoryInterface
 	PasswordService authService.PasswordService
 	TOTPService     authService.TOTPService
-	Logger          *logging.Logger
+	// SessionRevoker ends a user's sessions on password, role and delete changes.
+	SessionRevoker SessionRevoker
+	Logger         *logging.Logger
 }
 
 // NewUserService creates a new UserService with the provided dependencies.
@@ -135,6 +180,7 @@ func NewUserService(config UserServiceConfig) UserService {
 		userRepo:        config.UserRepository,
 		passwordService: config.PasswordService,
 		totpService:     config.TOTPService,
+		sessionRevoker:  config.SessionRevoker,
 		logger:          config.Logger,
 	}
 }
@@ -265,7 +311,8 @@ func (s *userService) FindOrCreateExternalUser(ctx context.Context, req FindOrCr
 // UpdateUser updates an existing user with the provided information.
 // It handles password hashing if a new password is provided and
 // coordinates the update through the repository. Setting a password on an
-// account without a TOTP secret also enrolls one.
+// account without a TOTP secret also enrolls one. A new password or a
+// different role set ends every session of the user after the write.
 //
 // Parameters:
 //
@@ -351,9 +398,29 @@ func (s *userService) UpdateUser(ctx context.Context, req UpdateUserRequest) (*U
 		updatedUser.Roles = newRoles
 	}
 
+	// Access tokens carry roles and refresh tokens outlive a password, so a new
+	// password or a different role set ends every session of the user. That
+	// includes the caller's own session when they change their own password.
+	// Resubmitting the current roles changes no privilege and keeps sessions.
+	revoke := req.Password != nil || (req.Roles != nil && !sameRoles(existingUser.Roles, newRoles))
+	if revoke && s.sessionRevoker == nil {
+		// Checked before the write, so a misconfigured service changes nothing.
+		s.logger.LogAuditError(req.UserID.String(), "update_user", "failed", "Session revocation is not configured", nil)
+		return nil, errSessionRevokerMissing
+	}
+
 	if err := s.userRepo.Update(ctx, &updatedUser); err != nil {
 		s.logger.LogAuditError(req.UserID.String(), "update_user", "failed", "Failed to update user", err)
 		return nil, fmt.Errorf("failed to update user: %w", err)
+	}
+
+	if revoke {
+		if err := s.revokeSessions(ctx, req.UserID, "password or roles changed"); err != nil {
+			// The write has committed. A retry of the whole update would read the
+			// new roles back as unchanged and skip revocation, and would lose a
+			// generated enrollment URL, so the retry layer must not repeat it.
+			return nil, retry.NonRetryable(err)
+		}
 	}
 
 	s.logger.LogAuditInfo(req.UserID.String(), "update_user", "success", fmt.Sprintf("User updated: %s", updatedUser.Username))
@@ -414,7 +481,7 @@ func (s *userService) ListUsers(ctx context.Context) ([]model.User, error) {
 	return s.userRepo.List(ctx)
 }
 
-// DeleteUser removes a user from the system.
+// DeleteUser removes a user from the system after ending all of their sessions.
 //
 // Parameters:
 //
@@ -426,6 +493,12 @@ func (s *userService) ListUsers(ctx context.Context) ([]model.User, error) {
 //	An error if deletion fails.
 func (s *userService) DeleteUser(ctx context.Context, userID uuid.UUID) error {
 	if err := guardSystemUser(userID, "deleted"); err != nil {
+		return err
+	}
+
+	// Revoke first: SQLite leaves user_sessions rows behind on delete because
+	// its foreign keys are off, and a failed revoke must not orphan live sessions.
+	if err := s.revokeSessions(ctx, userID, "user deleted"); err != nil {
 		return err
 	}
 

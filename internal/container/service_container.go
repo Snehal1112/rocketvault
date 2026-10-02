@@ -568,6 +568,7 @@ func (c *ServiceContainer) initializeServices() error {
 		UserRepository:  c.userRepository,
 		PasswordService: c.passwordService,
 		TOTPService:     c.totpService,
+		SessionRevoker:  c.sessionRepository,
 		Logger:          c.logger,
 	})
 

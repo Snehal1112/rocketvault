@@ -24,6 +24,7 @@ import (
 	rvdb "rocketvault/internal/db"
 	"rocketvault/internal/keycache"
 	"rocketvault/internal/logging"
+	userServices "rocketvault/internal/services/users"
 	vaultServices "rocketvault/internal/services/vaults"
 	"rocketvault/internal/signing"
 	"rocketvault/internal/vaultcache"
@@ -769,4 +770,60 @@ func TestNewServiceContainer_RocketMemEnabled_SupervisorCancelNonNil(t *testing.
 	require.NoError(t, err)
 	assert.NotNil(t, c.rocketMemSupervisorCancel, "rocketMemSupervisorCancel must be constructed when cache.rocket_mem is enabled")
 	assert.NotPanics(t, func() { _ = c.Close() }, "Close must safely call the cancel func")
+}
+
+// TestNewServiceContainer_UserServiceRevokesSessions pins that the container
+// hands the user service a working session revoker (B74). Without the wiring,
+// password changes and deletes fail closed instead of revoking.
+func TestNewServiceContainer_UserServiceRevokesSessions(t *testing.T) {
+	dsn := "file:userrevoketest_" + uuid.NewString() + "?mode=memory&cache=shared"
+	rawDB, err := sql.Open("sqlite3", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	require.NoError(t, rvdb.NewRepository(newTestLogger()).SetupSchema(rawDB, rvdb.SQLite))
+
+	containerViper := viper.New()
+	containerViper.Set("jwt.key_source", "os_store")
+	container, err := NewServiceContainer(Config{
+		Database:    rawDB,
+		Logger:      newTestLogger(),
+		CacheConfig: cacheConfigWithSecretsDisabled(t),
+		Viper:       containerViper,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = container.Close() })
+
+	ctx := context.Background()
+	sessions := container.GetSessionRepository()
+	newUserWithSession := func(name string) (uuid.UUID, uuid.UUID) {
+		userID := uuid.New()
+		require.NoError(t, container.GetUserRepository().Create(ctx, &model.User{
+			ID: userID, Username: name, PasswordHash: "hash", TOTPSecret: "SECRET",
+			Roles: []string{model.RoleUser}, CreatedAt: time.Now(),
+		}))
+		sessionID := uuid.New()
+		require.NoError(t, sessions.CreateSession(ctx, &model.Session{
+			ID: sessionID, UserID: userID, RefreshTokenHash: uuid.NewString(),
+			ExpiresAt: time.Now().Add(time.Hour), LastUsedAt: time.Now(), CreatedAt: time.Now(),
+		}))
+		return userID, sessionID
+	}
+
+	// A password change ends the user's sessions.
+	userID, sessionID := newUserWithSession("revoke-pw-" + uuid.NewString()[:8])
+	newPw := "newpass123"
+	_, err = container.GetUserService().UpdateUser(ctx, userServices.UpdateUserRequest{
+		UserID: userID, CallerID: userID, CallerRoles: []string{model.RoleUser}, Password: &newPw,
+	})
+	require.NoError(t, err)
+	revoked, err := sessions.IsSessionRevoked(ctx, sessionID)
+	require.NoError(t, err)
+	assert.True(t, revoked, "a password change must revoke the user's sessions")
+
+	// A delete ends the user's sessions too.
+	userID, sessionID = newUserWithSession("revoke-del-" + uuid.NewString()[:8])
+	require.NoError(t, container.GetUserService().DeleteUser(ctx, userID))
+	revoked, err = sessions.IsSessionRevoked(ctx, sessionID)
+	require.NoError(t, err)
+	assert.True(t, revoked, "deleting a user must revoke their sessions")
 }
