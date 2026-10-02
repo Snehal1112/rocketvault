@@ -603,7 +603,9 @@ func TestCreateCASignedCertificate_CAKeyInAnotherVaultRefused(t *testing.T) {
 
 	keyRepo := &mockKeyRepo{}
 	vaultScopedKeyRepo(keyRepo, keyID, vaultID, leaf.signingKey(keyID, userID, vaultID))
-	// The CA's key resolves only in another vault (or under an unscoped read).
+	// The CA's key resolves only under a vault scope for otherVaultID; every
+	// other scope, admin included, reads not found. The AssertCalled below
+	// pins that the gate read it under this certificate's vault scope.
 	vaultScopedKeyRepo(keyRepo, caKeyID, otherVaultID, ca.signingKey(caKeyID, userID, otherVaultID))
 
 	certRepo := &mockCertRepository{}
@@ -611,6 +613,10 @@ func TestCreateCASignedCertificate_CAKeyInAnotherVaultRefused(t *testing.T) {
 		ID: caCertID, UserID: userID, VaultID: vaultID, KeyID: caKeyID, Name: "cross-vault-ca",
 		Certificate: caPEM, PrivateKey: ca.encrypted, Enabled: true,
 	}, nil)
+	// Registered so a missing refusal fails the assertions below instead of
+	// panicking the package run.
+	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).Return(nil).Maybe()
+	certRepo.On("Update", mock.Anything, mock.AnythingOfType("*model.Certificate"), mock.Anything).Return(nil).Maybe()
 
 	svc := newCertSvc(certRepo, keyRepo)
 	_, err = svc.CreateCASignedCertificate(context.Background(), CreateCertificateRequest{
@@ -619,6 +625,7 @@ func TestCreateCASignedCertificate_CAKeyInAnotherVaultRefused(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrSigningKeyUnusable)
 	certRepo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+	certRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
 	keyRepo.AssertCalled(t, "Read", mock.Anything, caKeyID, scope)
 }
 
