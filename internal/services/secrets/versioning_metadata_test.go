@@ -97,7 +97,7 @@ func TestGetVersions_StillDecrypts(t *testing.T) {
 
 	secretID := uuid.New()
 	scope := model.NewVaultScope(uuid.New(), uuid.New())
-	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID}, nil).Once()
+	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID, Enabled: true}, nil).Once()
 	versionRepo.On("GetVersions", ctx, secretID).Return([]model.SecretVersion{
 		{ID: uuid.New(), SecretID: secretID, Version: 1, Value: "ENC(hunter2)"},
 	}, nil).Once()

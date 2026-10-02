@@ -463,7 +463,7 @@ func TestInScopeSecretMissingVersion_RealSQLite(t *testing.T) {
 	secretID := uuid.New()
 	if err := secretRepo.Create(context.Background(), &model.Secret{
 		ID: secretID, UserID: uuid.New(), VaultID: vaultAID,
-		Name: "no-versions-yet", Value: "ciphertext", Version: 1,
+		Name: "no-versions-yet", Value: "ciphertext", Version: 1, Enabled: true,
 	}); err != nil {
 		t.Fatalf("seed secret in vault A: %v", err)
 	}

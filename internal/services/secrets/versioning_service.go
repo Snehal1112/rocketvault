@@ -161,11 +161,25 @@ func (s *versioningService) CreateVersion(ctx context.Context, req CreateVersion
 	return version, nil
 }
 
+// readAccessibleParent authorizes the scope against the parent secret and
+// enforces its lifecycle, so a disabled or expired secret cannot be read back
+// through its version history.
+func (s *versioningService) readAccessibleParent(ctx context.Context, secretID uuid.UUID, scope model.Scope) error {
+	parent, err := s.secretRepo.Read(ctx, secretID, scope)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrSecretNotFound, err.Error())
+	}
+	if !parent.IsAccessible() {
+		return fmt.Errorf("%w", ErrSecretLifecycleDenied)
+	}
+	return nil
+}
+
 // GetVersions retrieves all versions of a secret the scope authorizes.
 // The scoped read on the parent secret is the access check.
 func (s *versioningService) GetVersions(ctx context.Context, secretID uuid.UUID, scope model.Scope) ([]model.SecretVersion, error) {
-	if _, err := s.secretRepo.Read(ctx, secretID, scope); err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrSecretNotFound, err.Error())
+	if err := s.readAccessibleParent(ctx, secretID, scope); err != nil {
+		return nil, err
 	}
 
 	encryptedVersions, err := s.versionRepo.GetVersions(ctx, secretID)
@@ -223,8 +237,8 @@ func (s *versioningService) GetVersionsMetadata(ctx context.Context, secretID uu
 
 // GetVersion retrieves one version of a secret the scope authorizes.
 func (s *versioningService) GetVersion(ctx context.Context, secretID uuid.UUID, version int, scope model.Scope) (*model.SecretVersion, error) {
-	if _, err := s.secretRepo.Read(ctx, secretID, scope); err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrSecretNotFound, err.Error())
+	if err := s.readAccessibleParent(ctx, secretID, scope); err != nil {
+		return nil, err
 	}
 
 	encryptedVersion, err := s.versionRepo.GetVersion(ctx, secretID, version)
@@ -250,8 +264,8 @@ func (s *versioningService) GetVersion(ctx context.Context, secretID uuid.UUID, 
 
 // GetLatestVersion retrieves the newest version the scope authorizes.
 func (s *versioningService) GetLatestVersion(ctx context.Context, secretID uuid.UUID, scope model.Scope) (*model.SecretVersion, error) {
-	if _, err := s.secretRepo.Read(ctx, secretID, scope); err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrSecretNotFound, err.Error())
+	if err := s.readAccessibleParent(ctx, secretID, scope); err != nil {
+		return nil, err
 	}
 
 	encryptedVersion, err := s.versionRepo.GetLatestVersion(ctx, secretID)

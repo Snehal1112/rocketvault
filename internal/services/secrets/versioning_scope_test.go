@@ -92,7 +92,7 @@ func TestGetVersionsDecryptsInScope(t *testing.T) {
 
 	secretID := uuid.New()
 	scope := model.NewVaultScope(uuid.New(), uuid.New())
-	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID}, nil).Once()
+	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID, Enabled: true}, nil).Once()
 	versionRepo.On("GetVersions", ctx, secretID).Return([]model.SecretVersion{
 		{ID: uuid.New(), SecretID: secretID, Version: 1, Value: "ENC(v1)", CreatedAt: time.Now().UTC()},
 	}, nil).Once()
@@ -109,7 +109,7 @@ func TestGetVersionAndLatestVersion(t *testing.T) {
 
 	secretID := uuid.New()
 	scope := model.NewOwnerScope(uuid.Nil, uuid.New())
-	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID}, nil).Twice()
+	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID, Enabled: true}, nil).Twice()
 	versionRepo.On("GetVersion", ctx, secretID, 2).
 		Return(&model.SecretVersion{SecretID: secretID, Version: 2, Value: "ENC(v2)"}, nil).Once()
 	versionRepo.On("GetLatestVersion", ctx, secretID).
@@ -138,7 +138,7 @@ func TestGetVersionMissingVersionMapsToErrSecretNotFound(t *testing.T) {
 
 	secretID := uuid.New()
 	scope := model.NewVaultScope(uuid.New(), uuid.New())
-	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID}, nil).Once()
+	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID, Enabled: true}, nil).Once()
 	versionRepo.On("GetVersion", ctx, secretID, 99).
 		Return(nil, fmt.Errorf("version %d not found for secret %s: %w", 99, secretID, repositories.ErrNotFound)).Once()
 
@@ -156,7 +156,7 @@ func TestGetVersionRealDBErrorStaysGeneric(t *testing.T) {
 
 	secretID := uuid.New()
 	scope := model.NewVaultScope(uuid.New(), uuid.New())
-	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID}, nil).Once()
+	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID, Enabled: true}, nil).Once()
 	versionRepo.On("GetVersion", ctx, secretID, 1).
 		Return(nil, fmt.Errorf("failed to query secret version: %w", assert.AnError)).Once()
 
@@ -175,7 +175,7 @@ func TestGetLatestVersionNoVersionsMapsToErrSecretNotFound(t *testing.T) {
 
 	secretID := uuid.New()
 	scope := model.NewVaultScope(uuid.New(), uuid.New())
-	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID}, nil).Once()
+	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID, Enabled: true}, nil).Once()
 	versionRepo.On("GetLatestVersion", ctx, secretID).
 		Return(nil, fmt.Errorf("no versions found for secret %s: %w", secretID, repositories.ErrNotFound)).Once()
 
@@ -193,7 +193,7 @@ func TestGetLatestVersionRealDBErrorStaysGeneric(t *testing.T) {
 
 	secretID := uuid.New()
 	scope := model.NewVaultScope(uuid.New(), uuid.New())
-	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID}, nil).Once()
+	secretRepo.On("Read", ctx, secretID, scope).Return(&model.Secret{ID: secretID, Enabled: true}, nil).Once()
 	versionRepo.On("GetLatestVersion", ctx, secretID).
 		Return(nil, fmt.Errorf("failed to query latest secret version: %w", assert.AnError)).Once()
 

@@ -754,7 +754,7 @@ func TestVersioningServiceHappyPathAndOwnershipErrors(t *testing.T) {
 	userID := uuid.New()
 	otherID := uuid.New()
 	secretID := uuid.New()
-	secret := &model.Secret{ID: secretID, UserID: userID, Name: "db", Value: "current", Version: 2}
+	secret := &model.Secret{ID: secretID, UserID: userID, Name: "db", Value: "current", Version: 2, Enabled: true}
 	versionRepo := &mockSecretVersionRepository{}
 	secretRepo := &testutils.MockSecretRepository{}
 	userRepo := &mockUserRepository{}
@@ -836,7 +836,7 @@ func TestVersioningServiceGetLatestAndDeleteMethods(t *testing.T) {
 	ctx := context.Background()
 	userID := uuid.New()
 	secretID := uuid.New()
-	secret := &model.Secret{ID: secretID, UserID: userID, Name: "db", Value: "current", Version: 3}
+	secret := &model.Secret{ID: secretID, UserID: userID, Name: "db", Value: "current", Version: 3, Enabled: true}
 	versionRepo := &mockSecretVersionRepository{}
 	secretRepo := &testutils.MockSecretRepository{}
 	userRepo := &mockUserRepository{}

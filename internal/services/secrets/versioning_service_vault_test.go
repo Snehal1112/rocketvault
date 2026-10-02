@@ -26,7 +26,7 @@ func TestGetVersions_VaultScope_HappyPath(t *testing.T) {
 
 	scope := model.NewVaultScope(vaultID, uuid.Nil)
 	secretRepo.On("Read", ctx, secretID, scope).Return(
-		&model.Secret{ID: secretID, VaultID: vaultID}, nil,
+		&model.Secret{ID: secretID, VaultID: vaultID, Enabled: true}, nil,
 	)
 	versionRepo.On("GetVersions", ctx, secretID).Return(
 		[]model.SecretVersion{{ID: uuid.New(), SecretID: secretID, Value: "enc-v1", Version: 1}}, nil,
