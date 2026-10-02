@@ -759,3 +759,37 @@ func TestCertExport_NoSecretInAnyOutputForPKCS12OrAFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestCertExport_ExportPassphraseIsResolvedBeforeThePKCS12Password(t *testing.T) {
+	f := newCertExportFixture(t)
+	out := f.path("client.p12.sealed")
+
+	// Neither source is available and stdin is not a terminal, so the first
+	// one resolved decides the error.
+	_, _, err := f.run(f.id.String(), "--file", out, "--format", "pkcs12")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no passphrase is available")
+	assert.NotContains(t, err.Error(), "pkcs12 needs a password")
+	f.svc.AssertNotCalled(t, "ExportCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	assertNoFile(t, out)
+	ev := f.audit.only(t)
+	assert.Equal(t, "failure", ev.Outcome)
+	assert.Contains(t, ev.Details, `"reason":"export passphrase unavailable"`)
+}
+
+func TestCertExport_FormatAndCompatAreCaseInsensitive(t *testing.T) {
+	f := newCertExportFixture(t)
+	f.svc.On("ExportCertificate", mock.Anything, f.scope(), f.id, mock.MatchedBy(func(r certServices.ExportCertificateRequest) bool {
+		return r.Format == "pkcs12" && r.Compat == "legacy" && r.Password != nil && *r.Password == ""
+	})).Return(&certServices.ExportCertificateResult{
+		ID: f.id, Name: "client", Version: 1, Format: model.ExportFormatPKCS12, PKCS12: []byte("P12-BYTES"),
+	}, nil).Once()
+
+	_, _, err := f.run(f.id.String(), "--file", f.path("client.p12"), "--encrypt=false",
+		"--format", "PKCS12", "--compat", "LEGACY", "--pkcs12-empty-password")
+	require.NoError(t, err)
+	f.svc.AssertExpectations(t)
+	ev := f.audit.only(t)
+	assert.Equal(t, "success", ev.Outcome)
+	assert.Contains(t, ev.Details, `"format":"pkcs12"`)
+}
