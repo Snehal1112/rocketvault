@@ -60,7 +60,7 @@ requires the Key Vault Key Exporter role.`,
   rocketvault keys import --name <name> --jwk '{"kty":"RSA","n":"...","e":"AQAB","d":"..."}'`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := vaultcli.Caller(cmd, vaultcli.Op{
-			Audit: "import_key", Action: model.ActionKeysImport, Policy: model.OpCreate,
+			Audit: "import_key", Action: model.ActionKeysImport, Policy: model.OpImport,
 			Roles: []string{model.RoleAdmin, model.RoleCryptoManager},
 		})
 		if err != nil {

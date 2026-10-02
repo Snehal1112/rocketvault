@@ -2397,3 +2397,62 @@ func TestWrapUnwrapCmd_PolicyOperationsAreIndependent(t *testing.T) {
 		})
 	}
 }
+
+// TestImportCmd_PolicyOperationIsImport is the CLI half of B94: POST
+// .../keys/import resolves to the import operation over HTTP, so a deny on
+// import blocks the CLI import and a deny on create does not.
+func TestImportCmd_PolicyOperationIsImport(t *testing.T) {
+	denied, allowed := authzServices.AccessDenied, authzServices.AccessAllowed
+
+	tests := []struct {
+		name      string
+		decisions map[model.PolicyOperation]authzServices.AccessDecision
+		wantErr   bool
+	}{
+		{"import deny blocks import", map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpImport: denied, model.OpCreate: allowed}, true},
+		{"create deny does not block import", map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpImport: allowed, model.OpCreate: denied}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keySvc := &keyCmdKeyService{}
+			userID := uuid.New()
+			sc, vaultID := newAllowedContainer(keySvc, nil)
+
+			roles := &testutils.MockRoleAssignmentService{}
+			roles.On("HasDataAction", mock.Anything, userID, vaultID, model.ActionKeysImport).
+				Return(true, nil).Maybe()
+			policies := &testutils.MockAccessPolicyService{}
+			for op, d := range tt.decisions {
+				policies.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, op, vaultID).
+					Return(d, nil).Maybe()
+			}
+			sc.RoleAssignmentService = roles
+			sc.AccessPolicyService = policies
+
+			keySvc.On("ImportKey", mock.Anything, mock.Anything).Return(&keyServices.CreateKeyResult{
+				KeyID: uuid.New(), Name: "imported-key", Type: "RSA", CreatedAt: time.Now(),
+			}, nil).Maybe()
+
+			claims := &model.Claims{UserID: userID, Roles: []string{model.RoleAdmin}}
+			ctx := context.WithValue(context.Background(), common.ClaimsKey, claims)
+			ctx = context.WithValue(ctx, common.LogKey, newLogger())
+			ctx = context.WithValue(ctx, common.ServiceContainerKey, sc)
+			ctx = context.WithValue(ctx, common.OutputFormatterKey, newTestFmtr())
+
+			cmd, _ := newTestCmd(importCmd.RunE, nil)
+			setFlags(cmd, map[string]any{"name": "imported-key", "tags": "",
+				"jwk": `{"kty":"RSA","n":"...","e":"AQAB","d":"..."}`})
+			cmd.SetContext(ctx)
+			err := cmd.Execute()
+			if tt.wantErr {
+				assert.ErrorContains(t, err, "forbidden")
+				keySvc.AssertNotCalled(t, "ImportKey", mock.Anything, mock.Anything)
+				return
+			}
+			assert.NoError(t, err)
+			keySvc.AssertCalled(t, "ImportKey", mock.Anything, mock.Anything)
+		})
+	}
+}
