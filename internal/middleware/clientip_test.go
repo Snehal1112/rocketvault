@@ -241,3 +241,48 @@ func TestNewMiddleware_InvalidTrustedProxiesTrustsNothing(t *testing.T) {
 		assert.Equal(t, logrus.ErrorLevel, hook.LastEntry().Level)
 	}
 }
+
+func TestRateLimitKey(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "203.0.113.9", rateLimitKey("203.0.113.9"))
+	assert.Equal(t, "203.0.113.9", rateLimitKey("::ffff:203.0.113.9"))
+	// Two hosts in one /64 share a key; a different /64 does not.
+	a := rateLimitKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd")
+	b := rateLimitKey("2001:db8:1:2:1111:2222:3333:4444")
+	c := rateLimitKey("2001:db8:1:3::1")
+	assert.Equal(t, a, b)
+	assert.NotEqual(t, a, c)
+	assert.Equal(t, "2001:db8:1:2::/64", a)
+	// Unparseable input is used as-is.
+	assert.Equal(t, "not-an-ip", rateLimitKey("not-an-ip"))
+}
+
+func newRateLimitTestMiddleware(defaultPerMin, authPerMin int64) *Middleware {
+	logger := &logging.Logger{Logger: logrus.New()}
+	logger.SetLevel(logrus.ErrorLevel)
+	return &Middleware{
+		logger:         logger,
+		defaultLimiter: newKeyedRateLimiter(defaultPerMin),
+		authLimiter:    newKeyedRateLimiter(authPerMin),
+	}
+}
+
+func TestRateLimitMiddleware_IPv6SameSlash64SharesBucket(t *testing.T) {
+	t.Parallel()
+	m := newRateLimitTestMiddleware(60, 2)
+	h := m.RateLimitMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	codes := []int{}
+	for _, remote := range []string{
+		"[2001:db8:1:2::1]:1", "[2001:db8:1:2::2]:1", "[2001:db8:1:2::3]:1",
+	} {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/users/login", nil)
+		req.RemoteAddr = remote
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		codes = append(codes, rr.Code)
+	}
+	// Burst is 2 on the auth limiter, so the third source in the /64 is refused.
+	assert.Equal(t, []int{200, 200, 429}, codes)
+}

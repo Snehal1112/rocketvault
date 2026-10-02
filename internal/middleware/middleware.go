@@ -221,7 +221,7 @@ func (m *Middleware) RateLimitMiddleware(next http.Handler) http.Handler {
 			isAuthEndpoint = true
 		}
 
-		lim := selectedLimiter.get(ip)
+		lim := selectedLimiter.get(rateLimitKey(ip))
 		tokens := lim.Tokens()
 		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", selectedLimiter.b))
 		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", max(0, int(tokens))))

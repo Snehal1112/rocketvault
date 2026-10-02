@@ -96,3 +96,18 @@ func SetClientIPResolver(c *ClientIPResolver) {
 func ExtractClientIP(r *http.Request) string {
 	return publishedResolver.Load().ClientIP(r)
 }
+
+// rateLimitKey maps an address to its rate-limit bucket key. IPv6 clients are
+// bucketed by /64, the smallest block an ISP hands out, so one host rotating
+// through its own addresses cannot mint unlimited buckets. IPv4-mapped IPv6
+// addresses use their IPv4 key.
+func rateLimitKey(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ip
+	}
+	if v4 := parsed.To4(); v4 != nil {
+		return v4.String()
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
+}
