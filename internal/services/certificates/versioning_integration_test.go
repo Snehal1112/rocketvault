@@ -179,6 +179,7 @@ func TestCheckAndRenewCertificates_CreatesVersionWithPreservedValidity(t *testin
 		CertRepository:     h.certRepo,
 		CertificateService: h.svc,
 		Logger:             newTestCertLogger(),
+		SignAuthorizer:     allowSign,
 	})
 	renewed, warned, err := scheduler.CheckAndRenewCertificates(ctx)
 	require.NoError(t, err)

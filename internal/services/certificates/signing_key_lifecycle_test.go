@@ -335,6 +335,7 @@ func TestCheckAndRenewCertificates_SigningKeyLifecycle(t *testing.T) {
 				CertRepository:     f.certRepo,
 				CertificateService: f.svc,
 				Logger:             newTestCertLogger(),
+				SignAuthorizer:     allowSign,
 			})
 			renewed, warned, err := renewalSvc.CheckAndRenewCertificates(context.Background())
 			require.NoError(t, err)
@@ -690,6 +691,7 @@ func TestCheckAndRenewCertificates_CAKeyLifecycle(t *testing.T) {
 				CertRepository:     f.certRepo,
 				CertificateService: f.svc,
 				Logger:             newTestCertLogger(),
+				SignAuthorizer:     allowSign,
 			})
 			renewed, warned, err := renewalSvc.CheckAndRenewCertificates(context.Background())
 			require.NoError(t, err)
@@ -786,3 +788,6 @@ func TestCreateCASignedCertificate_RechecksReReadKey(t *testing.T) {
 	certRepo.AssertNumberOfCalls(t, "Read", 1)
 	certRepo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
 }
+
+// allowSign is a KeySignAuthorizer that grants every request.
+func allowSign(context.Context, uuid.UUID, uuid.UUID) error { return nil }

@@ -1050,6 +1050,7 @@ func TestCheckAndRenewCertificates_AutoRenewFailureSkipped(t *testing.T) {
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             newTestCertLogger(),
+		SignAuthorizer:     allowSign,
 	})
 
 	renewed, warned, err := svc.CheckAndRenewCertificates(context.Background())

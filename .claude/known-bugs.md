@@ -5588,6 +5588,158 @@ blob carried.)
 
 ---
 
+### B77 — Certificate create and renew ignored key lifecycle and did not require the sign action
+
+**Status**: Fixed 2026-10-03 (GitHub #43)
+**Severity**: Medium — a revoked, disabled or expired key kept issuing and
+renewing certificates, and `certificates/create` alone was enough to sign
+with a key
+**Files**: `internal/services/certificates/certificate_service.go`,
+`internal/services/certificates/renewal_service.go`,
+`internal/services/authorization/data_action_authz.go`,
+`cmd/vaultcli/session.go`, `cmd/vaultcli/vault.go`, `api/certificates.go`,
+`api/certificates_versions.go`, `cmd/certificates/create.go`,
+`cmd/certificates/renew.go`, `internal/container/service_container.go`,
+`internal/vaultapi/errors.go`
+
+**Symptom**: `ValidateKeyOwnership` and `RenewCertificate`'s inline key read
+never looked at `Revoked`, `Enabled` or the validity window, so a key the
+crypto path refused (`loadAndAuthorize`) still minted and renewed
+certificates. Issuing or renewing needed only `certificates/create` and
+ownership of the key, over HTTP (create and the renew route, which the MCP
+`create_certificate` and `renew_certificate` tools use) and the CLI;
+`keys/sign` was never required and a deny policy on key sign was never
+consulted. The scheduler kept re-signing unattended, under an admin scope
+(B76), for owners who had since lost access. A certificate row stores a copy
+of its key's private PEM, used as the CA signing key when that certificate
+is a CA, so revoking the key did not stop the CA either.
+
+**Root cause**: authorization for issuance lived only in the route's single
+data action, and key lifecycle lived only in the key crypto service.
+
+**What was fixed**:
+
+- `requireUsableKey` refuses a key that is revoked, disabled, expired or not
+  yet active (`!Revoked && IsAccessible()`) with `ErrSigningKeyUnusable`.
+  `ValidateKeyOwnership` (both create paths) and `RenewCertificate` apply it
+  after the B32 owner comparison, and both create paths apply it again to
+  the second key read that actually signs, so a key revoked between the two
+  reads is refused too.
+- `requireCAKeyUsable` refuses to sign through a CA whose own linked key is
+  unusable or not readable under the caller's vault scope, or which records
+  no key at all, in `CreateCASignedCertificate` and in CA-signed renewal.
+- `authorization.RequireDataPlaneAccess` is the one two-stage check (the
+  explicit-deny policy, then the role grant). `createCertificate` and
+  `renewCertificate` call it for `(keys, sign, keys/sign/action)` through
+  `requireKeySign`; the CLI `certificate create` and `certificate renew` call
+  it through `vaultcli.Session.RequireAlso`; `vaultcli.RequireDataAction`
+  delegates to it. The policy resource type is `keys`, matching the action,
+  so an explicit deny on `(keys, sign)` is evaluated. The check is per vault,
+  not per key: the key itself is still bound to the caller by the B32 owner
+  comparison.
+- The scheduler checks, before every `RenewCertificate`, that the
+  certificate's owner (`cert.UserID`) still holds `keys/sign` in the
+  certificate's vault (`cert.VaultID`), through
+  `RenewalServiceConfig.SignAuthorizer`, which the container builds with
+  `certificates.NewKeySignAuthorizer` from the access-policy and
+  role-assignment services. A nil authorizer refuses every renewal. A refusal
+  skips the row with a `cert_auto_renew` audit row of status `denied`; a
+  fault (a failed policy or role lookup, misuse, unwired services) and a
+  missing authorizer skip it with status `failed`. Nothing renews on a fault,
+  and a skipped row never stops later rows.
+
+**Consequences, all deliberate**:
+
+- A revoked, disabled, expired or not-yet-active key stops both issuance and
+  auto-renewal of the certificates that use it. A key whose rotation policy
+  stamps `ExpiresAt` (`ExpiryDays`) and is not rotated in time lapses the
+  same way.
+- A CA is refused as a signer, on create and on renew, when its key is
+  soft-deleted (recovering the key brings the CA back), purged (permanent:
+  certificates it signed can never renew until the CA is re-issued and they
+  are re-issued under it), expired, not yet active, revoked or disabled, or
+  when its key link was cleared at restore (B76). A CA restored while its key
+  sat in the recycle bin loses the link at restore and stays stranded even
+  after the key is recovered.
+- `RotateKey` updates the same key row (same ID), so rotating a CA's key does
+  not stop the CA from signing; the CA keeps signing with its row's embedded
+  copy. There is no certificate import path to bypass any of this.
+- `CreateCASignedCertificate` still reads the CA certificate row with a raw
+  `certRepo.Read` after `ValidateCertificateAccess`, neither of which checks
+  the CA certificate's own lifecycle, so a disabled or expired CA certificate
+  still issues on create (pre-existing). Renewal goes through
+  `GetCertificate` and refuses it.
+- `requireCAKeyUsable` wraps every CA key read error as
+  `ErrSigningKeyUnusable`, including a transient database error.
+
+**Decision — what revoking a key does to certificates that embed it**: the
+key can no longer issue or renew anything, as a leaf key or through a CA
+row's embedded copy. Certificates already issued are left alone: not
+revoked, disabled or deleted, since a key operation cascading into other
+objects would be destructive and Azure does not do it either; X.509
+revocation is its own concern. The embedded copy is not erased.
+Certificate export intentionally ignores the linked key's lifecycle: an
+already exportable certificate still exports under its own gates (its own
+lifecycle and the exporter role, `certificate_export.go`). A CA row with no
+key link is refused as a signer: every CA that passes `inspectCertificateCA`
+was issued after `key_id` existed (B43 came later), so such a row can only be
+one whose link was dropped at restore (B76).
+
+**Accepted behavior change (breaking)**: the roles that hold `keys/sign` are
+Key Vault Administrator, Key Vault Crypto Officer and Key Vault Crypto User.
+Key Vault Certificates Officer alone no longer issues or renews
+certificates; the caller also needs one of those roles in the vault. Because
+issuance already required owning the key (B32), and Certificates Officer
+cannot create keys, this mostly affects principals who own keys but lost
+their key role, which is the case this entry is about. The scheduler
+likewise skips the certificates of owners without `keys/sign`; granting the
+owner one of those roles resumes auto-renewal on the next run. This is a
+documented divergence from Azure, where a certificate creates its own key.
+
+**Status codes and audit**: a `keys/sign` refusal answers 403 on create and
+on the renew route; a fault in that check answers 500. Over HTTP the refusal
+writes a `denied` audit row (`create_certificate` or `renew_certificate`,
+naming `keys/sign/action` but not whether an explicit deny or a missing
+grant refused it); the CLI writes a `failed` row, following
+`vaultcli.Session.Fail`. The create handler runs the check before parsing
+`ca_cert_id`, so a caller without `keys/sign` gets 403 before a malformed
+CA ID would give 400. An unusable signing key or CA key
+(`ErrSigningKeyUnusable`) currently answers 500 on both routes; mapping it
+to 403 on create and 409 on renew is § B78's work.
+
+**Pinned by**: `TestValidateKeyOwnership_RefusesUnusableKey`,
+`TestCreateSelfSignedCertificate_RefusesRevokedKey`,
+`TestRenewCertificate_RefusesDisabledKey`,
+`TestCreateSelfSignedCertificate_RechecksReReadKey`,
+`TestCreateCASignedCertificate_RechecksReReadKey`,
+`TestRequireCAKeyUsable`,
+`TestCreateCASignedCertificate_RefusesCAWithRevokedKey`,
+`TestCreateCASignedCertificate_CAKeyLifecycle`,
+`TestRenewCertificate_CAKeyLifecycle`,
+`TestCheckAndRenewCertificates_SigningKeyLifecycle`,
+`TestCheckAndRenewCertificates_CAKeyLifecycle`
+(`internal/services/certificates/signing_key_lifecycle_test.go`);
+`TestRenewCertificate_RevokedCAKeyRefusesRenewal` (`ca_renewal_test.go`);
+`TestRequireDataPlaneAccess_*`
+(`internal/services/authorization/data_plane_access_test.go`);
+`TestCreateCertificate_RequiresKeySign`,
+`TestCreateCertificate_KeySignDenyPolicyRefuses`,
+`TestRenewCertificate_RequiresKeySign` (`api/certificates_key_sign_test.go`);
+`TestCertCreateCmd_RequiresKeySign`, `TestCertRenewCmd_RequiresKeySign`
+(`cmd/certificates/key_sign_test.go`);
+`TestCheckAndRenewCertificates_RefusesWhenOwnerCannotSign`,
+`TestCheckAndRenewCertificates_RefusesWithoutSignAuthorizer`,
+`TestCheckAndRenewCertificates_AuthorizerFaultSkipsAsFailure`,
+`TestCheckAndRenewCertificates_ChecksSignBeforeRenewing`,
+`TestCheckAndRenewCertificates_SkippedRowDoesNotStopLaterRows`,
+`TestNewKeySignAuthorizer_ExplicitKeySignDenyWins`,
+`TestNewKeySignAuthorizer_Outcomes`
+(`internal/services/certificates/renewal_service_test.go`);
+`TestAPIError_CertificateIssueHintNamesKeySign`
+(`internal/vaultapi/errors_test.go`).
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

@@ -743,6 +743,10 @@ func (c *ServiceContainer) initializeServices() error {
 		CertRepository:     c.certificateRepository,
 		CertificateService: c.certificateService,
 		Logger:             c.logger,
+		// The same two-stage keys/sign check the CLI and HTTP handlers run,
+		// applied to each certificate's owner (B77). Both services are built
+		// above, in the authorization block.
+		SignAuthorizer: certServices.NewKeySignAuthorizer(c.accessPolicyService, c.roleAssignmentService),
 	})
 
 	// Initialize per-item backup service.
