@@ -449,10 +449,17 @@ always produces a non-exportable item.</li>
 keeps its own copy of the key; export reflects that copy until the
 certificate is renewed.</li>
 <li><strong>Chains use each CA's current certificate.</strong> If a CA was renewed after the
-leaf was issued, the chain carries the CA's newer certificate, which still
-verifies because renewal keeps the CA's key. This also applies when you
-export an archived version of the leaf: its chain is built from the CA's
-current certificate, not the one that was current at issue time.</li>
+leaf was issued, the chain carries the CA's newer certificate. Renewal signs
+with the CA key's current value, so that certificate still verifies only if
+the CA's key was not rotated before the CA was renewed. Export checks every
+signature in the chain: when a CA certificate did not sign the certificate
+below it, export fails with a generic <code>500</code> rather than shipping a chain
+that cannot verify. This also applies when you export an archived version of
+the leaf: its chain is built from the CA's current certificate, not the one
+that was current at issue time.</li>
+<li><strong>A revoked key and a certificate over it differ.</strong> Key export refuses a
+revoked key (<code>409</code>), but an exportable certificate created over a key that
+was later revoked still exports its own stored copy of that key.</li>
 <li><strong>Nothing is cacheable.</strong> Every response written by the export handler carries <code>Cache-Control: no-store</code> and <code>Pragma: no-cache</code>.</li>
 <li>Every export attempt is audited (<code>export_certificate</code> / <code>export_key</code>); no
 key, chain or password is ever logged.</li>

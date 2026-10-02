@@ -3,6 +3,7 @@ package certificates
 import (
 	"context"
 	gocrypto "crypto"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -93,7 +94,7 @@ func TestExportCertificate_PEM_RSAAndEC(t *testing.T) {
 		assert.Equal(t, model.ExportFormatPEM, res.Format)
 		require.NotNil(t, res.NotBefore)
 		require.NotNil(t, res.ExpiresAt)
-		assert.Nil(t, res.PKCS12)
+		assert.True(t, res.PKCS12 == nil, "a pem export carries no PKCS#12 bytes")
 
 		certs := parsePEMCerts(t, res.CertificatePEM)
 		require.Len(t, certs, 1, "a self-signed leaf exports alone")
@@ -114,9 +115,9 @@ func TestExportCertificate_PKCS12ModernLegacyAndEmptyPassword(t *testing.T) {
 				Format: model.ExportFormatPKCS12, Password: strPtr(password), Compat: compat,
 			})
 			require.NoError(t, err)
-			assert.Empty(t, res.PrivateKeyPEM)
+			assert.True(t, res.PrivateKeyPEM == "", "a pkcs12 export carries no separate private key PEM")
 			_, leaf, cas, err := pkcs12.DecodeChain(res.PKCS12, password)
-			require.NoError(t, err, "compat=%q password=%q", compat, password)
+			require.NoError(t, err, "compat=%q empty-password=%t", compat, password == "")
 			assert.Equal(t, "p12", leaf.Subject.CommonName)
 			assert.Empty(t, cas)
 		}
@@ -200,7 +201,7 @@ func TestExportCertificate_VersionGating(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, v1.Version)
 	assert.Equal(t, 2, v2.Version)
-	assert.NotEqual(t, v1.CertificatePEM, v2.CertificatePEM, "the archived version exports its own body")
+	assert.False(t, v1.CertificatePEM == v2.CertificatePEM, "the archived version exports its own body")
 
 	_, err = h.svc.ExportCertificate(ctx, h.scope(), id, ExportCertificateRequest{Format: model.ExportFormatPEM, Version: 3})
 	require.ErrorIs(t, err, model.ErrCertificateVersionNotFound)
@@ -298,7 +299,7 @@ func TestExportCertificate_ChainGuards(t *testing.T) {
 	// Cycle: a and b name each other.
 	a := insertCert(t, h, h.vaultID, hopPEM, caKey, nil)
 	b := insertCert(t, h, h.vaultID, hopPEM, caKey, &a)
-	_, err = h.raw.Exec("UPDATE certificates SET ca_cert_id = ? WHERE id = ?", b.String(), a.String())
+	_, err = h.raw.ExecContext(context.Background(), "UPDATE certificates SET ca_cert_id = ? WHERE id = ?", b.String(), a.String())
 	require.NoError(t, err)
 	_, err = h.svc.ExportCertificate(ctx, h.scope(), a, ExportCertificateRequest{Format: model.ExportFormatPEM})
 	require.ErrorIs(t, err, ErrCertificateChainUnavailable)
@@ -327,10 +328,71 @@ func TestExportCertificate_ReflectsStoredKeyCopy(t *testing.T) {
 	require.NoError(t, err)
 	enc, err := common.EncryptSecret(newKey)
 	require.NoError(t, err)
-	_, err = h.raw.Exec("UPDATE keys SET value = ? WHERE id = ?", enc, cert.KeyID.String())
+	_, err = h.raw.ExecContext(context.Background(), "UPDATE keys SET value = ? WHERE id = ?", enc, cert.KeyID.String())
 	require.NoError(t, err)
 
 	after, err := h.svc.ExportCertificate(ctx, h.scope(), id, ExportCertificateRequest{Format: model.ExportFormatPEM})
 	require.NoError(t, err)
-	assert.Equal(t, before.PrivateKeyPEM, after.PrivateKeyPEM)
+	assert.True(t, sha256.Sum256([]byte(before.PrivateKeyPEM)) == sha256.Sum256([]byte(after.PrivateKeyPEM)),
+		"the export still carries the certificate's stored key copy")
+}
+
+// TestExportCertificate_ChainVerifiesEverySignature pins that each hop must
+// have signed the certificate below it. A CA reissued with a new key keeps
+// its name, so a walk that only follows ca_cert_id would ship a chain that
+// cannot verify. Export fails closed instead.
+func TestExportCertificate_ChainVerifiesEverySignature(t *testing.T) {
+	h := newVersioningHarness(t)
+	ctx := context.Background()
+	newCA := func(name string, parentPEM, parentKey string) (string, string) {
+		key, err := crypto.GenerateRSAKeyPEM(2048)
+		require.NoError(t, err)
+		tmpl := crypto.CertificateTemplate{CommonName: name, ValidityDays: 30, IsCA: true}
+		if parentPEM == "" {
+			certPEM, err := crypto.CreateSelfSignedCertificatePEM(key, "RSA", tmpl)
+			require.NoError(t, err)
+			return certPEM, key
+		}
+		certPEM, err := crypto.CreateCASignedCertificatePEM(key, "RSA", parentPEM, parentKey, "RSA", tmpl)
+		require.NoError(t, err)
+		return certPEM, key
+	}
+	rootPEM, rootKey := newCA("root", "", "")
+	intPEM, intKey := newCA("intermediate", rootPEM, rootKey)
+	leafKey, err := crypto.GenerateECDSAKeyPEM("P-256")
+	require.NoError(t, err)
+	leafPEM, err := crypto.CreateCASignedCertificatePEM(leafKey, "ECDSA", intPEM, intKey, "RSA", crypto.CertificateTemplate{CommonName: "leaf", ValidityDays: 30})
+	require.NoError(t, err)
+
+	rootID := insertCert(t, h, h.vaultID, rootPEM, rootKey, nil)
+	intID := insertCert(t, h, h.vaultID, intPEM, intKey, &rootID)
+
+	t.Run("a correct chain exports", func(t *testing.T) {
+		leafID := insertCert(t, h, h.vaultID, leafPEM, leafKey, &intID)
+		res, err := h.svc.ExportCertificate(ctx, h.scope(), leafID, ExportCertificateRequest{Format: model.ExportFormatPEM})
+		require.NoError(t, err)
+		certs := parsePEMCerts(t, res.CertificatePEM)
+		require.Len(t, certs, 2)
+		require.NoError(t, certs[0].CheckSignatureFrom(certs[1]))
+	})
+
+	t.Run("an intermediate that did not sign the leaf fails closed", func(t *testing.T) {
+		// Same name and same root, but a different key: what a renewal
+		// after a key rotation produces.
+		reissuedPEM, reissuedKey := newCA("intermediate", rootPEM, rootKey)
+		reissuedID := insertCert(t, h, h.vaultID, reissuedPEM, reissuedKey, &rootID)
+		leafID := insertCert(t, h, h.vaultID, leafPEM, leafKey, &reissuedID)
+		res, err := h.svc.ExportCertificate(ctx, h.scope(), leafID, ExportCertificateRequest{Format: model.ExportFormatPEM})
+		require.ErrorIs(t, err, ErrCertificateChainUnavailable)
+		assert.True(t, res == nil, "nothing is exported")
+	})
+
+	t.Run("a root that did not sign the intermediate fails closed", func(t *testing.T) {
+		otherRootPEM, otherRootKey := newCA("root", "", "")
+		otherRootID := insertCert(t, h, h.vaultID, otherRootPEM, otherRootKey, nil)
+		badIntID := insertCert(t, h, h.vaultID, intPEM, intKey, &otherRootID)
+		leafID := insertCert(t, h, h.vaultID, leafPEM, leafKey, &badIntID)
+		_, err := h.svc.ExportCertificate(ctx, h.scope(), leafID, ExportCertificateRequest{Format: model.ExportFormatPKCS12, Password: strPtr("")})
+		require.ErrorIs(t, err, ErrCertificateChainUnavailable)
+	})
 }

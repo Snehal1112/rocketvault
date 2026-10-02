@@ -22,7 +22,8 @@ const maxExportChainDepth = 10
 
 // ErrCertificateChainUnavailable is returned when the issuer chain cannot be
 // built: a CA is missing, soft-deleted, outside the caller's vault, part of
-// a cycle, or deeper than maxExportChainDepth. Nothing is exported.
+// a cycle, deeper than maxExportChainDepth, or did not sign the certificate
+// below it. Nothing is exported.
 var ErrCertificateChainUnavailable = errors.New("certificate chain cannot be built")
 
 // ExportCertificateRequest selects what ExportCertificate returns. Password
@@ -217,12 +218,17 @@ func parseLeaf(certPEM string) (*x509.Certificate, error) {
 // order, stopping before the self-signed root. Every hop is a scoped read,
 // so a CA outside the caller's vault is never read. A missing hop, a cycle
 // or a walk past maxExportChainDepth fails with
-// ErrCertificateChainUnavailable. Each hop uses the CA's current PEM.
+// ErrCertificateChainUnavailable. Each hop uses the CA's current PEM, so
+// every hop must have signed the certificate below it. A CA renewed after
+// its key was rotated carries a new public key that did not sign the child;
+// such a chain also fails closed instead of exporting a chain that cannot
+// verify.
 func (s *certificateService) exportChain(ctx context.Context, parent *model.Certificate, leaf *x509.Certificate, scope model.Scope) ([]*x509.Certificate, error) {
 	if self, err := isSelfSignedPEM(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}))); err == nil && self {
 		return nil, nil
 	}
 	var chain []*x509.Certificate
+	child := leaf
 	seen := map[uuid.UUID]bool{parent.ID: true}
 	next := parent.CACertID
 	for depth := 0; next != nil; depth++ {
@@ -237,6 +243,13 @@ func (s *certificateService) exportChain(ctx context.Context, parent *model.Cert
 		if err != nil {
 			return nil, fmt.Errorf("%w: issuer %s is not readable", ErrCertificateChainUnavailable, *next)
 		}
+		cert, err := parseLeaf(hop.Certificate)
+		if err != nil {
+			return nil, fmt.Errorf("%w: issuer %s: %w", ErrCertificateChainUnavailable, *next, err)
+		}
+		if err := child.CheckSignatureFrom(cert); err != nil {
+			return nil, fmt.Errorf("%w: issuer %s did not sign the certificate below it: %w", ErrCertificateChainUnavailable, *next, err)
+		}
 		self, err := isSelfSignedPEM(hop.Certificate)
 		if err != nil {
 			return nil, fmt.Errorf("%w: issuer %s: %w", ErrCertificateChainUnavailable, *next, err)
@@ -244,11 +257,8 @@ func (s *certificateService) exportChain(ctx context.Context, parent *model.Cert
 		if self {
 			return chain, nil
 		}
-		cert, err := parseLeaf(hop.Certificate)
-		if err != nil {
-			return nil, fmt.Errorf("%w: issuer %s: %w", ErrCertificateChainUnavailable, *next, err)
-		}
 		chain = append(chain, cert)
+		child = cert
 		next = hop.CACertID
 	}
 	return chain, nil

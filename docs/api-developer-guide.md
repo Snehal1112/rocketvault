@@ -548,10 +548,17 @@ keep their usual bodies; read the status, not the body, for those.
   keeps its own copy of the key; export reflects that copy until the
   certificate is renewed.
 - **Chains use each CA's current certificate.** If a CA was renewed after the
-  leaf was issued, the chain carries the CA's newer certificate, which still
-  verifies because renewal keeps the CA's key. This also applies when you
-  export an archived version of the leaf: its chain is built from the CA's
-  current certificate, not the one that was current at issue time.
+  leaf was issued, the chain carries the CA's newer certificate. Renewal signs
+  with the CA key's current value, so that certificate still verifies only if
+  the CA's key was not rotated before the CA was renewed. Export checks every
+  signature in the chain: when a CA certificate did not sign the certificate
+  below it, export fails with a generic `500` rather than shipping a chain
+  that cannot verify. This also applies when you export an archived version of
+  the leaf: its chain is built from the CA's current certificate, not the one
+  that was current at issue time.
+- **A revoked key and a certificate over it differ.** Key export refuses a
+  revoked key (`409`), but an exportable certificate created over a key that
+  was later revoked still exports its own stored copy of that key.
 - **Nothing is cacheable.** Every response written by the export handler carries `Cache-Control:
   no-store` and `Pragma: no-cache`.
 - Every export attempt is audited (`export_certificate` / `export_key`); no

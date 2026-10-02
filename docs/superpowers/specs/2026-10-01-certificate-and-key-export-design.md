@@ -126,8 +126,12 @@ where the request carries `Format` (`pem` or `pkcs12`), `Password *string`,
    excluded: a chain stops before the self-signed certificate. A self-signed
    leaf exports alone. Limit: each hop uses the CA certificate's current PEM, so
    if a CA was renewed after the leaf was issued the chain carries the CA's newer
-   certificate. That verifies correctly as long as the CA's key did not change,
-   which renewal does not do; documented.
+   certificate. Renewal signs with the CA key's current value, so that
+   certificate verifies only if the CA's key was not rotated before the CA's
+   renewal. Export therefore checks `child.CheckSignatureFrom(ca)` at every
+   hop, root included, and when a CA did not sign the certificate below it
+   fails with `ErrCertificateChainUnavailable` (a generic 500) rather than
+   shipping a chain that cannot verify; documented.
 6. `pem`: return `certificate_pem` (the chain) and `private_key_pem`.
    `pkcs12`: the `password` field must be present (400 otherwise; an empty
    string is allowed). Encode with `go-pkcs12`: `modern` by default, and
