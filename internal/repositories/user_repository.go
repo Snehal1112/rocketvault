@@ -224,8 +224,8 @@ func (r *UserRepository) Update(ctx context.Context, user *model.User) error {
 	// different pooled DB connection) never blocks on the lock this tx holds.
 	result, err := tx.ExecContext(
 		ctx,
-		"UPDATE users SET username = ?, password_hash = ?, role = ? WHERE id = ?",
-		user.Username, user.PasswordHash, strings.Join(normalizedRoles, ","), user.ID.String(),
+		"UPDATE users SET username = ?, password_hash = ?, totp_secret = ?, role = ? WHERE id = ?",
+		user.Username, user.PasswordHash, user.TOTPSecret, strings.Join(normalizedRoles, ","), user.ID.String(),
 	)
 	if err != nil {
 		_ = tx.Rollback()

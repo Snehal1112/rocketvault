@@ -354,6 +354,46 @@ func TestUserRepository_Update(t *testing.T) {
 	assert.Equal(t, []string{model.RoleAdmin}, got.Roles)
 }
 
+// Update must store the TOTP secret, or enrolling an OIDC account on password set is lost.
+func TestUserRepository_Update_PersistsTOTPSecret(t *testing.T) {
+	t.Parallel()
+	db := setupUserDB(t)
+	repo := repositories.NewUserRepository(rvdb.NewConn(db, rvdb.SQLite), newLogger())
+	ctx := context.Background()
+
+	u := newUser("totp-carrier", model.RoleUser)
+	require.NoError(t, repo.Create(ctx, u))
+
+	u.TOTPSecret = "JBSWY3DPEHPK3PXP"
+	require.NoError(t, repo.Update(ctx, u))
+
+	got, err := repo.Read(ctx, u.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", got.TOTPSecret)
+}
+
+// A read-modify-write update of another field must keep the stored secret.
+func TestUserRepository_Update_KeepsTOTPSecretOnOtherFieldChange(t *testing.T) {
+	t.Parallel()
+	db := setupUserDB(t)
+	repo := repositories.NewUserRepository(rvdb.NewConn(db, rvdb.SQLite), newLogger())
+	ctx := context.Background()
+
+	u := newUser("totp-keeper", model.RoleUser)
+	u.TOTPSecret = "JBSWY3DPEHPK3PXP"
+	require.NoError(t, repo.Create(ctx, u))
+
+	loaded, err := repo.Read(ctx, u.ID)
+	require.NoError(t, err)
+	loaded.Roles = []string{model.RoleAdmin}
+	require.NoError(t, repo.Update(ctx, loaded))
+
+	got, err := repo.Read(ctx, u.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "JBSWY3DPEHPK3PXP", got.TOTPSecret)
+	assert.Equal(t, []string{model.RoleAdmin}, got.Roles)
+}
+
 func TestUserRepository_Update_NotFound(t *testing.T) {
 	t.Parallel()
 	db := setupUserDB(t)
