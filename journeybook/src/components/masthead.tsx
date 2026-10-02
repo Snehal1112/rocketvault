@@ -109,7 +109,7 @@ export const Masthead = React.memo(function Masthead({
             tester needs at check 180 as much as at check 1. */}
         <div ref={readout} className="pt-6">
           {/* The run at a glance: a tick per check, grouped by journey, each
-              group as wide as its share of the 245. Below sm the ticks would
+              group as wide as its share of the 247. Below sm the ticks would
               be under a pixel wide, so the proportional bar takes over there
               -- still true, just coarser, rather than a row of invisible
               marks. */}

@@ -318,7 +318,7 @@ maintained.
   extras list to certificates, mirroring the existing secrets export/import
   pattern (argon2id + AES-256-GCM sealed envelope, `common/export_envelope.go`).
   Genuinely distinct from the existing `POST /certificates/{id}/backup`, which
-  is an unencrypted, same-instance restore blob, not a portable human-shareable
+  is a same-instance restore blob (sealed under a master-key-derived key since B76, so it restores only on an instance with the same master key), not a portable human-shareable
   export — see the design doc's Problem section for the distinction. No Azure
   equivalent, so this doesn't close a parity gap; it's a self-hosted
   convenience. Design specified, not yet built:

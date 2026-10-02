@@ -622,7 +622,7 @@ rocketvault certificate get <leaf-cert-id> --vault prod --output json | jq .name
         expected: "Certificate updated successfully. The name is unchanged.",
         assert: "Only the flags passed take effect",
         why: "`UpdateCertificate` copies the existing record and overwrites the metadata fields whose request pointers are non-nil. It never touches the stored `Certificate` PEM bytes or the key material, so there is nothing in this code path that could re-sign anything.",
-        source: "internal/services/certificates/certificate_service.go:626-651",
+        source: "internal/services/certificates/certificate_service.go:772-815",
       },
       {
         id: "Q12",
@@ -637,7 +637,7 @@ Validity: 180 days`,
         assert: "Same id, same key, next version, new validity",
         why: "`RenewCertificate` archives the current version under its own number and bumps the same row to the next version in one transaction (`ArchiveAndRenew`), so the ID and the `KeyID` are unchanged while the certificate body and validity are new. The command prints the new version number.",
         source:
-          "internal/services/certificates/certificate_service.go:1050-1066, cmd/certificates/renew.go:93-96",
+          "internal/services/certificates/certificate_service.go:1057-1068,1171, cmd/certificates/renew.go:96-104",
       },
       {
         id: "Q13",
@@ -665,8 +665,7 @@ Validity: 180 days`,
         expected: "Refused — never silently downgraded to self-signed.",
         assert: "Refusal, not a silent self-signed fallback",
         why: "Renewing a CA-signed certificate re-fetches the signing CA through `GetCertificate`, which enforces `cert.IsAccessible()` — not disabled, inside its validity window — and returns `ErrCertLifecycleDenied` ('certificate is disabled or outside its valid time window') if that fails. `renewCASignedBody` wraps that as 'signing CA %s is unusable' and refuses outright; there is no branch that falls back to issuing self-signed instead.",
-        source:
-          "internal/services/certificates/certificate_service.go:523-539,799-803",
+        source: "internal/services/certificates/certificate_service.go:936-950",
       },
       {
         id: "Q15",
@@ -702,6 +701,9 @@ Error: failed to get certificate: certificate not found: certificate not found o
         title: "Another user's key is refused even with every role",
         surface: "cli",
         gate: "none",
+        flag: "trap",
+        notes:
+          "The refusal comes from the key owner check, not from any of the three gates, so `gate` is `none`. Holding every role in the vault does not get past it.",
         precondition:
           "Run as Noor, holding Certificates Officer and Crypto Officer in prod. Sofia created sofia-owned-key in prod.",
         command: `rocketvault certificates create --name not-allowed \\
@@ -727,13 +729,13 @@ rocketvault certificate renew <dev-cert-id> --vault dev`,
           "Error: failed to renew certificate: forbidden: no role grants Microsoft.KeyVault/vaults/keys/sign/action in this vault",
         assert:
           "The action named in the error is keys/sign, not certificates/create",
-        flag: "divergence",
+        flag: "trap",
         notes:
-          "Granting Key Vault Crypto User in dev clears it. `certificate create` is refused the same way.",
+          "Certificates Officer reads as full control of certificates, yet it cannot issue or renew. Granting Key Vault Crypto User in dev clears it. `certificate create` is refused the same way.",
         why: "`certificate renew` and `certificate create` call `s.RequireAlso(model.ActionKeysSign, model.OpSign)` right after `s.Authorize()`, before the certificate is looked up. Key Vault Certificates Officer holds no `keys/sign`; Administrator, Crypto Officer and Crypto User do. Over REST the same refusal is a 403 audited as `denied`, while the CLI audits it as `failed`.",
         related: [{ id: "Q13", rel: "contrasts" }],
         source:
-          "cmd/certificates/renew.go:83; cmd/certificates/create.go:110; model/azure_roles.go:170-217; api/certificates.go:287-303",
+          "cmd/certificates/renew.go:83; cmd/certificates/create.go:110; model/azure_roles.go:170-217; api/certificates.go:287-303; api/context.go:124-130; cmd/vaultcli/session.go:196-209",
       },
     ],
   },

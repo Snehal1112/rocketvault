@@ -423,8 +423,11 @@ caller without it gets `403` even if that field is malformed.
 caller and be enabled, not revoked, and inside its validity window; a CA
 certificate named by `ca_cert_id` must be owned by the caller, and its own key
 must be usable the same way. Status codes: `403` for another user's key or CA,
-or an unusable key; `404` for a missing key or CA certificate; `500` only for a
-database fault.
+or an unusable key; `404` for a missing key or CA certificate. `500` is a
+database fault, but a few CA refusals are still plain errors that answer `500`
+on both this route and renew: a CA certificate that cannot sign (for example
+one without the keyCertSign usage), a CA that disappears mid-request, and a CA
+that cannot be inspected (B78 limitations in `.claude/known-bugs.md`).
 
 #### Renew a Certificate
 

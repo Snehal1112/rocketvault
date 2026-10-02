@@ -4505,6 +4505,7 @@ of the secrets-and-error-responses plan).
 key, so a restore now accepts only a blob this server produced, unmodified.
 That closes the "crafted blob" half of this entry. Running
 `ValidateSecretCreate` on the decoded secret is still open.
+
 **Severity**: Low — not an escalation today, because only Key Vault
 Administrator and Key Vault Secrets Officer hold `secrets/restore/action`, and
 both also hold `secrets/setSecret`; it is a validation and integrity gap

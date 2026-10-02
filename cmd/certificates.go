@@ -40,10 +40,11 @@ list certificates, update their metadata, renew them, and delete them.
 Issuing, updating, renewing, and deleting require the admin or
 certificate_manager role plus the matching data action
 (certificates/create, certificates/update, certificates/delete) in the target
-vault. get and list require only certificates/read, and export only
-certificates/export/action, with no account role. Vault access is
-deny-by-default, so a role assignment must exist for the target vault — see
-'rocketvault vault-access'.
+vault. Issuing and renewing also require the keys/sign/action data action in
+that vault, because they sign with the certificate's key. get and list
+require only certificates/read, and export only certificates/export/action,
+with no account role. Vault access is deny-by-default, so a role assignment
+must exist for the target vault — see 'rocketvault vault-access'.
 
 Every command here acts on the vault named by --vault, defaulting to
 "default". A certificate is always bound to an existing key named by --key-id,

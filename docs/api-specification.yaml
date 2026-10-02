@@ -1905,7 +1905,7 @@ paths:
   /api/v1/secrets/restore:
     post:
       summary: Restore a secret from a backup blob
-      description: Decodes a backup blob and re-inserts the secret into the resolved vault.
+      description: Opens a sealed backup blob and re-inserts the secret into the resolved vault. The blob must be one this server sealed and left unmodified; an unsealed (pre-upgrade), modified or foreign-master-key blob is refused with 400.
       operationId: restoreSecret
       tags:
         - Secrets
@@ -2263,7 +2263,7 @@ paths:
       - $ref: "#/components/parameters/VaultName"
     post:
       summary: Restore a secret from a backup blob into a vault
-      description: Decodes a backup blob and re-inserts the secret into the named vault.
+      description: Opens a sealed backup blob and re-inserts the secret into the named vault. The blob must be one this server sealed and left unmodified; an unsealed (pre-upgrade), modified or foreign-master-key blob is refused with 400.
       operationId: restoreSecretInVault
       tags:
         - Secrets
@@ -2962,7 +2962,7 @@ paths:
   /api/v1/keys/restore:
     post:
       summary: Restore a key from a backup blob
-      description: Decodes a backup blob and re-inserts the key into the resolved vault.
+      description: Opens a sealed backup blob and re-inserts the key into the resolved vault. The blob must be one this server sealed and left unmodified; an unsealed (pre-upgrade), modified or foreign-master-key blob is refused with 400.
       operationId: restoreKey
       tags:
         - Keys
@@ -3575,7 +3575,7 @@ paths:
       - $ref: "#/components/parameters/VaultName"
     post:
       summary: Restore a key from a backup blob into a vault
-      description: Decodes a backup blob and re-inserts the key into the named vault.
+      description: Opens a sealed backup blob and re-inserts the key into the named vault. The blob must be one this server sealed and left unmodified; an unsealed (pre-upgrade), modified or foreign-master-key blob is refused with 400.
       operationId: restoreKeyInVault
       tags:
         - Keys
@@ -3624,7 +3624,17 @@ paths:
         Issues an X.509 certificate signed by the named key. Supplying
         `ca_cert_id` issues a CA-signed certificate; omitting it issues a
         self-signed one. The certificate is an ordinary leaf unless `is_ca`
-        is true, which cannot be combined with `ca_cert_id`.
+        is true, which cannot be combined with `ca_cert_id`. Requires the
+        `certificates/create` and `keys/sign/action` data actions (Key Vault
+        Certificates Officer alone is refused; Crypto User, Crypto Officer
+        and Administrator hold `keys/sign`), and an explicit deny on
+        `(keys, sign)` refuses it too. The key must be owned by the caller
+        and be enabled, not revoked and inside its validity window; a CA
+        certificate's own key must be usable the same way. Answers 403 for
+        the missing `keys/sign` grant, another user's key or CA certificate,
+        or an unusable key; 404 for a missing key or CA certificate; 400
+        when `validity_days` exceeds 36500. Some other CA refusals still
+        answer 500 (see `.claude/known-bugs.md` B78).
       operationId: createCertificate
       tags:
         - Certificates
@@ -3647,6 +3657,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -3891,9 +3903,15 @@ paths:
       description: |
         Re-issues the certificate over its key and makes the result the new
         current version. The previous version is archived under its own
-        number. Requires the certificates/create data action. A disabled
-        certificate, one outside its validity window, or a concurrent renewal
-        returns 409.
+        number. Requires the certificates/create and keys/sign/action data
+        actions (an explicit deny on `(keys, sign)` refuses it too). A
+        disabled certificate, one outside its validity window, a key (or a
+        signing CA's key) that is revoked, disabled or outside its validity
+        window, a missing signing CA, or a concurrent renewal returns 409.
+        Another user's key or a missing `keys/sign` grant returns 403.
+        `validity_days` above 36500 returns 400, and an omitted
+        `validity_days` keeps the current period capped at 36500. A database
+        fault reading the key returns 500.
       operationId: renewCertificate
       tags:
         - Certificates
@@ -3999,7 +4017,7 @@ paths:
   /api/v1/certificates/restore:
     post:
       summary: Restore a certificate from a backup blob
-      description: Decodes a backup blob and re-inserts the certificate into the resolved vault.
+      description: Opens a sealed backup blob and re-inserts the certificate into the resolved vault, dropping key and CA links that do not resolve there. The blob must be one this server sealed and left unmodified; an unsealed (pre-upgrade), modified or foreign-master-key blob is refused with 400.
       operationId: restoreCertificate
       tags:
         - Certificates
@@ -4046,7 +4064,11 @@ paths:
           $ref: "#/components/responses/InternalError"
     post:
       summary: Create a certificate in a vault
-      description: Issues an X.509 certificate in the named vault.
+      description: |
+        Issues an X.509 certificate in the named vault. The requirements and
+        status codes match `POST /api/v1/certificates`: `keys/sign/action` as
+        well as `certificates/create`, a key owned by the caller that is
+        usable, 403 and 404 for key and CA refusals, 400 above 36500 days.
       operationId: createCertificateInVault
       tags:
         - Certificates
@@ -4069,6 +4091,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -4307,7 +4331,7 @@ paths:
       - $ref: "#/components/parameters/CertificateId"
     post:
       summary: Renew a certificate in a vault
-      description: Re-issues a certificate held in the named vault as a new current version, matching the flat route.
+      description: Re-issues a certificate held in the named vault as a new current version, matching the flat route, including the `keys/sign/action` requirement, the 403 and 409 refusals and the 36500-day cap.
       operationId: renewCertificateInVault
       tags:
         - Certificates
@@ -4417,7 +4441,7 @@ paths:
       - $ref: "#/components/parameters/VaultName"
     post:
       summary: Restore a certificate from a backup blob into a vault
-      description: Decodes a backup blob and re-inserts the certificate into the named vault.
+      description: Opens a sealed backup blob and re-inserts the certificate into the named vault, dropping key and CA links that do not resolve there. The blob must be one this server sealed and left unmodified; an unsealed (pre-upgrade), modified or foreign-master-key blob is refused with 400.
       operationId: restoreCertificateInVault
       tags:
         - Certificates
@@ -7116,6 +7140,7 @@ components:
         validity_days:
           type: integer
           minimum: 1
+          maximum: 36500
         tags:
           type: array
           items:
@@ -7280,7 +7305,8 @@ components:
         validity_days:
           type: integer
           minimum: 1
-          description: Validity of the new version in days. Omitted means the current version's validity period.
+          maximum: 36500
+          description: Validity of the new version in days. Omitted means the current version's validity period, capped at 36500.
 
 
     CertificateListResponse:

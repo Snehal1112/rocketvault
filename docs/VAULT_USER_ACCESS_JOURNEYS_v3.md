@@ -1116,7 +1116,7 @@ rocketvault keys create --name checkout-tls-leaf --type RSA --bits 2048 --vault 
 # Error: forbidden: requires admin or crypto_manager role
 ```
 
-**Issuing a certificate signs with a key, so three things must all be true of the key and the caller.** None of them is satisfied by Noor's current grants:
+**Issuing a certificate signs with a key, so three things must all be true: two about the caller's grants and ownership, one about the key.** Noor satisfies none of them yet, since she holds only Certificates Officer and owns no key:
 
 1. The caller holds `Microsoft.KeyVault/vaults/certificates/create` in the vault (Key Vault Certificates Officer) **and** `Microsoft.KeyVault/vaults/keys/sign/action` in the same vault. Of the built-in roles, Administrator, Crypto Officer and Crypto User hold `keys/sign` (`model/azure_roles.go`); Certificates Officer alone does not, so it is refused. An explicit deny policy on `(keys, sign)` refuses the call too. The same rule applies to `certificate renew`, to the REST create and renew routes, to the MCP `create_certificate` and `renew_certificate` tools, and to the background auto-renew scheduler, which checks it for the certificate's owner.
 2. The caller **owns** the key (the B32 owner check): the key's creator must be the caller. A key Sofia created cannot be used by Noor, even with every role in the vault. No `cmd/keys` command changes a key's owner, so the CLI has no way for one user to issue over another user's key. Noor has to create her own keys.
@@ -1156,7 +1156,7 @@ rocketvault certificates create --name checkout-tls-selfsigned \
 # <id>  checkout-tls-selfsigned    2026-08-25T...
 ```
 
-`--validity-days` must be between 1 and 36500. Flag validation runs before the vault-scoped authorization checks and the key lookup — but **after** the global-role gate. `cmd/certificates/create.go` checks the global roles (`admin` or `certificate_manager`) in `vaultcli.Caller`, ahead of the `name`/`key-id`/`validity-days` check; only `s.Authorize()` (`certificates/create`) and `s.RequireAlso` (`keys/sign`) run after flag validation. Noor holds `certificate_manager`, so she reaches the missing-field error below. A caller without that global role who also omits a required flag gets the forbidden error instead, never this one:
+`--validity-days` must be between 1 and 36500, but the CLI itself only rejects a value of 0 or less. A larger value passes the flag check and the vault checks, and the service then refuses it (`Error: failed to create certificate: invalid validity days: must not exceed 36500`). Flag validation runs before the vault-scoped authorization checks and the key lookup — but **after** the global-role gate. `cmd/certificates/create.go` checks the global roles (`admin` or `certificate_manager`) in `vaultcli.Caller`, ahead of the `name`/`key-id`/`validity-days` check; only `s.Authorize()` (`certificates/create`) and `s.RequireAlso` (`keys/sign`) run after flag validation. Noor holds `certificate_manager`, so she reaches the missing-field error below. A caller without that global role who also omits a required flag gets the forbidden error instead, never this one:
 
 ```bash
 rocketvault certificates create --key-id <checkout-tls-leaf-key-id> --validity-days 365 --vault prod

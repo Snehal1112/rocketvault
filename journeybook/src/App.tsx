@@ -131,7 +131,7 @@ export default function App() {
   /**
    * The same list, cut into journeys. Each section takes its share from this
    * one filtered pass; it used to re-filter its own cases, so a keystroke ran
-   * the predicate over all 245 cases twenty-four times rather than once.
+   * the predicate over all 247 cases twenty-four times rather than once.
    */
   const visibleBySuite = React.useMemo(() => {
     const bySuite = new Map<string, FlatCase[]>()

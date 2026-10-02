@@ -329,8 +329,11 @@ caller without it gets <code>403</code> even if that field is malformed.
 caller and be enabled, not revoked, and inside its validity window; a CA
 certificate named by <code>ca_cert_id</code> must be owned by the caller, and its own key
 must be usable the same way. Status codes: <code>403</code> for another user's key or CA,
-or an unusable key; <code>404</code> for a missing key or CA certificate; <code>500</code> only for a
-database fault.</p>
+or an unusable key; <code>404</code> for a missing key or CA certificate. <code>500</code> is a
+database fault, but a few CA refusals are still plain errors that answer <code>500</code>
+on both this route and renew: a CA certificate that cannot sign (for example
+one without the keyCertSign usage), a CA that disappears mid-request, and a CA
+that cannot be inspected (B78 limitations in <code>.claude/known-bugs.md</code>).</p>
 <h4 id="renew-a-certificate">Renew a Certificate</h4>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">POST /api/v1/certificates/{certificate_id}/renew
 Authorization: Bearer &lt;token&gt;
