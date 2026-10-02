@@ -14,6 +14,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -190,6 +191,8 @@ func TestUpgradePath_PreFeatureUsersGetsAuthProvider(t *testing.T) {
 	// Sanity check: the column must NOT exist before the upgrade runs.
 	require.False(t, columnExists(t, conn, "users", "auth_provider"),
 		"auth_provider must not exist before the upgrade sequence runs")
+	require.False(t, columnExists(t, conn, "users", "totp_last_step"),
+		"totp_last_step must not exist before the upgrade sequence runs")
 
 	d := NewRepository(logging.InitLogger())
 
@@ -225,4 +228,11 @@ func TestUpgradePath_PreFeatureUsersGetsAuthProvider(t *testing.T) {
 		t.Fatalf("querying pre-existing user's auth_provider failed: %v", err)
 	}
 	require.Equal(t, "local", authProvider, "pre-existing users must default to local auth_provider")
+
+	// The TOTP replay column must be added to the old table, defaulted to 0.
+	var step int64
+	if err := conn.QueryRowContext(context.Background(), `SELECT totp_last_step FROM users WHERE id = 'u1'`).Scan(&step); err != nil {
+		t.Fatalf("querying pre-existing user's totp_last_step failed: %v", err)
+	}
+	require.Equal(t, int64(0), step, "pre-existing users must start with totp_last_step 0")
 }

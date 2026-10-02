@@ -346,6 +346,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			role TEXT NOT NULL,
 			auth_provider TEXT NOT NULL DEFAULT 'local',
 			external_idp_subject TEXT,
+			totp_last_step INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
@@ -1014,6 +1015,8 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 		"ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'local'",
 		"ALTER TABLE users ADD COLUMN external_idp_subject TEXT",
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_idp ON users(auth_provider, external_idp_subject) WHERE external_idp_subject IS NOT NULL",
+		// Feature: TOTP replay protection, last accepted time step per user.
+		"ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0",
 	}
 	for _, stmt := range migrations {
 		if _, err := db.Exec(stmt); err != nil {
