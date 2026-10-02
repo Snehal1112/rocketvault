@@ -5,6 +5,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -23,14 +24,14 @@ func TestSetupSchema_FreshDatabaseHasExportableColumns(t *testing.T) {
 	repo := NewRepository(&logging.Logger{Logger: newSilentLogrus()})
 	require.NoError(t, repo.SetupSchema(conn, SQLite))
 
-	_, err = conn.Exec(`INSERT INTO certificates (id, user_id, name, certificate, private_key) VALUES ('c1', 'u1', 'c', 'pem', 'key')`)
+	_, err = conn.ExecContext(context.Background(), `INSERT INTO certificates (id, user_id, name, certificate, private_key) VALUES ('c1', 'u1', 'c', 'pem', 'key')`)
 	require.NoError(t, err)
-	_, err = conn.Exec(`INSERT INTO keys (id, user_id, name, value, type) VALUES ('k1', 'u1', 'k', 'v', 'RSA')`)
+	_, err = conn.ExecContext(context.Background(), `INSERT INTO keys (id, user_id, name, value, type) VALUES ('k1', 'u1', 'k', 'v', 'RSA')`)
 	require.NoError(t, err)
 
 	var certExportable, keyExportable bool
-	require.NoError(t, conn.QueryRow(`SELECT exportable FROM certificates WHERE id = 'c1'`).Scan(&certExportable))
-	require.NoError(t, conn.QueryRow(`SELECT exportable FROM keys WHERE id = 'k1'`).Scan(&keyExportable))
+	require.NoError(t, conn.QueryRowContext(context.Background(), `SELECT exportable FROM certificates WHERE id = 'c1'`).Scan(&certExportable))
+	require.NoError(t, conn.QueryRowContext(context.Background(), `SELECT exportable FROM keys WHERE id = 'k1'`).Scan(&keyExportable))
 	require.False(t, certExportable, "a certificate created without the flag is not exportable")
 	require.False(t, keyExportable, "a key created without the flag is not exportable")
 
@@ -46,7 +47,7 @@ func TestMigrateSchema_ExistingRowsBecomeNonExportable(t *testing.T) {
 
 	// Minimal pre-feature schema, copied from the certificate-versions
 	// migration test, with one existing certificate and one existing key.
-	_, err = conn.Exec(`
+	_, err = conn.ExecContext(context.Background(), `
 		CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL, role TEXT NOT NULL);
 		CREATE TABLE secrets (id TEXT PRIMARY KEY, name TEXT NOT NULL);
 		CREATE TABLE certificates (id TEXT PRIMARY KEY, name TEXT NOT NULL);
@@ -93,13 +94,13 @@ func TestMigrateSchema_ExistingRowsBecomeNonExportable(t *testing.T) {
 	require.NoError(t, repo.migrateSchema(conn))
 
 	var certExportable, keyExportable bool
-	require.NoError(t, conn.QueryRow(`SELECT exportable FROM certificates WHERE id = 'old-cert'`).Scan(&certExportable))
-	require.NoError(t, conn.QueryRow(`SELECT exportable FROM keys WHERE id = 'old-key'`).Scan(&keyExportable))
+	require.NoError(t, conn.QueryRowContext(context.Background(), `SELECT exportable FROM certificates WHERE id = 'old-cert'`).Scan(&certExportable))
+	require.NoError(t, conn.QueryRowContext(context.Background(), `SELECT exportable FROM keys WHERE id = 'old-key'`).Scan(&keyExportable))
 	require.False(t, certExportable)
 	require.False(t, keyExportable)
 
 	var name string
-	require.NoError(t, conn.QueryRow(`SELECT name FROM certificates WHERE id = 'old-cert'`).Scan(&name))
+	require.NoError(t, conn.QueryRowContext(context.Background(), `SELECT name FROM certificates WHERE id = 'old-cert'`).Scan(&name))
 	require.Equal(t, "issued-before-export", name, "nothing is rewritten")
 
 	require.NoError(t, repo.migrateSchema(conn), "a second run must ignore the duplicate columns")

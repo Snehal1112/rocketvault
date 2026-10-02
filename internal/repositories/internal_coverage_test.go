@@ -51,7 +51,6 @@ func makeSecretsTable(t *testing.T, db *sql.DB) {
 			name             TEXT NOT NULL,
 			value            TEXT NOT NULL,
 			version          INTEGER NOT NULL DEFAULT 1,
-			exportable BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			deleted_at       TIMESTAMP NULL,
 			purge_protection BOOLEAN NOT NULL DEFAULT FALSE,

@@ -60,9 +60,9 @@ func TestUpgrade_PreExportDatabaseStaysIntact(t *testing.T) {
 	require.NoError(t, roles.Create(ctx, assignment))
 
 	// Turn this into a pre-export database.
-	_, err = raw.Exec(`ALTER TABLE certificates DROP COLUMN exportable`)
+	_, err = raw.ExecContext(context.Background(), `ALTER TABLE certificates DROP COLUMN exportable`)
 	require.NoError(t, err)
-	_, err = raw.Exec(`ALTER TABLE keys DROP COLUMN exportable`)
+	_, err = raw.ExecContext(context.Background(), `ALTER TABLE keys DROP COLUMN exportable`)
 	require.NoError(t, err)
 
 	// The upgrade: the same setup production runs on every start.

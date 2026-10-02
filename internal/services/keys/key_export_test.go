@@ -185,7 +185,7 @@ func TestExportKey_ArchivedHSMVersionIsRefused(t *testing.T) {
 	id := h.create(t, "RSA", "", true)
 	_, err := h.svc.RotateKey(ctx, id, h.scope)
 	require.NoError(t, err)
-	_, err = h.raw.Exec("UPDATE key_versions SET value = ? WHERE key_id = ? AND version = 1", "pkcs11:"+uuid.NewString(), id.String())
+	_, err = h.raw.ExecContext(context.Background(), "UPDATE key_versions SET value = ? WHERE key_id = ? AND version = 1", "pkcs11:"+uuid.NewString(), id.String())
 	require.NoError(t, err)
 
 	_, err = h.svc.ExportKey(ctx, h.scope, id, 1)
@@ -251,7 +251,7 @@ func TestExportKey_MaterialComesFromTheVersionRow(t *testing.T) {
 	id := h.create(t, "RSA", "", true)
 	_, err := h.svc.RotateKey(ctx, id, h.scope)
 	require.NoError(t, err)
-	_, err = h.raw.Exec("UPDATE keys SET value = ? WHERE id = ?", "not-the-version-row", id.String())
+	_, err = h.raw.ExecContext(context.Background(), "UPDATE keys SET value = ? WHERE id = ?", "not-the-version-row", id.String())
 	require.NoError(t, err)
 
 	res, err := h.svc.ExportKey(ctx, h.scope, id, 0)

@@ -57,19 +57,19 @@ func startOpenSSLServer(t *testing.T, caPEM string) (string, *x509.Certificate) 
 	caPath := filepath.Join(dir, "ca.pem")
 	require.NoError(t, os.WriteFile(caPath, []byte(caPEM), 0o600))
 
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	addr := l.Addr().String()
 	require.NoError(t, l.Close())
 
-	cmd := exec.Command(openssl, "s_server", "-accept", addr, "-cert", certPath, "-key", keyPath,
+	cmd := exec.CommandContext(context.Background(), openssl, "s_server", "-accept", addr, "-cert", certPath, "-key", keyPath,
 		"-CAfile", caPath, "-Verify", "1", "-verify_return_error", "-www", "-quiet")
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		conn, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(context.Background(), "tcp", addr)
 		if err == nil {
 			_ = conn.Close()
 			break
@@ -86,7 +86,8 @@ func handshake(t *testing.T, addr string, server *x509.Certificate, identity []t
 	t.Helper()
 	roots := x509.NewCertPool()
 	roots.AddCert(server)
-	conn, err := tls.Dial("tcp", addr, &tls.Config{RootCAs: roots, Certificates: identity, MinVersion: tls.VersionTLS12})
+	dialer := &tls.Dialer{Config: &tls.Config{RootCAs: roots, Certificates: identity, MinVersion: tls.VersionTLS12}}
+	conn, err := dialer.DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return false
 	}
