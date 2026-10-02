@@ -62,6 +62,9 @@ type CreateKeyRequest struct {
 	// PurgeProtection is optional: nil leaves the stored default alone, true
 	// enables purge protection on the freshly created key.
 	PurgeProtection *bool
+	// Exportable requests an exportable key. It is set at creation only.
+	// HSM-backed and oct keys refuse it with model.ErrExportableNotSupported.
+	Exportable bool
 }
 
 // ImportKeyRequest represents a request to import externally-generated key
@@ -76,6 +79,9 @@ type ImportKeyRequest struct {
 	ExpiresAt       *time.Time
 	NotBefore       *time.Time
 	PurgeProtection *bool
+	// Exportable requests an exportable key. It is set at creation only.
+	// HSM-backed and oct keys refuse it with model.ErrExportableNotSupported.
+	Exportable bool
 }
 
 // resolveVaultID returns the requested vault id, falling back to the default
@@ -278,11 +284,18 @@ func (s *keyService) CreateRSAKey(ctx context.Context, req CreateKeyRequest) (*C
 		return nil, fmt.Errorf("invalid RSA key size: must be 2048, 3072, or 4096")
 	}
 
+	if err := s.refuseExportableHSM(req.Exportable, "", req.UserID, "create_rsa_key"); err != nil {
+		return nil, err
+	}
+
 	// Generate key via the configured provider (software or PKCS#11 HSM).
 	handle, err := s.keyProvider.GenerateRSAKey(ctx, req.Bits)
 	if err != nil {
 		s.logger.LogAuditError(req.UserID.String(), "create_rsa_key", "failed", "failed to generate RSA key", err)
 		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
+	}
+	if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "create_rsa_key"); err != nil {
+		return nil, err
 	}
 
 	// For software keys, the handle is PEM — encrypt before storage.
@@ -306,19 +319,20 @@ func (s *keyService) CreateRSAKey(ctx context.Context, req CreateKeyRequest) (*C
 
 	// Create key entity.
 	key := &model.Key{
-		ID:        uuid.New(),
-		UserID:    req.UserID,
-		VaultID:   resolveVaultID(req.VaultID),
-		Name:      req.Name,
-		Type:      model.KeyTypeRSA,
-		Value:     storedValue,
-		Revoked:   false,
-		CreatedAt: time.Now(),
-		Tags:      req.Tags,
-		Enabled:   enabled,
-		Bits:      req.Bits,
-		ExpiresAt: req.ExpiresAt,
-		NotBefore: req.NotBefore,
+		Exportable: req.Exportable,
+		ID:         uuid.New(),
+		UserID:     req.UserID,
+		VaultID:    resolveVaultID(req.VaultID),
+		Name:       req.Name,
+		Type:       model.KeyTypeRSA,
+		Value:      storedValue,
+		Revoked:    false,
+		CreatedAt:  time.Now(),
+		Tags:       req.Tags,
+		Enabled:    enabled,
+		Bits:       req.Bits,
+		ExpiresAt:  req.ExpiresAt,
+		NotBefore:  req.NotBefore,
 	}
 
 	// Store in repository.
@@ -372,11 +386,18 @@ func (s *keyService) CreateECDSAKey(ctx context.Context, req CreateKeyRequest) (
 		return nil, fmt.Errorf("invalid ECDSA curve: must be P-256, P-384, P-521, or P-256K")
 	}
 
+	if err := s.refuseExportableHSM(req.Exportable, "", req.UserID, "create_ecdsa_key"); err != nil {
+		return nil, err
+	}
+
 	// Generate key via the configured provider (software or PKCS#11 HSM).
 	handle, err := s.keyProvider.GenerateECDSAKey(ctx, req.Curve)
 	if err != nil {
 		s.logger.LogAuditError(req.UserID.String(), "create_ecdsa_key", "failed", "failed to generate ECDSA key", err)
 		return nil, fmt.Errorf("failed to generate ECDSA key: %w", err)
+	}
+	if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "create_ecdsa_key"); err != nil {
+		return nil, err
 	}
 
 	var storedValue string
@@ -404,19 +425,20 @@ func (s *keyService) CreateECDSAKey(ctx context.Context, req CreateKeyRequest) (
 
 	// Create key entity.
 	key := &model.Key{
-		ID:        uuid.New(),
-		UserID:    req.UserID,
-		VaultID:   resolveVaultID(req.VaultID),
-		Name:      req.Name,
-		Type:      keyType,
-		Value:     storedValue,
-		Revoked:   false,
-		CreatedAt: time.Now(),
-		Tags:      req.Tags,
-		Enabled:   enabled,
-		Curve:     req.Curve,
-		ExpiresAt: req.ExpiresAt,
-		NotBefore: req.NotBefore,
+		Exportable: req.Exportable,
+		ID:         uuid.New(),
+		UserID:     req.UserID,
+		VaultID:    resolveVaultID(req.VaultID),
+		Name:       req.Name,
+		Type:       keyType,
+		Value:      storedValue,
+		Revoked:    false,
+		CreatedAt:  time.Now(),
+		Tags:       req.Tags,
+		Enabled:    enabled,
+		Curve:      req.Curve,
+		ExpiresAt:  req.ExpiresAt,
+		NotBefore:  req.NotBefore,
 	}
 
 	// Store in repository.
@@ -457,6 +479,12 @@ func (s *keyService) CreateOctKey(ctx context.Context, req CreateKeyRequest) (*C
 	if req.Bits != 128 && req.Bits != 192 && req.Bits != 256 {
 		s.logger.LogAuditError(req.UserID.String(), "create_oct_key", "failed", "invalid AES key size: must be 128, 192, or 256", nil)
 		return nil, fmt.Errorf("invalid AES key size: must be 128, 192, or 256")
+	}
+
+	// oct keys are HSM-only and never exportable.
+	if req.Exportable {
+		s.logger.LogAuditError(req.UserID.String(), "create_oct_key", "failed", "exportable requested for an oct key", nil)
+		return nil, fmt.Errorf("%w: oct keys are HSM-only", model.ErrExportableNotSupported)
 	}
 
 	handle, err := s.keyProvider.GenerateAESKey(ctx, req.Bits)
@@ -555,10 +583,17 @@ func (s *keyService) ImportKey(ctx context.Context, req ImportKeyRequest) (*Crea
 		return nil, fmt.Errorf("imported RSA key is too small: %d bits (minimum 2048)", bits)
 	}
 
+	if err := s.refuseExportableHSM(req.Exportable, "", req.UserID, "import_key"); err != nil {
+		return nil, err
+	}
+
 	handle, err := s.keyProvider.ImportKey(ctx, keyType, privateKey)
 	if err != nil {
 		s.logger.LogAuditError(req.UserID.String(), "import_key", "failed", "failed to import key material", err)
 		return nil, fmt.Errorf("failed to import key: %w", err)
+	}
+	if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "import_key"); err != nil {
+		return nil, err
 	}
 
 	var storedValue string
@@ -583,20 +618,21 @@ func (s *keyService) ImportKey(ctx context.Context, req ImportKeyRequest) (*Crea
 	}
 
 	key := &model.Key{
-		ID:        uuid.New(),
-		UserID:    req.UserID,
-		VaultID:   resolveVaultID(req.VaultID),
-		Name:      req.Name,
-		Type:      modelType,
-		Value:     storedValue,
-		Revoked:   false,
-		CreatedAt: time.Now(),
-		Tags:      req.Tags,
-		Enabled:   enabled,
-		Bits:      bits,
-		Curve:     curve,
-		ExpiresAt: req.ExpiresAt,
-		NotBefore: req.NotBefore,
+		Exportable: req.Exportable,
+		ID:         uuid.New(),
+		UserID:     req.UserID,
+		VaultID:    resolveVaultID(req.VaultID),
+		Name:       req.Name,
+		Type:       modelType,
+		Value:      storedValue,
+		Revoked:    false,
+		CreatedAt:  time.Now(),
+		Tags:       req.Tags,
+		Enabled:    enabled,
+		Bits:       bits,
+		Curve:      curve,
+		ExpiresAt:  req.ExpiresAt,
+		NotBefore:  req.NotBefore,
 	}
 
 	if err := s.keyRepo.Create(ctx, key); err != nil {
@@ -1215,4 +1251,26 @@ func isPKCS11Handle(handle string) bool {
 	return len(handle) == 36 &&
 		handle[8] == '-' && handle[13] == '-' &&
 		handle[18] == '-' && handle[23] == '-'
+}
+
+// providerIsHSM reports whether keys from p live on a PKCS#11 token. It lets
+// a create refuse exportable before anything is generated on the token.
+func providerIsHSM(p crypto.KeyProvider) bool {
+	_, ok := p.(*crypto.PKCS11KeyProvider)
+	return ok
+}
+
+// refuseExportableHSM returns model.ErrExportableNotSupported when an
+// exportable key was requested from an HSM provider, or when the handle the
+// provider returned is a PKCS#11 label. The second check covers providers
+// that only reveal their backend through the handle.
+func (s *keyService) refuseExportableHSM(exportable bool, handle string, userID uuid.UUID, action string) error {
+	if !exportable {
+		return nil
+	}
+	if providerIsHSM(s.keyProvider) || (handle != "" && isPKCS11Handle(handle)) {
+		s.logger.LogAuditError(userID.String(), action, "failed", "exportable requested for an HSM-backed key", nil)
+		return fmt.Errorf("%w: the key would be HSM-backed", model.ErrExportableNotSupported)
+	}
+	return nil
 }
