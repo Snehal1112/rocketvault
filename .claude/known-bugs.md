@@ -4865,8 +4865,9 @@ service down.
 through it. `executeClosed` calls `recordFailure` for any non-nil error, so
 an invalid-token or wrong-password result counts as a database failure, not
 only a real storage fault. Both shipped config files,
-`.rocketvault.yaml.example` and `.rocketvault.docker.yaml.tmpl` (lines
-130-133), set `failure_threshold: 3`, `timeout: "30s"`,
+`.rocketvault.yaml.example` (lines 204-207) and
+`.rocketvault.docker.yaml.tmpl` (lines 139-142), set
+`failure_threshold: 3`, `timeout: "30s"`,
 `half_open_requests: 2`, the same values as `DevelopmentConfig`
 (`internal/retry/config.go`). Without a `retry.circuit_breaker` block,
 `DefaultCircuitBreaker` (used by `DefaultConfig`) and `SetRetryDefaults`
@@ -4906,11 +4907,14 @@ breaker opened after five failed logins and answered before the 429.
   database. Holding the slot instead would leave the breaker stuck
   half-open once every slot was taken, so the slot is released.
 - `RetryService.ExecuteDatabaseOperation` classifies with
-  `!IsClientError(err) && !errors.Is(err, context.Canceled)`: a request the
-  client cancelled is not a database fault (and in half-open releases its
-  slot the same way). `context.DeadlineExceeded` still counts. The marker sits on the error itself, so it works
-  whether the policy is enabled (error wrapped in `ErrNonRetryable`) or
-  disabled (error returned as is).
+  `countsAsDatabaseFailure`, which is
+  `!IsClientError(err) && !errors.Is(err, context.Canceled)`. Fixed here:
+  a request the client cancelled (`context.Canceled`) counted toward the
+  database breaker before this change; it no longer does, and in half-open
+  it releases its slot the same way. `context.DeadlineExceeded` still
+  counts. The marker sits on the error itself, so it works whether the
+  policy is enabled (error wrapped in `ErrNonRetryable`) or disabled (error
+  returned as is).
 - `AuthenticationService` marks client outcomes: invalid credentials for a
   missing user or wrong password, missing TOTP secret, malformed, wrong or
   replayed code, `ThrottledError`, invalid token, malformed jti, revoked
@@ -4938,8 +4942,35 @@ breaker opened after five failed logins and answered before the 429.
   database breaker until they are marked as client errors too.
 - The other three breakers (external services, service operations,
   interactive) still use `Execute` and count every error.
-- Fixed in this change, recorded for history: client-cancelled requests
-  (`context.Canceled`) counted toward the database breaker before it.
+
+**Caveats of the partial fix**:
+- Stale half-open slot release: there is no epoch token on a half-open
+  trial. A trial admitted in one half-open episode that is still running
+  when that episode reopens, and returns a client error after the next
+  episode has started, decrements the new episode's `halfOpenCount` and
+  frees one slot it never held. The breaker is then permissive by one
+  trial. It needs `HalfOpenRequests >= 2`, since a second trial must reopen
+  the first episode while the stale one is in flight. No parallel `-race`
+  test covers the classified half-open slot release
+  (`TestCircuitBreaker_HalfOpenAdmissionIsCapped` covers only `Execute`).
+- Not counting `context.Canceled` removes the breaker's signal during a
+  hang-type database outage. There is no server-side request or database
+  deadline: `server/server.go` sets only `ReadTimeout`, `WriteTimeout`,
+  `IdleTimeout` and `ReadHeaderTimeout`, and no handler timeout. A hung
+  query is therefore usually ended by the client disconnecting, which
+  surfaces as `context.Canceled` and does not count, so the breaker does
+  not open and requests keep piling onto the hung database. Follow-up: a
+  request-context deadline middleware, so hangs surface as
+  `context.DeadlineExceeded`, which still counts. Deliberately not added in
+  the login-rate-limiting plan, because a deadline changes behaviour for
+  every handler, long imports and exports included.
+
+**Optional follow-up**: in `countsAsDatabaseFailure` also skip the
+repository sentinels that come from successful queries:
+`repositories.ErrNotFound`, `ErrNameTaken`, `ErrKeyVersionNotFound` and the
+purge-protection sentinels (`ErrSecretPurgeProtected`, `ErrKeyPurgeProtected`,
+`ErrCertPurgeProtected`, `ErrGlobalPurgeProtectionEnabled`). That would
+cover most of the first "Still open" item without marking each call site.
 
 ---
 
@@ -4978,16 +5009,22 @@ limiter.
   empty) and one resolver, `ClientIPResolver`. The rightmost-untrusted walk
   of `X-Forwarded-For` finds the client; `X-Real-IP` is read only when there
   is no `X-Forwarded-For`; an unreadable hop falls back to the peer; an
-  invalid list trusts nobody. Rate limits, logs and audit rows all use it.
+  invalid list trusts nobody. Rate limits, the request log and the audit
+  rows written by API handlers and middleware use it. Not covered: the
+  WebSocket connection log in `server/server.go` logs the raw peer address,
+  and `AuthenticateUser`'s `authenticate_user` audit events carry no IP.
+  The dead `common.GetIPAddress` (raw `RemoteAddr`) was deleted.
 - IPv6 /64 buckets (bce058cd): rate-limit keys group IPv6 by /64; the audit
   IP stays the full address.
 - Bounded limiters (bf088430): 2-minute idle TTL, 100000-entry cap, lazy
   sweep at most once a minute.
 - Per-account backoff (04832b63, b26838cd, 81fdf328): table `login_failures`
   (dual-written, in the backup table order), `LoginThrottle`. 5 free
-  failures, then 2s doubling to a 15-minute cap, 24h reset, exact-username
-  keys (SHA-256 key for names over 64 bytes). Every identity failure exit is
-  recorded and a success resets the counter. A throttled login is HTTP 429
+  failures, then 2s doubling to a 15-minute cap, 24h reset. The key is
+  always `sha256:` plus a hash of the exact username (no case folding), so
+  the raw attempted name, often a password typed into the wrong field, is
+  never stored or backed up. Every identity failure exit is recorded and a
+  success resets the counter. A login refused inside the wait is HTTP 429
   with `Retry-After`, the same for known and unknown names. Storage errors
   fail open with a warning. Writes ignore request cancellation and are
   bounded by 5s.
@@ -5006,13 +5043,17 @@ limiter.
 - Breaking: forwarded headers are no longer trusted by default, so behind a
   proxy `server.trusted_proxies` must be set or all clients share the
   proxy's bucket and audit rows show its address. The docker/Fly/Railway
-  template hardcodes `trusted_proxies: []` (no environment hook yet). A
+  template renders `trusted_proxies: [${RV_TRUSTED_PROXIES}]`
+  (comma-separated, each entry double-quoted; unset renders `[]`). A
   proxy that sets only `X-Real-IP` and passes the client's `X-Forwarded-For`
   lets that client choose its IP. A hop carrying a port falls back to the
   peer. A comma-separated string value fails closed silently.
 - Breaking: `/oauth2/token` ignores `client_id`, `client_secret` and
   `grant_type` in the query string.
-- Breaking: a sixth consecutive failed login for one account returns 429.
+- Breaking: repeated failed logins for one account are delayed. The first
+  six consecutive failures still answer 403; the sixth starts a 2s wait, and
+  only an attempt made inside a wait answers 429 (uncounted).
+  `api/login_throttle_test.go` asserts six 403s, then 429.
 - /64 granularity: a /56 or /48 allocation can still use many buckets.
 - Limiter flood residual: more than 100000 distinct live keys within 2
   minutes can evict a quieter client's bucket (distributed attacker only).
@@ -5023,7 +5064,9 @@ limiter.
 - `login_failures` grows with sprayed usernames, with no hard cap on
   purpose (evicting rows would let an attacker flush a victim's counter).
   Rows older than 24h are pruned on each recorded failure. Monitor the
-  table size.
+  table size. The table stays in the backup table order (the drift-guard
+  test requires every live table, and backups read every table), so
+  backups carry its rows, which hold hashed keys only.
 - Legacy bcrypt hashes at cost 10 verify faster than the dummy compare
   (reveals a legacy hash, not existence). Each unknown-username attempt
   costs one bcrypt compare, bounded only by the per-IP limiter.
@@ -5075,6 +5118,12 @@ guess.
 **Root cause**: `Check` only reads and `RecordFailure` writes later, with no
 reservation between them. Check never writes on purpose, so attempts inside
 the window cannot extend it.
+
+**Why Low**: rated Low only because TOTP is mandatory, so each guess needs
+the password and a current code. The burst is not small: the per-IP auth
+limit admits 5 attempts per bucket, so a distributed attacker holding K
+buckets (distinct IPv4 addresses or IPv6 /64 prefixes) gets about K x 5
+guesses on one account at each window boundary.
 
 **Fix recipe**: reserve atomically, for example a `next_allowed_at` column
 set in the same statement that tests it, so one attempt per window proceeds.
