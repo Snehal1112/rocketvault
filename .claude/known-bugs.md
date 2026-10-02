@@ -4851,8 +4851,9 @@ handful of requests per breaker timeout; no data is exposed or changed
 
 **Symptom**: a few requests in a row with any bad bearer token (for example
 `Authorization: Bearer x`), or a few failed logins, open the database
-circuit breaker. While it is open (60s with the built-in defaults, 30s with
-the shipped `.rocketvault.yaml.example`), `ValidateSession` returns `ErrCircuitBreakerOpen`, so the
+circuit breaker. While it is open (30s with the shipped
+`.rocketvault.yaml.example` and `.rocketvault.docker.yaml.tmpl`, 60s with the
+built-in defaults), `ValidateSession` returns `ErrCircuitBreakerOpen`, so the
 middleware answers 401 `Unauthorized: invalid token` to every request,
 valid tokens included, and every other retry-wrapped user, secret, key and
 certificate call fails fast with 503. One burst per timeout keeps the
@@ -4863,12 +4864,15 @@ service down.
 `ExecuteDatabaseOperation`). `ValidateSession` and `AuthenticateUser` run
 through it. `executeClosed` calls `recordFailure` for any non-nil error, so
 an invalid-token or wrong-password result counts as a database failure, not
-only a real storage fault. With no `retry.circuit_breaker` block (for
-example `.rocketvault.docker.yaml.tmpl`, which has none), `DefaultConfig`
-and `SetRetryDefaults` use `DefaultCircuitBreaker`: threshold 5, timeout
-60s; `ProductionConfig` is the same. A threshold of 3 with a 30s timeout
-comes from `DevelopmentConfig` and the shipped `.rocketvault.yaml.example`.
-Only a success resets the counter. The middleware calls `ValidateSession`
+only a real storage fault. Both shipped config files,
+`.rocketvault.yaml.example` and `.rocketvault.docker.yaml.tmpl` (lines
+130-133), set `failure_threshold: 3`, `timeout: "30s"`,
+`half_open_requests: 2`, the same values as `DevelopmentConfig`
+(`internal/retry/config.go`). Without a `retry.circuit_breaker` block,
+`DefaultCircuitBreaker` (used by `DefaultConfig`) and `SetRetryDefaults`
+(`internal/retry/config_loader.go`) give threshold 5, timeout 60s, 3
+half-open requests, and `ProductionConfig` uses the same 5/60s/3. Only a
+success resets the counter. The middleware calls `ValidateSession`
 for every bearer token before any authorization, so the input is
 unauthenticated, and the per-IP rate limit allows far more than a handful of
 requests per breaker timeout. Ordinary business errors
@@ -4890,11 +4894,21 @@ breaker opened after five failed logins and answered before the 429.
 - `internal/retry`: new `ClientError(err)` marker (keeps the message,
   unwraps, `Retryable() == false`, `ClientFault() == true`) and
   `IsClientError`. New `CircuitBreaker.ExecuteClassified(fn, counts)`; a
-  rejected error neither counts nor resets the failure count, and in a
-  half-open trial it closes the breaker like a success. `Execute` is
+  rejected error neither counts nor resets the failure count. `Execute` is
   unchanged (counts every error).
+- Half-open rule (fix round 2): a rejected error in a half-open trial only
+  releases its trial slot (`halfOpenCount--`) and leaves state, failure
+  count and last-failure time unchanged. Only a real success closes the
+  breaker, and only a counted error reopens it. The first version closed
+  the breaker on a half-open client error; since `ValidateSession` rejects a
+  bad or expired token before any database call, one unauthenticated
+  request during an outage closed the breaker and sent traffic to the dead
+  database. Holding the slot instead would leave the breaker stuck
+  half-open once every slot was taken, so the slot is released.
 - `RetryService.ExecuteDatabaseOperation` classifies with
-  `!IsClientError(err)`. The marker sits on the error itself, so it works
+  `!IsClientError(err) && !errors.Is(err, context.Canceled)`: a request the
+  client cancelled is not a database fault (and in half-open releases its
+  slot the same way). `context.DeadlineExceeded` still counts. The marker sits on the error itself, so it works
   whether the policy is enabled (error wrapped in `ErrNonRetryable`) or
   disabled (error returned as is).
 - `AuthenticationService` marks client outcomes: invalid credentials for a
@@ -4918,10 +4932,14 @@ breaker opened after five failed logins and answered before the 429.
   `TestLoginRoute_PerAccountBackoff_Returns429ForKnownAndUnknownUsers`, both
   at the default threshold.
 
-**Still open**: business errors (not found, validation, conflict) from the
-secret, key, certificate and user retry wrappers still count toward the
-shared database breaker until they are marked as client errors too; the
-other three breakers still use `Execute`.
+**Still open**:
+- Business errors (not found, validation, conflict) from the secret, key,
+  certificate and user retry wrappers still count toward the shared
+  database breaker until they are marked as client errors too.
+- The other three breakers (external services, service operations,
+  interactive) still use `Execute` and count every error.
+- Fixed in this change, recorded for history: client-cancelled requests
+  (`context.Canceled`) counted toward the database breaker before it.
 
 ---
 

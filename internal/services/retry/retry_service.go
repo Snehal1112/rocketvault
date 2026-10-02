@@ -2,6 +2,7 @@ package retry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/viper"
@@ -82,7 +83,8 @@ func NewRetryService(viper *viper.Viper) (RetryService, error) {
 
 // ExecuteDatabaseOperation executes a database operation with retry logic.
 // A client outcome, such as invalid credentials, an invalid token or a
-// throttled login, does not count toward the database breaker (B90). The
+// throttled login, does not count toward the database breaker (B90), and
+// neither does a request the client cancelled. The
 // classification reads a marker on the error itself, so it holds whether or
 // not the policy wraps the error.
 func (s *retryService) ExecuteDatabaseOperation(ctx context.Context, operation func() error) error {
@@ -92,9 +94,11 @@ func (s *retryService) ExecuteDatabaseOperation(ctx context.Context, operation f
 }
 
 // countsAsDatabaseFailure reports whether err is a fault of the database path
-// rather than a client outcome.
+// rather than a client outcome. A request the client cancelled is not a
+// database fault either; a deadline still counts, since it can mean the
+// database is too slow to answer.
 func countsAsDatabaseFailure(err error) bool {
-	return !retry.IsClientError(err)
+	return !retry.IsClientError(err) && !errors.Is(err, context.Canceled)
 }
 
 // ExecuteExternalServiceOperation executes an external service call with retry logic

@@ -30,6 +30,9 @@ const (
 	maxThrottleKeyLen = 64
 	// throttleKeyHashPrefix marks a key that is a hash of the username.
 	throttleKeyHashPrefix = "sha256:"
+	// throttleWriteTimeout bounds each counter write, which is detached from
+	// the request so a client cannot cancel it.
+	throttleWriteTimeout = 5 * time.Second
 )
 
 // ErrLoginThrottled is returned when an account is inside its backoff window.
@@ -130,9 +133,11 @@ func (t *LoginThrottle) Check(ctx context.Context, username string) error {
 // RecordFailure counts one failed attempt. The repository restarts a stale
 // counter in the same statement. It also prunes rows past the reset age,
 // which keeps the table bounded under username spraying. The write ignores
-// request cancellation, so a client that hangs up cannot dodge the count.
+// request cancellation, so a client that hangs up cannot dodge the count,
+// and it is bounded by throttleWriteTimeout.
 func (t *LoginThrottle) RecordFailure(ctx context.Context, username string) {
-	ctx = context.WithoutCancel(ctx)
+	ctx, cancel := detachedWriteContext(ctx)
+	defer cancel()
 	now := t.now()
 	staleBefore := now.Add(-loginResetAfter)
 	if err := t.repo.RecordFailure(ctx, throttleKey(username), now, staleBefore); err != nil {
@@ -145,9 +150,17 @@ func (t *LoginThrottle) RecordFailure(ctx context.Context, username string) {
 }
 
 // Reset clears the counter after a successful login. Like RecordFailure, it
-// ignores request cancellation.
+// ignores request cancellation and is bounded by throttleWriteTimeout.
 func (t *LoginThrottle) Reset(ctx context.Context, username string) {
-	if err := t.repo.Delete(context.WithoutCancel(ctx), throttleKey(username)); err != nil {
+	ctx, cancel := detachedWriteContext(ctx)
+	defer cancel()
+	if err := t.repo.Delete(ctx, throttleKey(username)); err != nil {
 		t.logger.WithError(err).Warn("clearing login failures failed")
 	}
+}
+
+// detachedWriteContext keeps ctx's values but not its cancellation, and
+// bounds the result by throttleWriteTimeout.
+func detachedWriteContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), throttleWriteTimeout)
 }

@@ -21,6 +21,18 @@ type fakeFailureRepo struct {
 	mu     sync.Mutex
 	rows   map[string]*model.LoginFailure
 	getErr error
+	// writeDeadlines holds the time left on each write's context, or -1
+	// when the context had no deadline.
+	writeDeadlines []time.Duration
+}
+
+// noteDeadline records the deadline of a write context. The caller holds mu.
+func (f *fakeFailureRepo) noteDeadline(ctx context.Context) {
+	if d, ok := ctx.Deadline(); ok {
+		f.writeDeadlines = append(f.writeDeadlines, time.Until(d))
+		return
+	}
+	f.writeDeadlines = append(f.writeDeadlines, -1)
 }
 
 func newFakeFailureRepo() *fakeFailureRepo {
@@ -46,6 +58,7 @@ func (f *fakeFailureRepo) RecordFailure(ctx context.Context, u string, at, stale
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.noteDeadline(ctx)
 	if r, ok := f.rows[u]; ok {
 		if r.LastFailureAt.Before(staleBefore) {
 			r.Failures = 1
@@ -65,6 +78,7 @@ func (f *fakeFailureRepo) Delete(ctx context.Context, u string) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.noteDeadline(ctx)
 	delete(f.rows, u)
 	return nil
 }
@@ -266,4 +280,23 @@ func TestThrottledError_IsNotRetryable(t *testing.T) {
 	err := &ThrottledError{RetryAfter: time.Second}
 	assert.False(t, err.Retryable())
 	assert.Equal(t, "too many failed login attempts; retry in 1s", err.Error())
+}
+
+// The detached writes are bounded, so a hung database cannot hold a login
+// goroutine forever.
+func TestLoginThrottle_WritesHaveATimeout(t *testing.T) {
+	t.Parallel()
+	repo := newFakeFailureRepo()
+	th := NewLoginThrottle(repo, nil, time.Now)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	th.RecordFailure(ctx, "erin")
+	th.Reset(context.Background(), "erin")
+
+	require.Len(t, repo.writeDeadlines, 2)
+	for _, left := range repo.writeDeadlines {
+		assert.Greater(t, left, time.Duration(0), "every write must carry a deadline")
+		assert.LessOrEqual(t, left, throttleWriteTimeout)
+	}
 }

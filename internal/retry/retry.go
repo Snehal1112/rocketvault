@@ -159,9 +159,11 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 
 // ExecuteClassified is Execute with a classifier that decides whether an
 // error counts as a breaker failure. An error the classifier rejects, such as
-// a client error, shows the backend answered: it neither counts nor resets
-// the failure count, and in a half-open trial it closes the breaker like a
-// success. A nil classifier counts every error.
+// a client error, proves nothing about the backend: a bad token is refused
+// before any database call. It neither counts nor resets the failure count.
+// In a half-open trial it only releases its trial slot, so it can neither
+// close nor reopen the breaker nor use up the slots. A nil classifier counts
+// every error.
 func (cb *CircuitBreaker) ExecuteClassified(fn func() error, counts func(error) bool) error {
 	admitted, halfOpen := cb.admit()
 	if !admitted {
@@ -234,7 +236,17 @@ func (cb *CircuitBreaker) executeClosed(fn func() error, counts func(error) bool
 // config.HalfOpenRequests still closes the breaker on success.
 func (cb *CircuitBreaker) finishHalfOpen(fn func() error, counts func(error) bool) error {
 	err := fn()
-	if err != nil && counts(err) {
+	if err != nil && !counts(err) {
+		// Release the slot and change nothing else. Holding it would leave
+		// the breaker stuck half-open once every slot was taken this way.
+		cb.mu.Lock()
+		if cb.state == StateHalfOpen && cb.halfOpenCount > 0 {
+			cb.halfOpenCount--
+		}
+		cb.mu.Unlock()
+		return err
+	}
+	if err != nil {
 		cb.mu.Lock()
 		cb.failures++
 		cb.lastFailure = time.Now()
@@ -252,7 +264,7 @@ func (cb *CircuitBreaker) finishHalfOpen(fn func() error, counts func(error) boo
 	}
 	cb.mu.Unlock()
 
-	return err
+	return nil
 }
 
 func (cb *CircuitBreaker) recordFailure() {

@@ -1,7 +1,9 @@
 package retry
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -247,4 +249,50 @@ func TestRetryService_DatabaseBreaker_StillOpensOnInfrastructureErrors(t *testin
 			assert.ErrorIs(t, execErr, internalRetry.ErrCircuitBreakerOpen, "enabled=%v err=%v", enabled, infraErr)
 		}
 	}
+}
+
+// A client that cancels its request is not a database fault, so a flood of
+// cancelled requests never opens the breaker. A deadline still counts, since
+// it can mean the database is too slow to answer.
+func TestRetryService_DatabaseBreaker_CancelledRequestsDoNotCount(t *testing.T) {
+	v := newCircuitBreakerTestViper(5, 1, time.Hour)
+	svc, err := NewRetryService(v)
+	assert.NoError(t, err)
+
+	for i := 0; i < 30; i++ {
+		execErr := svc.ExecuteDatabaseOperation(ctx, func() error {
+			return fmt.Errorf("query users: %w", context.Canceled)
+		})
+		assert.ErrorIs(t, execErr, context.Canceled)
+	}
+	ran := false
+	assert.NoError(t, svc.ExecuteDatabaseOperation(ctx, func() error { ran = true; return nil }))
+	assert.True(t, ran, "cancelled requests must leave the breaker closed")
+
+	for i := 0; i < 5; i++ {
+		_ = svc.ExecuteDatabaseOperation(ctx, func() error {
+			return fmt.Errorf("query users: %w", context.DeadlineExceeded)
+		})
+	}
+	assert.ErrorIs(t, svc.ExecuteDatabaseOperation(ctx, func() error { return nil }), internalRetry.ErrCircuitBreakerOpen,
+		"deadline errors must still open the breaker")
+}
+
+// A cancelled request in a half-open trial releases its slot, like a client
+// error, so a later real success still closes the breaker.
+func TestRetryService_DatabaseBreaker_HalfOpenCancelReleasesSlot(t *testing.T) {
+	v := newCircuitBreakerTestViper(1, 1, 10*time.Millisecond)
+	svc, err := NewRetryService(v)
+	assert.NoError(t, err)
+
+	_ = svc.ExecuteDatabaseOperation(ctx, func() error { return errors.New("connection refused") })
+	time.Sleep(20 * time.Millisecond)
+
+	execErr := svc.ExecuteDatabaseOperation(ctx, func() error { return context.Canceled })
+	assert.ErrorIs(t, execErr, context.Canceled)
+	assert.NoError(t, svc.ExecuteDatabaseOperation(ctx, func() error { return nil }),
+		"the slot must be free again after a cancelled trial")
+	ran := false
+	assert.NoError(t, svc.ExecuteDatabaseOperation(ctx, func() error { ran = true; return nil }))
+	assert.True(t, ran, "the breaker must be closed after the real success")
 }

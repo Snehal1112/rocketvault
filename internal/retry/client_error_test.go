@@ -87,22 +87,94 @@ func TestCircuitBreaker_ExecuteClassified_ClientErrorsDoNotResetCount(t *testing
 	}
 }
 
-// A client error during a half-open trial shows the backend answered, so it
-// closes the breaker like a success instead of reopening it.
-func TestCircuitBreaker_ExecuteClassified_HalfOpenClientErrorCloses(t *testing.T) {
-	cb := NewCircuitBreaker(CircuitBreakerConfig{FailureThreshold: 1, Timeout: 10 * time.Millisecond, HalfOpenRequests: 1})
+// openThenWait trips cb with one counted failure and waits out its timeout,
+// so the next call is a half-open trial.
+func openThenWait(t *testing.T, cb *CircuitBreaker) {
+	t.Helper()
 	_ = cb.ExecuteClassified(func() error { return errors.New("connection refused") }, countUnlessClient)
 	if cb.GetState() != StateOpen {
 		t.Fatal("breaker should be open")
 	}
 	time.Sleep(20 * time.Millisecond)
+}
+
+// A client error during a half-open trial proves nothing about the backend,
+// because a bad token is rejected before any database call. It must neither
+// close nor reopen the breaker; it only releases its trial slot.
+func TestCircuitBreaker_ExecuteClassified_HalfOpenClientErrorDoesNotClose(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitBreakerConfig{FailureThreshold: 1, Timeout: 10 * time.Millisecond, HalfOpenRequests: 1})
+	openThenWait(t, cb)
 
 	err := cb.ExecuteClassified(func() error { return ClientError(errors.New("invalid token")) }, countUnlessClient)
 	if !IsClientError(err) {
 		t.Fatalf("the client error must be returned, got %v", err)
 	}
+	if cb.GetState() != StateHalfOpen {
+		t.Fatalf("a client error in the half-open trial must leave the breaker half-open, got %v", cb.GetState())
+	}
+	cb.mu.RLock()
+	failures, slots := cb.failures, cb.halfOpenCount
+	cb.mu.RUnlock()
+	if failures != 1 {
+		t.Fatalf("a client error must not change the failure count, got %d", failures)
+	}
+	if slots != 0 {
+		t.Fatalf("a client error must release its trial slot, got %d held", slots)
+	}
+}
+
+// After a released slot, a real success still closes the breaker.
+func TestCircuitBreaker_ExecuteClassified_HalfOpenSlotReleasedThenSuccessCloses(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitBreakerConfig{FailureThreshold: 1, Timeout: 10 * time.Millisecond, HalfOpenRequests: 1})
+	openThenWait(t, cb)
+
+	_ = cb.ExecuteClassified(func() error { return ClientError(errors.New("invalid token")) }, countUnlessClient)
+	if err := cb.ExecuteClassified(func() error { return nil }, countUnlessClient); err != nil {
+		t.Fatalf("the trial after a released slot must be admitted, got %v", err)
+	}
 	if cb.GetState() != StateClosed {
-		t.Fatal("a client error in the half-open trial must close the breaker")
+		t.Fatal("a real success in the half-open trial must close the breaker")
+	}
+}
+
+// Many client errors in half-open never close or reopen the breaker and never
+// use up the trial slots.
+func TestCircuitBreaker_ExecuteClassified_HalfOpenClientErrorsNeverExhaustSlots(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitBreakerConfig{FailureThreshold: 1, Timeout: 10 * time.Millisecond, HalfOpenRequests: 2})
+	openThenWait(t, cb)
+
+	for i := 0; i < 50; i++ {
+		err := cb.ExecuteClassified(func() error { return ClientError(errors.New("invalid token")) }, countUnlessClient)
+		if errors.Is(err, ErrCircuitBreakerOpen) {
+			t.Fatalf("call %d was refused: client errors must not exhaust the trial slots", i)
+		}
+		if cb.GetState() != StateHalfOpen {
+			t.Fatalf("call %d moved the breaker to %v", i, cb.GetState())
+		}
+	}
+}
+
+// A real error in half-open reopens the breaker.
+func TestCircuitBreaker_ExecuteClassified_HalfOpenRealErrorReopens(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitBreakerConfig{FailureThreshold: 1, Timeout: 10 * time.Millisecond, HalfOpenRequests: 1})
+	openThenWait(t, cb)
+
+	_ = cb.ExecuteClassified(func() error { return errors.New("connection refused") }, countUnlessClient)
+	if cb.GetState() != StateOpen {
+		t.Fatal("a real error in the half-open trial must reopen the breaker")
+	}
+}
+
+// A real success in half-open closes the breaker.
+func TestCircuitBreaker_ExecuteClassified_HalfOpenSuccessCloses(t *testing.T) {
+	cb := NewCircuitBreaker(CircuitBreakerConfig{FailureThreshold: 1, Timeout: 10 * time.Millisecond, HalfOpenRequests: 1})
+	openThenWait(t, cb)
+
+	if err := cb.ExecuteClassified(func() error { return nil }, countUnlessClient); err != nil {
+		t.Fatal(err)
+	}
+	if cb.GetState() != StateClosed {
+		t.Fatal("a real success in the half-open trial must close the breaker")
 	}
 }
 
