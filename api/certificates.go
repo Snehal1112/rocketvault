@@ -126,6 +126,10 @@ func (api *API) registerCertificateRoutes(c *mux.Router, scope string) {
 	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/versions/{version:[0-9]+}", ApiSessionRequired(api.App, updateCertificateVersion)).Methods("PUT")
 	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/renew", ApiSessionRequired(api.App, renewCertificate)).Methods("POST")
 
+	// Per-certificate export. Requires ActionCertificatesExportItem and an
+	// exportable certificate; see api/export.go.
+	c.Handle("/{certificate_id:[A-Fa-f0-9-]+}/export", ApiSessionRequired(api.App, exportCertificate)).Methods("POST")
+
 	api.Logger.WithField("scope", scope).Infoln("Certificates API routes initialized")
 }
 

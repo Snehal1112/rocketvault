@@ -16,6 +16,7 @@ DELETE	/api/v1/certificates/{certificate_id:[A-Fa-f0-9-]+}
 GET	/api/v1/certificates/{certificate_id:[A-Fa-f0-9-]+}
 PUT	/api/v1/certificates/{certificate_id:[A-Fa-f0-9-]+}
 POST	/api/v1/certificates/{certificate_id:[A-Fa-f0-9-]+}/backup
+POST	/api/v1/certificates/{certificate_id:[A-Fa-f0-9-]+}/export
 DELETE	/api/v1/certificates/{certificate_id:[A-Fa-f0-9-]+}/policy
 GET	/api/v1/certificates/{certificate_id:[A-Fa-f0-9-]+}/policy
 PUT	/api/v1/certificates/{certificate_id:[A-Fa-f0-9-]+}/policy
@@ -109,6 +110,7 @@ DELETE	/api/v1/vaults/{vault_name:[a-z0-9-]+}/certificates/{certificate_id:[A-Fa
 GET	/api/v1/vaults/{vault_name:[a-z0-9-]+}/certificates/{certificate_id:[A-Fa-f0-9-]+}
 PUT	/api/v1/vaults/{vault_name:[a-z0-9-]+}/certificates/{certificate_id:[A-Fa-f0-9-]+}
 POST	/api/v1/vaults/{vault_name:[a-z0-9-]+}/certificates/{certificate_id:[A-Fa-f0-9-]+}/backup
+POST	/api/v1/vaults/{vault_name:[a-z0-9-]+}/certificates/{certificate_id:[A-Fa-f0-9-]+}/export
 DELETE	/api/v1/vaults/{vault_name:[a-z0-9-]+}/certificates/{certificate_id:[A-Fa-f0-9-]+}/policy
 GET	/api/v1/vaults/{vault_name:[a-z0-9-]+}/certificates/{certificate_id:[A-Fa-f0-9-]+}/policy
 PUT	/api/v1/vaults/{vault_name:[a-z0-9-]+}/certificates/{certificate_id:[A-Fa-f0-9-]+}/policy

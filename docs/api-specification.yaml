@@ -3832,6 +3832,53 @@ paths:
           $ref: "#/components/responses/Conflict"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/certificates/{certificate_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/CertificateId"
+    post:
+      summary: Export a certificate with its private key
+      description: |
+        Returns one exportable certificate version as a leaf-first chain
+        (intermediates follow, the root is excluded) plus an unencrypted
+        PKCS#8 private key (`format: pem`), or as a PKCS12 bundle
+        (`format: pkcs12`, `password` required, may be empty; `compat:
+        legacy` selects PBE-SHA1-3DES with a SHA-1 MAC). Requires the
+        `Microsoft.KeyVault/vaults/certificates/export/action` data action
+        (Key Vault Certificate Exporter or Administrator) and a certificate
+        created with `exportable: true`. Every response carries
+        `Cache-Control: no-store` and `Pragma: no-cache`. Errors use the
+        `ExportError` body; the 401 and the missing-role 403 come from the
+        session and policy middleware and keep their usual bodies. Export
+        reflects the certificate's own key copy: after a key rotation it
+        changes only once the certificate is renewed.
+      operationId: exportCertificate
+      tags:
+        - Certificates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportCertificateRequest"
+      responses:
+        "200":
+          description: The exported certificate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportCertificateResponse"
+        "400":
+          $ref: "#/components/responses/ExportBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ExportForbidden"
+        "404":
+          $ref: "#/components/responses/ExportNotFound"
+        "409":
+          $ref: "#/components/responses/ExportConflict"
+        "500":
+          $ref: "#/components/responses/ExportInternalError"
 
 
   /api/v1/certificates/{certificate_id}/backup:
@@ -4199,6 +4246,54 @@ paths:
           $ref: "#/components/responses/Conflict"
         "500":
           $ref: "#/components/responses/InternalError"
+  /api/v1/vaults/{vault_name}/certificates/{certificate_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/VaultName"
+      - $ref: "#/components/parameters/CertificateId"
+    post:
+      summary: Export a certificate with its private key from a vault
+      description: |
+        Returns one exportable certificate version as a leaf-first chain
+        (intermediates follow, the root is excluded) plus an unencrypted
+        PKCS#8 private key (`format: pem`), or as a PKCS12 bundle
+        (`format: pkcs12`, `password` required, may be empty; `compat:
+        legacy` selects PBE-SHA1-3DES with a SHA-1 MAC). Requires the
+        `Microsoft.KeyVault/vaults/certificates/export/action` data action
+        (Key Vault Certificate Exporter or Administrator) and a certificate
+        created with `exportable: true`. Every response carries
+        `Cache-Control: no-store` and `Pragma: no-cache`. Errors use the
+        `ExportError` body; the 401 and the missing-role 403 come from the
+        session and policy middleware and keep their usual bodies. Export
+        reflects the certificate's own key copy: after a key rotation it
+        changes only once the certificate is renewed.
+      operationId: exportCertificateInVault
+      tags:
+        - Certificates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportCertificateRequest"
+      responses:
+        "200":
+          description: The exported certificate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportCertificateResponse"
+        "400":
+          $ref: "#/components/responses/ExportBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ExportForbidden"
+        "404":
+          $ref: "#/components/responses/ExportNotFound"
+        "409":
+          $ref: "#/components/responses/ExportConflict"
+        "500":
+          $ref: "#/components/responses/ExportInternalError"
 
 
   /api/v1/vaults/{vault_name}/certificates/{certificate_id}/backup:
@@ -4898,6 +4993,38 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    ExportBadRequest:
+      description: Bad body, unknown format or compat, pkcs12 without password, or bad version
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ExportError"
+    ExportForbidden:
+      description: |
+        `certificate_not_exportable` or `key_not_exportable` (ExportError
+        body), or a missing role (plain-text body from the policy middleware)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ExportError"
+    ExportNotFound:
+      description: Unknown, soft-deleted, out of vault, or unknown version
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ExportError"
+    ExportConflict:
+      description: Disabled, expired or outside its window (`certificate_disabled` or `key_disabled`)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ExportError"
+    ExportInternalError:
+      description: Internal failure; the message is generic
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ExportError"
 
   schemas:
     # ─── Shared envelopes ────────────────────────────────────────────────────
@@ -7203,3 +7330,69 @@ components:
                 type: boolean
         total:
           type: integer
+    ExportError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [bad_request, forbidden, certificate_not_exportable, key_not_exportable, not_found, certificate_disabled, key_disabled, internal_error]
+            message:
+              type: string
+            key_algorithm:
+              type: string
+              description: Set on a not-exportable refusal.
+    ExportCertificateRequest:
+      type: object
+      required: [format]
+      properties:
+        format:
+          type: string
+          enum: [pem, pkcs12]
+        password:
+          type: string
+          description: Required for pkcs12; an empty string is allowed. Never logged.
+        compat:
+          type: string
+          enum: [modern, legacy]
+          default: modern
+        version:
+          type: integer
+          minimum: 0
+          description: 0 or omitted exports the current version.
+    ExportCertificateResponse:
+      type: object
+      required: [id, name, version, format, key_algorithm]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+        format:
+          type: string
+          enum: [pem, pkcs12]
+        certificate_pem:
+          type: string
+          description: pem only. Leaf first, then intermediates; no root.
+        private_key_pem:
+          type: string
+          description: pem only. Unencrypted PKCS#8, starting with -----BEGIN PRIVATE KEY-----.
+        pkcs12_base64:
+          type: string
+          description: pkcs12 only. Standard base64.
+        not_before:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        key_algorithm:
+          type: string
+          example: "EC-P256"
