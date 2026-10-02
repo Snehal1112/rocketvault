@@ -368,6 +368,36 @@ target vault, granted by the `Key Vault Crypto Officer` or
 Private key material is never returned; the response includes only public
 components (RSA `n`/`e`, EC `x`/`y`), same as `POST /api/v1/keys`.
 
+#### Export a Key
+
+```http
+POST /api/v1/vaults/{vault_name}/keys/{key_id}/export
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"format": "pem", "version": 0}
+```
+
+The body is optional; an empty body exports the current version as PEM.
+Only a software-backed key created or imported with `"exportable": true`
+can be exported, and only by a principal holding the Key Vault Key Exporter
+role (or Administrator) in that vault. HSM-backed, `oct` and ES256K keys are
+never exportable. A revoked key, and a key that is disabled, expired or not
+yet valid, is refused with `409` `key_disabled`. The flat route
+`POST /api/v1/keys/{key_id}/export` acts on the `default` vault.
+
+**Response:** `200 OK` with `Cache-Control: no-store` and `Pragma: no-cache`
+(no export response, success or error, is cacheable):
+
+```json
+{
+  "id": "6f1c...", "name": "signer", "type": "RSA", "version": 1,
+  "format": "pem",
+  "private_key_pem": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+  "key_algorithm": "RSA-2048"
+}
+```
+
 ### Certificate Endpoints
 
 Certificates are versioned. Every create and every renewal produces a new
@@ -438,6 +468,94 @@ disabled or expired version is unusable, and a disabled certificate gates every
 version. Requires `Microsoft.KeyVault/vaults/certificates/update`. There is no
 route to delete a single version.
 
+#### Export a Certificate with its Private Key
+
+```http
+POST /api/v1/vaults/{vault_name}/certificates/{certificate_id}/export
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{"format": "pem"}
+```
+
+or, for a PKCS12 bundle:
+
+```json
+{"format": "pkcs12", "password": "", "compat": "modern", "version": 0}
+```
+
+`format` is required (`pem` or `pkcs12`). For `pkcs12` the `password` field
+must be present; an empty string is allowed. `compat: "legacy"` produces
+PBE-SHA1-3DES with a SHA-1 MAC for old consumers; the default is modern
+(AES-256, SHA-256 MAC). `version` 0 or omitted exports the current version;
+an archived version must itself be enabled and inside its own validity
+window, and a disabled certificate blocks every version. The flat route
+`POST /api/v1/certificates/{certificate_id}/export` acts on the `default`
+vault.
+
+Requires the Key Vault Certificate Exporter role (or Administrator) and a
+certificate created with `"exportable": true`, which in turn requires a key
+created with `"exportable": true`.
+
+**Granting the export roles.** Key Vault Administrator also holds both export
+actions, and a delegated Key Vault Data Access Administrator can grant it. The
+two exporter roles (Key Vault Key Exporter and Key Vault Certificate
+Exporter) can only be granted, and revoked, by a global admin.
+
+**PEM response** (`Cache-Control: no-store`, `Pragma: no-cache`):
+
+```json
+{
+  "id": "550e8400-...", "name": "rocket-client", "version": 1, "format": "pem",
+  "certificate_pem": "-----BEGIN CERTIFICATE-----\n(leaf)\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\n(intermediate)\n-----END CERTIFICATE-----\n",
+  "private_key_pem": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+  "not_before": "2026-10-01T10:00:00Z", "expires_at": "2027-10-01T10:00:00Z",
+  "key_algorithm": "EC-P256"
+}
+```
+
+The chain is leaf first, then intermediates; the root is never included. A
+PKCS12 response carries `pkcs12_base64` instead of the two PEM fields.
+
+#### Export Errors
+
+The two export routes use their own error body:
+
+```json
+{"error": {"code": "certificate_not_exportable", "message": "certificate is not exportable: the certificate was not created with exportable: true", "key_algorithm": "RSA-2048"}}
+```
+
+| Status | Code | When |
+|---|---|---|
+| 400 | `bad_request` | bad body, unknown `format`/`compat`, `pkcs12` without `password`, bad `version` |
+| 403 | `certificate_not_exportable` / `key_not_exportable` | flag false, HSM, `oct`, ES256K |
+| 404 | `not_found` | unknown, soft-deleted, out of vault, or unknown version |
+| 409 | `certificate_disabled` / `key_disabled` | disabled, expired or outside its window; also a revoked key |
+| 500 | `internal_error` | anything else, including an unbuildable issuer chain; the message is generic |
+
+A 401 (no session) and a 403 for a missing role come from the middleware and
+keep their usual bodies; read the status, not the body, for those.
+
+#### Export Caveats
+
+- **Existing items are permanently non-exportable.** `exportable` is set only
+  at creation or import and can never be changed. Re-create or re-import to
+  get an exportable item.
+- **A restore loses exportability.** Restoring a certificate or key backup
+  always produces a non-exportable item.
+- **A key rotation does not change an exported certificate.** A certificate
+  keeps its own copy of the key; export reflects that copy until the
+  certificate is renewed.
+- **Chains use each CA's current certificate.** If a CA was renewed after the
+  leaf was issued, the chain carries the CA's newer certificate, which still
+  verifies because renewal keeps the CA's key. This also applies when you
+  export an archived version of the leaf: its chain is built from the CA's
+  current certificate, not the one that was current at issue time.
+- **Nothing is cacheable.** Every export response carries `Cache-Control:
+  no-store` and `Pragma: no-cache`.
+- Every export attempt is audited (`export_certificate` / `export_key`); no
+  key, chain or password is ever logged.
+
 ## Error Handling
 
 ### HTTP Status Codes
@@ -448,6 +566,7 @@ route to delete a single version.
 - `401`: Unauthorized (missing/invalid token)
 - `404`: Not Found
 - `409`: Conflict (the resource changed concurrently, or is in a state that refuses the operation)
+- `403` on an export route can also mean the item is not exportable; see Export Errors.
 - `500`: Internal Server Error
 
 ### Common Error Patterns

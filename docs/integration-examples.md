@@ -8,6 +8,7 @@ This document provides practical integration examples for common use cases when 
 - [Secret Backup and Restore](#secret-backup-and-restore)
 - [Automated Secret Rotation](#automated-secret-rotation)
 - [Certificate Renewal and Version History](#certificate-renewal-and-version-history)
+- [mTLS Client Identity from an Exported Certificate](#mtls-client-identity-from-an-exported-certificate)
 - [CI/CD Pipeline Integration](#cicd-pipeline-integration)
 - [Monitoring and Alerting](#monitoring-and-alerting)
 - [Multi-Environment Management](#multi-environment-management)
@@ -621,6 +622,69 @@ curl -sS -X PUT "$API/certificates/$CERT_ID/versions/1" \
   -H "Authorization: Bearer $ROCKETVAULT_TOKEN" \
   -H "Content-Type: application/json" -d '{"enabled": false}'
 ```
+
+## mTLS Client Identity from an Exported Certificate
+
+A service principal fetches its client certificate and key at send time and
+keeps nothing on disk. Setup, as an admin:
+
+```bash
+API="${ROCKETVAULT_URL:-http://127.0.0.1:8774}/api/v1/vaults/${VAULT:-default}"
+
+# An exportable key and an exportable certificate issued over it.
+KEY_ID=$(curl -sS -X POST "$API/keys" -H "Authorization: Bearer $ADMIN_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"rocket-client-key","type":"ECDSA","curve":"P-256","exportable":true}' | jq -r .id)
+CERT_ID=$(curl -sS -X POST "$API/certificates" -H "Authorization: Bearer $ADMIN_JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"rocket-client\",\"key_id\":\"$KEY_ID\",\"validity_days\":365,\"exportable\":true}" | jq -r .id)
+
+# Only a global admin can grant the exporter role.
+curl -sS -X POST "$API/role-assignments" -H "Authorization: Bearer $ADMIN_JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"principal\":\"$SA_ID\",\"principal_type\":\"service_account\",\"role\":\"Key Vault Certificate Exporter\"}"
+```
+
+The same from the CLI: `rocketvault keys create --name rocket-client-key --type ECDSA --curve P-256 --exportable` and
+`rocketvault certificate create --name rocket-client --key-id "$KEY_ID" --validity-days 365 --exportable`
+(`certificate create` always uses the `default` vault).
+
+At send time, as the service principal (`$SA_TOKEN` from the OAuth2
+client-credentials grant), fetch the identity and use it in memory only:
+
+```bash
+#!/usr/bin/env bash
+# mtls_call.sh - fetch an exported client identity and make one mTLS call.
+set -euo pipefail
+API="${ROCKETVAULT_URL:-http://127.0.0.1:8774}/api/v1/vaults/${VAULT:-default}"
+
+BODY=$(curl -sS -X POST "$API/certificates/$CERT_ID/export" \
+  -H "Authorization: Bearer $SA_TOKEN" -H "Content-Type: application/json" \
+  -d '{"format":"pem"}')
+
+# Process substitution keeps the key off disk.
+curl -sS https://mtls.example.internal/health \
+  --cert <(jq -r .certificate_pem <<<"$BODY") \
+  --key <(jq -r .private_key_pem <<<"$BODY")
+```
+
+In Go, build the identity straight from the response:
+
+```go
+pair, err := tls.X509KeyPair([]byte(resp.CertificatePEM), []byte(resp.PrivateKeyPEM))
+if err != nil {
+	return err
+}
+client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+	Certificates: []tls.Certificate{pair},
+	MinVersion:   tls.VersionTLS12,
+}}}
+```
+
+A client that stores the certificate by name resolves it to the id from the
+list response, which carries `exportable` and `key_algorithm` for exactly that
+purpose. A certificate that is not exportable answers `403` with code
+`certificate_not_exportable`; recreate it with `"exportable": true`.
 
 ## CI/CD Pipeline Integration
 

@@ -284,6 +284,29 @@ omitted.</li>
 </pre></div>
 <p>Private key material is never returned; the response includes only public
 components (RSA <code>n</code>/<code>e</code>, EC <code>x</code>/<code>y</code>), same as <code>POST /api/v1/keys</code>.</p>
+<h4 id="export-a-key">Export a Key</h4>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">POST /api/v1/vaults/{vault_name}/keys/{key_id}/export
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{&quot;format&quot;: &quot;pem&quot;, &quot;version&quot;: 0}
+</pre></div>
+<p>The body is optional; an empty body exports the current version as PEM.
+Only a software-backed key created or imported with <code>&quot;exportable&quot;: true</code>
+can be exported, and only by a principal holding the Key Vault Key Exporter
+role (or Administrator) in that vault. HSM-backed, <code>oct</code> and ES256K keys are
+never exportable. A revoked key, and a key that is disabled, expired or not
+yet valid, is refused with <code>409</code> <code>key_disabled</code>. The flat route
+<code>POST /api/v1/keys/{key_id}/export</code> acts on the <code>default</code> vault.</p>
+<p><strong>Response:</strong> <code>200 OK</code> with <code>Cache-Control: no-store</code> and <code>Pragma: no-cache</code>
+(no export response, success or error, is cacheable):</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">json</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">{
+  &quot;id&quot;: &quot;6f1c...&quot;, &quot;name&quot;: &quot;signer&quot;, &quot;type&quot;: &quot;RSA&quot;, &quot;version&quot;: 1,
+  &quot;format&quot;: &quot;pem&quot;,
+  &quot;private_key_pem&quot;: &quot;-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n&quot;,
+  &quot;key_algorithm&quot;: &quot;RSA-2048&quot;
+}
+</pre></div>
 <h3 id="certificate-endpoints">Certificate Endpoints</h3>
 <p>Certificates are versioned. Every create and every renewal produces a new
 numbered version; the certificate's ID and name never change. Version numbers
@@ -336,6 +359,103 @@ current version is the same as updating the certificate's own attributes. A
 disabled or expired version is unusable, and a disabled certificate gates every
 version. Requires <code>Microsoft.KeyVault/vaults/certificates/update</code>. There is no
 route to delete a single version.</p>
+<h4 id="export-a-certificate-with-its-private-key">Export a Certificate with its Private Key</h4>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">POST /api/v1/vaults/{vault_name}/certificates/{certificate_id}/export
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{&quot;format&quot;: &quot;pem&quot;}
+</pre></div>
+<p>or, for a PKCS12 bundle:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">json</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">{&quot;format&quot;: &quot;pkcs12&quot;, &quot;password&quot;: &quot;&quot;, &quot;compat&quot;: &quot;modern&quot;, &quot;version&quot;: 0}
+</pre></div>
+<p><code>format</code> is required (<code>pem</code> or <code>pkcs12</code>). For <code>pkcs12</code> the <code>password</code> field
+must be present; an empty string is allowed. <code>compat: &quot;legacy&quot;</code> produces
+PBE-SHA1-3DES with a SHA-1 MAC for old consumers; the default is modern
+(AES-256, SHA-256 MAC). <code>version</code> 0 or omitted exports the current version;
+an archived version must itself be enabled and inside its own validity
+window, and a disabled certificate blocks every version. The flat route
+<code>POST /api/v1/certificates/{certificate_id}/export</code> acts on the <code>default</code>
+vault.</p>
+<p>Requires the Key Vault Certificate Exporter role (or Administrator) and a
+certificate created with <code>&quot;exportable&quot;: true</code>, which in turn requires a key
+created with <code>&quot;exportable&quot;: true</code>.</p>
+<p><strong>Granting the export roles.</strong> Key Vault Administrator also holds both export
+actions, and a delegated Key Vault Data Access Administrator can grant it. The
+two exporter roles (Key Vault Key Exporter and Key Vault Certificate
+Exporter) can only be granted, and revoked, by a global admin.</p>
+<p><strong>PEM response</strong> (<code>Cache-Control: no-store</code>, <code>Pragma: no-cache</code>):</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">json</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">{
+  &quot;id&quot;: &quot;550e8400-...&quot;, &quot;name&quot;: &quot;rocket-client&quot;, &quot;version&quot;: 1, &quot;format&quot;: &quot;pem&quot;,
+  &quot;certificate_pem&quot;: &quot;-----BEGIN CERTIFICATE-----\n(leaf)\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\n(intermediate)\n-----END CERTIFICATE-----\n&quot;,
+  &quot;private_key_pem&quot;: &quot;-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n&quot;,
+  &quot;not_before&quot;: &quot;2026-10-01T10:00:00Z&quot;, &quot;expires_at&quot;: &quot;2027-10-01T10:00:00Z&quot;,
+  &quot;key_algorithm&quot;: &quot;EC-P256&quot;
+}
+</pre></div>
+<p>The chain is leaf first, then intermediates; the root is never included. A
+PKCS12 response carries <code>pkcs12_base64</code> instead of the two PEM fields.</p>
+<h4 id="export-errors">Export Errors</h4>
+<p>The two export routes use their own error body:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">json</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">{&quot;error&quot;: {&quot;code&quot;: &quot;certificate_not_exportable&quot;, &quot;message&quot;: &quot;certificate is not exportable: the certificate was not created with exportable: true&quot;, &quot;key_algorithm&quot;: &quot;RSA-2048&quot;}}
+</pre></div>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Code</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>400</td>
+<td><code>bad_request</code></td>
+<td>bad body, unknown <code>format</code>/<code>compat</code>, <code>pkcs12</code> without <code>password</code>, bad <code>version</code></td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>certificate_not_exportable</code> / <code>key_not_exportable</code></td>
+<td>flag false, HSM, <code>oct</code>, ES256K</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>not_found</code></td>
+<td>unknown, soft-deleted, out of vault, or unknown version</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>certificate_disabled</code> / <code>key_disabled</code></td>
+<td>disabled, expired or outside its window; also a revoked key</td>
+</tr>
+<tr>
+<td>500</td>
+<td><code>internal_error</code></td>
+<td>anything else, including an unbuildable issuer chain; the message is generic</td>
+</tr>
+</tbody>
+</table>
+<p>A 401 (no session) and a 403 for a missing role come from the middleware and
+keep their usual bodies; read the status, not the body, for those.</p>
+<h4 id="export-caveats">Export Caveats</h4>
+<ul>
+<li><strong>Existing items are permanently non-exportable.</strong> <code>exportable</code> is set only
+at creation or import and can never be changed. Re-create or re-import to
+get an exportable item.</li>
+<li><strong>A restore loses exportability.</strong> Restoring a certificate or key backup
+always produces a non-exportable item.</li>
+<li><strong>A key rotation does not change an exported certificate.</strong> A certificate
+keeps its own copy of the key; export reflects that copy until the
+certificate is renewed.</li>
+<li><strong>Chains use each CA's current certificate.</strong> If a CA was renewed after the
+leaf was issued, the chain carries the CA's newer certificate, which still
+verifies because renewal keeps the CA's key. This also applies when you
+export an archived version of the leaf: its chain is built from the CA's
+current certificate, not the one that was current at issue time.</li>
+<li><strong>Nothing is cacheable.</strong> Every export response carries <code>Cache-Control: no-store</code> and <code>Pragma: no-cache</code>.</li>
+<li>Every export attempt is audited (<code>export_certificate</code> / <code>export_key</code>); no
+key, chain or password is ever logged.</li>
+</ul>
 <h2 id="error-handling">Error Handling</h2>
 <h3 id="http-status-codes">HTTP Status Codes</h3>
 <ul>
@@ -345,6 +465,7 @@ route to delete a single version.</p>
 <li><code>401</code>: Unauthorized (missing/invalid token)</li>
 <li><code>404</code>: Not Found</li>
 <li><code>409</code>: Conflict (the resource changed concurrently, or is in a state that refuses the operation)</li>
+<li><code>403</code> on an export route can also mean the item is not exportable; see Export Errors.</li>
 <li><code>500</code>: Internal Server Error</li>
 </ul>
 <h3 id="common-error-patterns">Common Error Patterns</h3>
