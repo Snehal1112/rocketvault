@@ -4315,6 +4315,41 @@ commit (`05837d6`) either, and `api/backup_item.go` is unchanged since.
 
 ---
 
+### B82 — Generic 500 responses leaked `err.Error()` in `detailed_error`
+
+**Status**: Fixed 2026-10-02 in commits `888a53bf`, `43c508df` and `b6d53c2e` of plan `docs/superpowers/plans/2026-09-30-secrets-and-error-responses.md` (GitHub #41)
+**Severity**: Medium — driver, SQL and crypto-provider text reached clients,
+including unauthenticated ones
+**Files**: `api/context.go`, `api/jwks.go`, `api/oidc.go`, `api/health.go`,
+`api/respond.go`. The B55 mapper files (`api/errors_secret.go`,
+`api/errors_key.go`, `api/errors_certificate.go`) removed the largest source
+of such 500s; see B55.
+
+**Symptom**: SQL fragments, driver errors and crypto failure text reached
+clients through `detailed_error`, through the unauthenticated OIDC callback
+and `/health/ready`, and through the JWKS rotate endpoint. Authenticated JSON
+responses (secret and key material included) carried no `Cache-Control`
+header, so shared caches could keep them.
+
+**Root cause**: `SetInternalError` stored `err.Error()` as the detail and
+`writeError` always serialized it. JWKS rotate, the OIDC handlers and the
+readiness probe bypassed it with their own `err.Error()`.
+
+**Fix**: `SetInternalError` logs the error with the request id and sends the
+fixed detail `An internal error occurred. Quote the request_id when
+contacting support.` (`internalErrorDetail`). The 503 retry path is
+unchanged. JWKS rotate logs the cause and returns the same fixed detail. The
+OIDC callback, resolve-user and issue-session failures log through
+`logBypassError` and return fixed plain-text messages. The `/health/ready`
+body no longer carries an `error` key. `writeJSON`, `writeJSONStatus` and
+`ApiSessionRequired` call `setNoStore`, which sets `Cache-Control: no-store`
+unless the handler already chose a value (the JWKS `public, max-age=3600` is
+kept). `docs/api-specification.yaml` now documents `detailed_error` as empty
+or a fixed non-diagnostic string. Tests: `api/error_bypass_test.go` and the
+context and respond tests added with each commit.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

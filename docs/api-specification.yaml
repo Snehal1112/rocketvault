@@ -5144,8 +5144,12 @@ components:
           example: "Invalid request body"
         detailed_error:
           type: string
-          description: Detailed error information
-          example: "json: invalid character '}' looking for beginning of value"
+          description: >-
+            Either empty or a fixed, non-diagnostic string. Internal errors
+            never echo driver, SQL or provider text; the generic 500 detail
+            tells the caller to quote the request_id, which correlates the
+            response with the server logs.
+          example: "An internal error occurred. Quote the request_id when contacting support."
         status_code:
           type: integer
           description: HTTP status code
