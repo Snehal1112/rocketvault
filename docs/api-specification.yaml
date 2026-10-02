@@ -6118,7 +6118,7 @@ components:
       properties:
         name:
           type: string
-          description: 3-63 lowercase alphanumerics or hyphens, no leading or trailing hyphen
+          description: 3-63 lowercase alphanumerics or hyphens, no leading or trailing hyphen. The names login, health, refresh and register are reserved and refused for new vaults.
           pattern: "^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$"
           example: "production"
         enabled:

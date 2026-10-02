@@ -321,7 +321,7 @@ func (s *vaultService) buildVault(req model.CreateVaultRequest, createdBy uuid.U
 
 // CreateVault validates the request, applies defaults and overrides, and persists a new vault.
 func (s *vaultService) CreateVault(ctx context.Context, req model.CreateVaultRequest, createdBy uuid.UUID) (*model.Vault, error) {
-	if err := model.ValidateVaultName(req.Name); err != nil {
+	if err := model.ValidateNewVaultName(req.Name); err != nil {
 		return nil, err
 	}
 	if err := model.ValidateVaultTags(req.Tags); err != nil {
@@ -363,7 +363,7 @@ var ErrPurgeProtectionNotPermitted = errors.New("purge protection may only be se
 // Quota enforcement runs INSIDE the transaction that inserts the vault. A
 // check outside it races the insert and the bound becomes advisory.
 func (s *vaultService) CreateVaultProvisioned(ctx context.Context, req model.CreateVaultRequest, createdBy uuid.UUID, quotaBounded, grantCreatorRights bool) (*model.Vault, error) {
-	if err := model.ValidateVaultName(req.Name); err != nil {
+	if err := model.ValidateNewVaultName(req.Name); err != nil {
 		return nil, err
 	}
 	if err := model.ValidateVaultTags(req.Tags); err != nil {

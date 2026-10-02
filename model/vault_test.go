@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -67,4 +68,29 @@ func TestVault_Clone_NilFieldsStayNil(t *testing.T) {
 	assert.Nil(t, clone.ScheduledPurgeAt)
 	assert.Nil(t, clone.UpdatedAt)
 	assert.Nil(t, clone.UpdatedBy)
+}
+
+// TestValidateNewVaultName_RefusesReservedNames pins B80's reservation, and
+// that lookups through ValidateVaultName still accept the same names.
+func TestValidateNewVaultName_RefusesReservedNames(t *testing.T) {
+	for _, name := range []string{"login", "health", "refresh", "register"} {
+		err := ValidateNewVaultName(name)
+		if !errors.Is(err, ErrReservedVaultName) {
+			t.Fatalf("ValidateNewVaultName(%q) = %v, want ErrReservedVaultName", name, err)
+		}
+		if err := ValidateVaultName(name); err != nil {
+			t.Fatalf("ValidateVaultName(%q) = %v, want nil so existing vaults stay reachable", name, err)
+		}
+	}
+	for _, ok := range []string{"prod", "default", "login-2", "my-health"} {
+		if err := ValidateNewVaultName(ok); err != nil {
+			t.Fatalf("ValidateNewVaultName(%q) = %v, want nil", ok, err)
+		}
+	}
+	if err := ValidateNewVaultName("ab"); err == nil {
+		t.Fatal("ValidateNewVaultName(ab) must still apply the syntax rule")
+	}
+	if err := ValidateNewVaultName("LOGIN"); err == nil || errors.Is(err, ErrReservedVaultName) {
+		t.Fatalf("uppercase must fail the syntax rule, got %v", err)
+	}
 }

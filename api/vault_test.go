@@ -752,3 +752,30 @@ func TestPurgeVault_NotFound(t *testing.T) {
 	w := doVaultRequest(api, http.MethodDelete, "/api/v1/vaults/ghost/purge", nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+// TestCreateVault_ReservedNameIsRejected proves POST /vaults refuses the names
+// that collide with public endpoints with a 400 (B80).
+func TestCreateVault_ReservedNameIsRejected(t *testing.T) {
+	for _, name := range []string{"login", "health", "refresh", "register"} {
+		api, _ := newVaultTestAPI()
+		body, _ := json.Marshal(map[string]any{"name": name})
+		w := doVaultRequest(api, http.MethodPost, "/api/v1/vaults", body)
+		assert.Equal(t, http.StatusBadRequest, w.Code, name)
+		assert.Contains(t, w.Body.String(), "reserved", name)
+	}
+}
+
+// TestReservedNameVaultCreatedEarlierStaysReachable proves a vault that
+// predates the reservation can still be read and deleted (B80).
+func TestReservedNameVaultCreatedEarlierStaysReachable(t *testing.T) {
+	api, repo := newVaultTestAPI()
+	id := uuid.New()
+	v := &model.Vault{ID: id, Name: "login", Enabled: true, RetentionDays: 90}
+	repo.byName["login"] = v
+	repo.byID[id.String()] = v
+
+	w := doVaultRequest(api, http.MethodGet, "/api/v1/vaults/login", nil)
+	assert.Equal(t, http.StatusOK, w.Code)
+	w = doVaultRequest(api, http.MethodDelete, "/api/v1/vaults/login", nil)
+	assert.Less(t, w.Code, 300)
+}

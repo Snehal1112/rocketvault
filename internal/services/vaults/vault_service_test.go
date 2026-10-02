@@ -620,3 +620,13 @@ func TestVaultCascadeToleratesADisabledCache(t *testing.T) {
 		t.Fatalf("DeleteVault: %v", err)
 	}
 }
+
+// TestCreateVault_RefusesReservedName proves both create paths use the
+// reservation (B80).
+func TestCreateVault_RefusesReservedName(t *testing.T) {
+	svc := NewVaultService(newFakeRepo(), &noopCascade{}, nil)
+	_, err := svc.CreateVault(context.Background(), model.CreateVaultRequest{Name: "login"}, uuid.New())
+	require.ErrorIs(t, err, model.ErrReservedVaultName)
+	_, err = svc.CreateVaultProvisioned(context.Background(), model.CreateVaultRequest{Name: "health"}, uuid.New(), false, false)
+	require.ErrorIs(t, err, model.ErrReservedVaultName)
+}

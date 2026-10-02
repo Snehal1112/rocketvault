@@ -307,3 +307,25 @@ func TestVaultsCreate_PurgeProtectionRefusedForGrantHolder(t *testing.T) {
 	assert.Contains(t, err.Error(), "purge protection")
 	tc.MockVaultService.AssertExpectations(t)
 }
+
+// TestVaultsCreate_ReservedNameSurfacesError proves the CLI reports the
+// service's reserved-name refusal instead of swallowing it (B80).
+func TestVaultsCreate_ReservedNameSurfacesError(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+
+	tc.MockVaultService.On("CreateVaultProvisioned", mock.Anything, mock.MatchedBy(func(r model.CreateVaultRequest) bool {
+		return r.Name == "login"
+	}), tc.TestUserID, false, false).Return(nil, fmt.Errorf("%w: %q is reserved", model.ErrReservedVaultName, "login"))
+
+	cmd := &cobra.Command{Use: "create", RunE: createCmd.RunE}
+	cmd.Flags().Bool("purge-protection", false, "")
+	cmd.Flags().Int("retention-days", 0, "")
+	cmd.SetContext(ctxWithFormatter(tc.Ctx))
+	cmd.SetArgs([]string{"login"})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, model.ErrReservedVaultName)
+}

@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -41,6 +42,34 @@ type Vault struct {
 func ValidateVaultName(name string) error {
 	if !vaultNameRe.MatchString(name) {
 		return fmt.Errorf("invalid vault name %q: must be 3-63 lowercase alphanumerics or hyphens, no leading/trailing hyphen", name)
+	}
+	return nil
+}
+
+// ErrReservedVaultName is returned when a new vault would take a reserved name.
+var ErrReservedVaultName = errors.New("reserved vault name")
+
+// reservedVaultNames are refused for new vaults. Each is the last segment of
+// a public endpoint, which the authentication middleware once matched by
+// suffix, so a vault with that name could not be managed over HTTP (B80).
+// Exact matching removed the collision; the reservation is defense in depth
+// in case suffix matching is ever reintroduced.
+var reservedVaultNames = map[string]struct{}{
+	"login":    {},
+	"health":   {},
+	"refresh":  {},
+	"register": {},
+}
+
+// ValidateNewVaultName applies ValidateVaultName plus the reserved-name rule.
+// Use it only when creating a vault. Lookups keep using ValidateVaultName, so
+// a vault created before the reservation stays reachable.
+func ValidateNewVaultName(name string) error {
+	if err := ValidateVaultName(name); err != nil {
+		return err
+	}
+	if _, reserved := reservedVaultNames[name]; reserved {
+		return fmt.Errorf("%w: %q is reserved for an API endpoint", ErrReservedVaultName, name)
 	}
 	return nil
 }
