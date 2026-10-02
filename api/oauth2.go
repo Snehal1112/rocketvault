@@ -46,6 +46,8 @@ func (api *API) InitOAuth2() {
 //   - Request body: client_id and client_secret as form parameters
 //
 // Body must be application/x-www-form-urlencoded with grant_type=client_credentials.
+// Parameters in the URL query string are ignored, so a secret placed there
+// never authenticates and fails like a missing secret.
 //
 // On success returns (RFC 6749 §5.1):
 //
@@ -67,7 +69,8 @@ func (api *API) tokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grantType := r.FormValue("grant_type")
+	// PostFormValue reads the body only. FormValue would also read the query.
+	grantType := r.PostFormValue("grant_type")
 	if grantType != "client_credentials" {
 		writeTokenError(w, http.StatusBadRequest, "unsupported_grant_type", "only client_credentials is supported")
 		return
@@ -137,7 +140,10 @@ func (api *API) recordOAuth2TokenAudit(r *http.Request, clientID, outcome string
 }
 
 // extractClientCredentials resolves client_id and client_secret from the request.
-// HTTP Basic (Authorization header) takes priority over form body per RFC 6749 §2.3.1.
+// HTTP Basic (Authorization header) takes priority over the form body per RFC 6749 §2.3.1.
+// Only the request body is read, never the URL query string, because RFC 6749
+// §2.3.1 forbids credentials in the URI and URLs end up in proxy and access logs.
+// The caller must have called ParseForm, which fills PostForm.
 func extractClientCredentials(r *http.Request) (clientID, clientSecret string, ok bool) {
 	// Try HTTP Basic first.
 	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Basic ") {
@@ -152,8 +158,8 @@ func extractClientCredentials(r *http.Request) (clientID, clientSecret string, o
 		return parts[0], parts[1], true
 	}
 
-	// Fall back to form body.
-	return r.FormValue("client_id"), r.FormValue("client_secret"), true
+	// Fall back to the form body.
+	return r.PostFormValue("client_id"), r.PostFormValue("client_secret"), true
 }
 
 // writeTokenError writes an RFC 6749 §5.2 compliant JSON error response.

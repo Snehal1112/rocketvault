@@ -3,11 +3,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -49,6 +51,40 @@ func TestSecurityHeadersMiddleware_WiredOnPublicRoute(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assertSecurityHeaders(t, w)
+}
+
+// TestRateLimitMiddleware_WiredOnConfigRoute walks the real router and
+// proves the public /config route is rate limited per client IP.
+func TestRateLimitMiddleware_WiredOnConfigRoute(t *testing.T) {
+	previous := viper.Get("rate_limit.default")
+	viper.Set("rate_limit.default", 3)
+	t.Cleanup(func() { viper.Set("rate_limit.default", previous) })
+
+	container := &routerWalkContainer{policyContainer: &policyContainer{}, logger: userTestLog()}
+	a := &app.App{ServiceContainer: container, Logger: userTestLog()}
+
+	router := mux.NewRouter()
+	built := Init(
+		WithAPP(a),
+		WithRouter(router),
+		WithBasePath("/api/v1"),
+		WithLogger(userTestLog()),
+	)
+	require.NotNil(t, built)
+
+	get := func(remoteAddr string) int {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/v1/config", nil)
+		req.RemoteAddr = remoteAddr
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	for i := range 3 {
+		require.Equal(t, http.StatusOK, get("198.51.100.7:4000"), "request %d is within the burst", i+1)
+	}
+	assert.Equal(t, http.StatusTooManyRequests, get("198.51.100.7:4001"), "the fourth request from one IP is throttled")
+	assert.Equal(t, http.StatusOK, get("203.0.113.9:4000"), "another IP keeps its own bucket")
 }
 
 // TestSecurityHeadersMiddleware_WiredOnRejectedRequest hits a real vault

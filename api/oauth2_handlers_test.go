@@ -458,6 +458,102 @@ func TestTokenHandler_OversizedClientID_TruncatedInAuditEvent(t *testing.T) {
 }
 
 // ============================================================
+// tokenHandler: credentials come from the body or Basic auth only
+// ============================================================
+
+func TestTokenHandler_SecretInQueryStringIsIgnored(t *testing.T) {
+	svc := &mockOAuth2Svc{} // IssueToken must never be called.
+	api := newOAuth2HAPI(svc)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
+		"/oauth2/token?client_id=app&client_secret=leaked", strings.NewReader("grant_type=client_credentials"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	api.tokenHandler(w, r)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	svc.AssertNotCalled(t, "IssueToken", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestTokenHandler_GrantTypeInQueryStringIsIgnored(t *testing.T) {
+	api := newOAuth2HAPI(nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/oauth2/token?grant_type=client_credentials", strings.NewReader(""))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	api.tokenHandler(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// A body client_id must not be completed by a secret taken from the URL, and
+// the response must be the same one a request with no secret at all gets.
+func TestTokenHandler_QuerySecretDoesNotCompleteBodyClientID(t *testing.T) {
+	missing := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/oauth2/token", strings.NewReader("grant_type=client_credentials&client_id=app"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	newOAuth2HAPI(nil).tokenHandler(missing, r)
+
+	svc := &mockOAuth2Svc{} // IssueToken must never be called.
+	w := httptest.NewRecorder()
+	r = httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/oauth2/token?client_secret=leaked",
+		strings.NewReader("grant_type=client_credentials&client_id=app"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	newOAuth2HAPI(svc).tokenHandler(w, r)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Equal(t, missing.Body.String(), w.Body.String(), "the query secret changes nothing in the response")
+	assert.Equal(t, missing.Header().Get("WWW-Authenticate"), w.Header().Get("WWW-Authenticate"))
+	assert.NotContains(t, w.Body.String(), "leaked")
+	svc.AssertNotCalled(t, "IssueToken", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestTokenHandler_BodyCredentialsIgnoreQueryValues(t *testing.T) {
+	svc := &mockOAuth2Svc{}
+	svc.On("IssueToken", mock.Anything, "good_client", "good_sec").Return(&oauth2Services.TokenResponse{
+		AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600,
+	}, nil)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/oauth2/token?client_id=other&client_secret=other_sec",
+		strings.NewReader("grant_type=client_credentials&client_id=good_client&client_secret=good_sec"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	newOAuth2HAPI(svc).tokenHandler(w, r)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+}
+
+func TestTokenHandler_BasicAuthStillWorks(t *testing.T) {
+	svc := &mockOAuth2Svc{}
+	svc.On("IssueToken", mock.Anything, "basic_client", "basic_sec").Return(&oauth2Services.TokenResponse{
+		AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600,
+	}, nil)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/oauth2/token?client_secret=leaked",
+		strings.NewReader("grant_type=client_credentials"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.SetBasicAuth("basic_client", "basic_sec")
+	newOAuth2HAPI(svc).tokenHandler(w, r)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+}
+
+func TestExtractClientCredentials_QueryStringIgnored(t *testing.T) {
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/oauth2/token?client_id=qid&client_secret=qsec",
+		strings.NewReader("grant_type=client_credentials"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	require.NoError(t, r.ParseForm())
+
+	id, secret, ok := extractClientCredentials(r)
+	assert.True(t, ok)
+	assert.Empty(t, id)
+	assert.Empty(t, secret)
+}
+
+// ============================================================
 // createServiceAccount (additional paths)
 // ============================================================
 

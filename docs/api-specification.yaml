@@ -513,8 +513,9 @@ paths:
       summary: Issue a service-account access token
       description: |
         RFC 6749 §4.4 client-credentials grant. Credentials may be supplied via
-        HTTP Basic authentication or as form fields. The body must be
-        `application/x-www-form-urlencoded`.
+        HTTP Basic authentication or as form fields in the request body. The
+        body must be `application/x-www-form-urlencoded`. Parameters in the URL
+        query string, including `client_secret`, are ignored.
       operationId: issueOAuth2Token
       tags:
         - Service Accounts

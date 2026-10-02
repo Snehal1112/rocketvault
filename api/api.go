@@ -143,8 +143,9 @@ func Init(options ...Options) *API {
 	r.OAuth2.Use(mw.CORSMiddleware, mw.SecurityHeadersMiddleware, mw.RequestBodySizeLimitMiddleware, mw.RateLimitMiddleware)
 
 	// Config is public — registered on rootRouter to bypass auth middleware.
+	// Rate limited per client IP because it is reachable without authentication.
 	r.Config = api.rootRouter.PathPrefix(api.basePath).Subrouter()
-	r.Config.Use(mw.CORSMiddleware, mw.SecurityHeadersMiddleware)
+	r.Config.Use(mw.CORSMiddleware, mw.SecurityHeadersMiddleware, mw.RateLimitMiddleware)
 
 	// JWKS is public — registered on rootRouter to bypass auth middleware.
 	r.JWKS = api.rootRouter.NewRoute().Subrouter()
