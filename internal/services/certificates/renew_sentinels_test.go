@@ -32,7 +32,7 @@ func renewWithKeyRepo(t *testing.T, keyID uuid.UUID, keyRepo *mockKeyRepo) error
 func TestRenewCertificate_ReturnsSentinelForForeignKey(t *testing.T) {
 	keyID := uuid.New()
 	keyRepo := &mockKeyRepo{}
-	keyRepo.On("Read", mock.Anything, keyID, mock.Anything).Return(&model.Key{ID: keyID, UserID: uuid.New()}, nil)
+	keyRepo.On("Read", mock.Anything, keyID, mock.Anything).Return(&model.Key{ID: keyID, UserID: uuid.New(), Enabled: true}, nil)
 
 	err := renewWithKeyRepo(t, keyID, keyRepo)
 	require.ErrorIs(t, err, ErrRenewKeyForbidden)

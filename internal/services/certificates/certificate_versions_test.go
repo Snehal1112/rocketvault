@@ -63,7 +63,7 @@ func newSelfSignedRenewalFixture(t *testing.T, version int, currentKeyPEM string
 	keyRepo := &mockKeyRepo{}
 	certRepo.On("Read", mock.Anything, certID, scope).Return(original, nil)
 	keyRepo.On("Read", mock.Anything, keyID, scope).
-		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: currentEnc}, nil)
+		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: currentEnc, Enabled: true}, nil)
 
 	versions := &fakeCertVersionRepo{}
 	return &selfSignedRenewalFixture{

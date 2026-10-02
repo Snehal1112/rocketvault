@@ -43,6 +43,11 @@ var ErrRenewKeyNotFound = errors.New("key not found")
 // signing CA this installation no longer records.
 var ErrRenewNotPossible = errors.New("certificate cannot be renewed")
 
+// ErrSigningKeyUnusable is returned when a certificate's signing key, or the
+// key linked to its signing CA, is revoked, disabled, or outside its validity
+// window (B77).
+var ErrSigningKeyUnusable = errors.New("signing key is revoked, disabled or outside its valid time window")
+
 // renewError carries a fixed message while still matching a renew sentinel
 // through errors.Is, so the text callers already see does not change.
 type renewError struct {
@@ -999,6 +1004,12 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "forbidden: cannot use other users' keys", nil)
 		return nil, ErrRenewKeyForbidden
 	}
+	// Renewal signs with the key, so it refuses the keys the key crypto path
+	// refuses in loadAndAuthorize (B77).
+	if err := requireUsableKey(key); err != nil {
+		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "signing key is unusable", nil)
+		return nil, err
+	}
 
 	privateKeyPEM, err := common.DecryptSecret(key.Value)
 	if err != nil {
@@ -1279,6 +1290,9 @@ func (s *certificateService) ValidateCertificateAccess(ctx context.Context, cert
 //     something a security fix should do on the way past; that call belongs in
 //     its own change.
 //
+// The key must also be usable: not revoked, enabled, and inside its validity
+// window, matching loadAndAuthorize in the key crypto path (B77).
+//
 // Parameters:
 //
 //	ctx: The context for the operation.
@@ -1303,6 +1317,22 @@ func (s *certificateService) ValidateKeyOwnership(ctx context.Context, keyID uui
 		return fmt.Errorf("forbidden: cannot use other users' keys")
 	}
 
+	// Issuing a certificate signs with the key, so it refuses the keys the
+	// key crypto path refuses in loadAndAuthorize (B77).
+	if err := requireUsableKey(key); err != nil {
+		s.logger.LogAuditError(actorID.String(), "validate_key_ownership", "failed", "signing key is unusable", nil)
+		return err
+	}
+
+	return nil
+}
+
+// requireUsableKey refuses a key that is revoked, disabled, or outside its
+// validity window, with an error wrapping ErrSigningKeyUnusable.
+func requireUsableKey(key *model.Key) error {
+	if key.Revoked || !key.IsAccessible() {
+		return fmt.Errorf("%w: %s", ErrSigningKeyUnusable, key.ID)
+	}
 	return nil
 }
 

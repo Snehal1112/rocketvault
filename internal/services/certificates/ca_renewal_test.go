@@ -101,7 +101,7 @@ func newCARenewalFixture(t *testing.T, caKeyType string) *caRenewalFixture {
 	certRepo.On("Read", mock.Anything, certID, scope).Return(original, nil)
 	certRepo.On("Read", mock.Anything, caCertID, scope).Return(caCert, nil)
 	keyRepo.On("Read", mock.Anything, keyID, scope).
-		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity}, nil)
+		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity, Enabled: true}, nil)
 
 	var updated *model.Certificate
 	certRepo.On("Update", mock.Anything, mock.AnythingOfType("*model.Certificate"), scope).
@@ -191,7 +191,7 @@ func TestRenewCertificate_SelfSignedStaysSelfSigned(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 	certRepo.On("Read", mock.Anything, certID, scope).Return(original, nil)
 	keyRepo.On("Read", mock.Anything, keyID, scope).
-		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encKey}, nil)
+		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encKey, Enabled: true}, nil)
 
 	var updated *model.Certificate
 	certRepo.On("Update", mock.Anything, mock.AnythingOfType("*model.Certificate"), scope).
@@ -378,7 +378,7 @@ func TestCreateCASignedCertificate_PreFixPseudoCARefusesCreation(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).
-		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntityKey}, nil)
+		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntityKey, Enabled: true}, nil)
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(&model.Certificate{
 		ID: caCertID, UserID: userID, Name: "pre-fix-ca",
 		Certificate: pseudoCAPEM, PrivateKey: encCAKey, Enabled: true,
@@ -427,7 +427,7 @@ func TestCreateCASignedCertificate_LeafAsCARefusesCreation(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).
-		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntityKey}, nil)
+		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntityKey, Enabled: true}, nil)
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(&model.Certificate{
 		ID: caCertID, UserID: userID, Name: "not-a-ca",
 		Certificate: leafAsCAPEM, PrivateKey: encCAKey, Enabled: true,

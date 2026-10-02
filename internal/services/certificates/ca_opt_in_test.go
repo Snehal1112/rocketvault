@@ -67,10 +67,11 @@ func newSelfSignedFixture(t *testing.T) *selfSignedFixture {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
-		ID:     keyID,
-		UserID: userID,
-		Type:   model.KeyTypeRSA,
-		Value:  encryptedKey,
+		ID:      keyID,
+		UserID:  userID,
+		Type:    model.KeyTypeRSA,
+		Value:   encryptedKey,
+		Enabled: true,
 	}, nil)
 
 	capture := &certCapture{}
@@ -207,10 +208,11 @@ func newRenewalFixtureWithStoredCert(t *testing.T, privateKeyPEM, storedPEM stri
 
 	certRepo.On("Read", mock.Anything, certID, scope).Return(original, nil)
 	keyRepo.On("Read", mock.Anything, keyID, scope).Return(&model.Key{
-		ID:     keyID,
-		UserID: userID,
-		Type:   model.KeyTypeRSA,
-		Value:  encryptedKey,
+		ID:      keyID,
+		UserID:  userID,
+		Type:    model.KeyTypeRSA,
+		Value:   encryptedKey,
+		Enabled: true,
 	}, nil)
 
 	capture := &certCapture{}
@@ -466,10 +468,11 @@ func TestRenewCertificate_UnparsableCertificateAbortsWithoutIssuing(t *testing.T
 
 			certRepo.On("Read", mock.Anything, certID, scope).Return(original, nil)
 			keyRepo.On("Read", mock.Anything, keyID, scope).Return(&model.Key{
-				ID:     keyID,
-				UserID: userID,
-				Type:   model.KeyTypeRSA,
-				Value:  encryptedKey,
+				ID:      keyID,
+				UserID:  userID,
+				Type:    model.KeyTypeRSA,
+				Value:   encryptedKey,
+				Enabled: true,
 			}, nil)
 			// No certRepo.On("Update", ...) stub: renewal must abort before it
 			// would ever call Update. The hand-written mocks in this package

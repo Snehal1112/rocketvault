@@ -590,7 +590,7 @@ func TestValidateKeyOwnership_OwnerCheckSurvivesInsideTheVault(t *testing.T) {
 	keyID := uuid.New()
 	vaultID := uuid.New()
 	keyRepo := &mockKeyRepo{}
-	vaultScopedKeyRepo(keyRepo, keyID, vaultID, &model.Key{ID: keyID, UserID: ownerID, VaultID: vaultID})
+	vaultScopedKeyRepo(keyRepo, keyID, vaultID, &model.Key{ID: keyID, UserID: ownerID, VaultID: vaultID, Enabled: true})
 
 	svc := newCertSvc(&mockCertRepository{}, keyRepo)
 	err := svc.ValidateKeyOwnership(context.Background(), keyID, model.NewVaultScope(vaultID, callerID))
@@ -762,8 +762,9 @@ func TestCreateCASignedCertificate_CACertAccessFails(t *testing.T) {
 
 	// key ownership succeeds
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
-		ID:     keyID,
-		UserID: userID,
+		ID:      keyID,
+		UserID:  userID,
+		Enabled: true,
 	}, nil)
 	// CA cert not found
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(nil, errors.New("not found"))
@@ -1114,10 +1115,11 @@ func TestCreateSelfSignedCertificate_SuccessDefaultRenewalDays(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
-		ID:     keyID,
-		UserID: userID,
-		Type:   model.KeyTypeRSA,
-		Value:  encryptedKey,
+		ID:      keyID,
+		UserID:  userID,
+		Type:    model.KeyTypeRSA,
+		Value:   encryptedKey,
+		Enabled: true,
 	}, nil)
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).Return(nil)
 
@@ -1153,10 +1155,11 @@ func TestCreateSelfSignedCertificate_SuccessWithExplicitEnabled(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
-		ID:     keyID,
-		UserID: userID,
-		Type:   model.KeyTypeRSA,
-		Value:  encryptedKey,
+		ID:      keyID,
+		UserID:  userID,
+		Type:    model.KeyTypeRSA,
+		Value:   encryptedKey,
+		Enabled: true,
 	}, nil)
 
 	var createdCert *model.Certificate
@@ -1201,10 +1204,11 @@ func TestCreateSelfSignedCertificate_SuccessWithVaultID(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
-		ID:     keyID,
-		UserID: userID,
-		Type:   model.KeyTypeRSA,
-		Value:  encryptedKey,
+		ID:      keyID,
+		UserID:  userID,
+		Type:    model.KeyTypeRSA,
+		Value:   encryptedKey,
+		Enabled: true,
 	}, nil)
 
 	var createdCert *model.Certificate
@@ -1243,10 +1247,11 @@ func TestCreateSelfSignedCertificate_RepoCreateFails(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
-		ID:     keyID,
-		UserID: userID,
-		Type:   model.KeyTypeRSA,
-		Value:  encryptedKey,
+		ID:      keyID,
+		UserID:  userID,
+		Type:    model.KeyTypeRSA,
+		Value:   encryptedKey,
+		Enabled: true,
 	}, nil)
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).
 		Return(errors.New("db write error"))
@@ -1273,10 +1278,11 @@ func TestCreateSelfSignedCertificate_KeyReadFails(t *testing.T) {
 
 	// ValidateKeyOwnership passes (user is owner), then keyRepo.Read called again for key material
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
-		ID:     keyID,
-		UserID: userID,
-		Type:   model.KeyTypeRSA,
-		Value:  "not-valid-encrypted-data",
+		ID:      keyID,
+		UserID:  userID,
+		Type:    model.KeyTypeRSA,
+		Value:   "not-valid-encrypted-data",
+		Enabled: true,
 	}, nil)
 
 	svc := newCertSvc(certRepo, keyRepo)
@@ -1319,7 +1325,7 @@ func TestCreateCASignedCertificate_FullSuccess(t *testing.T) {
 	encryptedCAKey, err := common.EncryptSecret(caKeyPEM)
 	require.NoError(t, err)
 
-	entityKey := &model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encryptedEntityKey}
+	entityKey := &model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encryptedEntityKey, Enabled: true}
 	caCert := &model.Certificate{
 		ID:          caCertID,
 		UserID:      userID,
@@ -1380,7 +1386,7 @@ func TestCreateCASignedCertificate_StoresCACertID(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).
-		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity}, nil)
+		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity, Enabled: true}, nil)
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).
 		Return(&model.Certificate{
 			ID: caCertID, UserID: userID, Name: "test-ca",
@@ -1431,7 +1437,7 @@ func TestCreateCASignedCertificate_ECDSACA(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).
-		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity}, nil)
+		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity, Enabled: true}, nil)
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).
 		Return(&model.Certificate{
 			ID: caCertID, UserID: userID, Name: "ecdsa-ca",
@@ -1480,7 +1486,7 @@ func TestCreateCASignedCertificate_RepoCreateFails(t *testing.T) {
 	encryptedCAKey, err := common.EncryptSecret(caKeyPEM)
 	require.NoError(t, err)
 
-	entityKey := &model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encryptedEntityKey}
+	entityKey := &model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encryptedEntityKey, Enabled: true}
 	caCert := &model.Certificate{
 		ID: caCertID, UserID: userID, Name: "test-ca",
 		Certificate: caCertPEM, PrivateKey: encryptedCAKey, Enabled: true,
@@ -1523,7 +1529,7 @@ func TestCreateCASignedCertificate_WithExplicitEnabledFalse(t *testing.T) {
 	encEntity, _ := common.EncryptSecret(entityKeyPEM)
 	encCA, _ := common.EncryptSecret(caKeyPEM)
 
-	entityKey := &model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity}
+	entityKey := &model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity, Enabled: true}
 	caCert := &model.Certificate{
 		ID: caCertID, UserID: userID, Name: "ca",
 		Certificate: caCertPEM, PrivateKey: encCA, Enabled: true,

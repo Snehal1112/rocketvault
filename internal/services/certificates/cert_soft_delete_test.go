@@ -297,10 +297,11 @@ func TestRenewCertificate_Succeeds_WhenKeyIDSet(t *testing.T) {
 	}
 
 	mockKey := &model.Key{
-		ID:     keyID,
-		UserID: userID,
-		Type:   model.KeyTypeRSA,
-		Value:  encryptedKey,
+		ID:      keyID,
+		UserID:  userID,
+		Type:    model.KeyTypeRSA,
+		Value:   encryptedKey,
+		Enabled: true,
 	}
 
 	certRepo := &mockCertRepository{}
@@ -459,6 +460,7 @@ func TestCreateSelfSignedCertificate_SetsPurgeProtectionWhenRequested(t *testing
 	keyRepo := &mockKeyRepo{}
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
 		ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encryptedKey,
+		Enabled: true,
 	}, nil)
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).Return(nil)
 	certRepo.On("SetPurgeProtection", mock.Anything, mock.AnythingOfType("uuid.UUID"), true).Return(nil)
@@ -512,6 +514,7 @@ func TestCreateCASignedCertificate_SetsPurgeProtectionWhenRequested(t *testing.T
 	keyRepo := &mockKeyRepo{}
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
 		ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encryptedKey,
+		Enabled: true,
 	}, nil)
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(&model.Certificate{
 		ID: caCertID, UserID: userID, Name: "test-ca", Certificate: caCertPEM, PrivateKey: encryptedCAKey,
@@ -558,6 +561,7 @@ func TestCreateSelfSignedCertificate_LeavesPurgeProtectionAloneByDefault(t *test
 	keyRepo := &mockKeyRepo{}
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(&model.Key{
 		ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encryptedKey,
+		Enabled: true,
 	}, nil)
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).Return(nil)
 
