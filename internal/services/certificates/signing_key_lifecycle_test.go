@@ -3,6 +3,7 @@ package certificates
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"rocketvault/common"
 	"rocketvault/internal/crypto"
+	"rocketvault/internal/repositories"
 	"rocketvault/model"
 )
 
@@ -791,3 +793,137 @@ func TestCreateCASignedCertificate_RechecksReReadKey(t *testing.T) {
 
 // allowSign is a KeySignAuthorizer that grants every request.
 func allowSign(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+
+// TestValidators_ReturnSentinels lets the HTTP layer map these refusals by
+// identity instead of reporting them as server faults (B78). Each message is
+// unchanged.
+func TestValidators_ReturnSentinels(t *testing.T) {
+	t.Parallel()
+
+	ownerID, callerID, vaultID := uuid.New(), uuid.New(), uuid.New()
+	scope := model.NewVaultScope(vaultID, callerID)
+
+	keyID := uuid.New()
+	keyRepo := &mockKeyRepo{}
+	vaultScopedKeyRepo(keyRepo, keyID, vaultID, &model.Key{ID: keyID, UserID: ownerID, VaultID: vaultID, Enabled: true})
+	svc := newCertSvc(&mockCertRepository{}, keyRepo)
+	err := svc.ValidateKeyOwnership(context.Background(), keyID, scope)
+	require.ErrorIs(t, err, ErrSigningKeyForbidden)
+	require.Equal(t, "forbidden: cannot use other users' keys", err.Error())
+
+	missing := uuid.New()
+	missingRepo := &mockKeyRepo{}
+	missingRepo.On("Read", mock.Anything, missing, scope).Return(nil, errors.New("key not found or access denied"))
+	svc = newCertSvc(&mockCertRepository{}, missingRepo)
+	err = svc.ValidateKeyOwnership(context.Background(), missing, scope)
+	require.ErrorIs(t, err, ErrSigningKeyNotFound)
+	require.Equal(t, "key not found: key not found or access denied", err.Error())
+
+	caID := uuid.New()
+	certRepo := &mockCertRepository{}
+	certRepo.On("Read", mock.Anything, caID, scope).Return(&model.Certificate{ID: caID, UserID: ownerID, VaultID: vaultID}, nil)
+	svc = newCertSvc(certRepo, &mockKeyRepo{})
+	err = svc.ValidateCertificateAccess(context.Background(), caID, scope)
+	require.ErrorIs(t, err, ErrCACertForbidden)
+	require.Equal(t, "forbidden: cannot access other users' certificates", err.Error())
+
+	missingCA := uuid.New()
+	certRepo = &mockCertRepository{}
+	certRepo.On("Read", mock.Anything, missingCA, scope).Return(nil, errors.New("certificate not found or access denied"))
+	svc = newCertSvc(certRepo, &mockKeyRepo{})
+	err = svc.ValidateCertificateAccess(context.Background(), missingCA, scope)
+	require.ErrorIs(t, err, ErrCACertNotFound)
+	require.NotErrorIs(t, err, ErrCertNotFound, "a missing CA is not the certificate being acted on")
+	require.Equal(t, "certificate not found: certificate not found or access denied", err.Error())
+}
+
+// TestReadFaults_AreNotRefusals pins the Task 6 carry-forward of B78: a
+// database fault while reading a signing key or CA still stops the operation,
+// but it carries no refusal sentinel, so the HTTP layer answers 500 rather
+// than a 403, 404 or 409 that would tell the caller to fix its key.
+func TestReadFaults_AreNotRefusals(t *testing.T) {
+	t.Parallel()
+
+	faults := map[string]error{
+		"query fault":   fmt.Errorf("failed to query key: %w", errors.New("database is locked")),
+		"invalid scope": fmt.Errorf("%w: unknown scope kind 9", repositories.ErrInvalidScope),
+	}
+	for name, fault := range faults {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			userID, vaultID, id := uuid.New(), uuid.New(), uuid.New()
+			scope := model.NewVaultScope(vaultID, userID)
+
+			keyRepo := &mockKeyRepo{}
+			keyRepo.On("Read", mock.Anything, id, scope).Return(nil, fault)
+			svc := newCertSvc(&mockCertRepository{}, keyRepo).(*certificateService)
+
+			err := svc.ValidateKeyOwnership(context.Background(), id, scope)
+			require.ErrorIs(t, err, fault)
+			assert.NotErrorIs(t, err, ErrSigningKeyNotFound)
+			assert.NotErrorIs(t, err, ErrSigningKeyUnusable)
+
+			err = svc.requireCAKeyUsable(context.Background(), &model.Certificate{ID: uuid.New(), KeyID: id}, scope)
+			require.ErrorIs(t, err, fault)
+			assert.NotErrorIs(t, err, ErrSigningKeyUnusable)
+
+			certRepo := &mockCertRepository{}
+			certRepo.On("Read", mock.Anything, id, scope).Return(nil, fault)
+			err = newCertSvc(certRepo, &mockKeyRepo{}).ValidateCertificateAccess(context.Background(), id, scope)
+			require.ErrorIs(t, err, fault)
+			assert.NotErrorIs(t, err, ErrCACertNotFound)
+		})
+	}
+}
+
+// TestRenewCertificate_KeyReadFaultIsNotRefusal is the renew-path twin: a
+// fault reading the key is not the 409 "key not available" refusal (B78).
+func TestRenewCertificate_KeyReadFaultIsNotRefusal(t *testing.T) {
+	keyID := uuid.New()
+	fault := fmt.Errorf("failed to query key: %w", errors.New("database is locked"))
+	keyRepo := &mockKeyRepo{}
+	keyRepo.On("Read", mock.Anything, keyID, mock.Anything).Return(nil, fault)
+
+	err := renewWithKeyRepo(t, keyID, keyRepo)
+	require.ErrorIs(t, err, fault)
+	assert.NotErrorIs(t, err, ErrRenewKeyNotFound)
+}
+
+// TestIsRepositoryNotFound_RealRepositories pins the error shapes
+// isRepositoryNotFound relies on against the real repositories: a missing
+// row is a not-found, and a query against a closed database is a fault.
+func TestIsRepositoryNotFound_RealRepositories(t *testing.T) {
+	h := newVersioningHarness(t)
+	ctx := context.Background()
+	svc := h.svc.(*certificateService)
+
+	_, err := h.keyRepo.Read(ctx, uuid.New(), h.scope())
+	require.Error(t, err)
+	assert.True(t, isRepositoryNotFound(err), "missing key: %v", err)
+	_, err = h.certRepo.Read(ctx, uuid.New(), h.scope())
+	require.Error(t, err)
+	assert.True(t, isRepositoryNotFound(err), "missing certificate: %v", err)
+
+	require.ErrorIs(t, svc.ValidateKeyOwnership(ctx, uuid.New(), h.scope()), ErrSigningKeyNotFound)
+	require.ErrorIs(t, svc.ValidateCertificateAccess(ctx, uuid.New(), h.scope()), ErrCACertNotFound)
+	require.ErrorIs(t, svc.requireCAKeyUsable(ctx, &model.Certificate{ID: uuid.New(), KeyID: uuid.New()}, h.scope()), ErrSigningKeyUnusable)
+
+	require.NoError(t, h.raw.Close())
+
+	_, err = h.keyRepo.Read(ctx, h.keyID, h.scope())
+	require.Error(t, err)
+	assert.False(t, isRepositoryNotFound(err), "closed database, key: %v", err)
+	_, err = h.certRepo.Read(ctx, uuid.New(), h.scope())
+	require.Error(t, err)
+	assert.False(t, isRepositoryNotFound(err), "closed database, certificate: %v", err)
+
+	err = svc.ValidateKeyOwnership(ctx, h.keyID, h.scope())
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrSigningKeyNotFound)
+	err = svc.requireCAKeyUsable(ctx, &model.Certificate{ID: uuid.New(), KeyID: h.keyID}, h.scope())
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrSigningKeyUnusable)
+	err = svc.ValidateCertificateAccess(ctx, uuid.New(), h.scope())
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrCACertNotFound)
+}

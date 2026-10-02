@@ -34,15 +34,29 @@ func writeCertificateError(c *Context, err error) {
 		c.SetConflict("certificate was renewed or updated concurrently; re-read it and retry")
 	case errors.Is(err, repositories.ErrNameTaken):
 		c.SetConflict("a resource with this name already exists in this vault")
+	// B78: refusals about the caller's signing key or CA are client problems.
+	// Each uses a fixed message, so no key ID or wrapped repository text
+	// reaches the response.
+	case errors.Is(err, certServices.ErrSigningKeyForbidden):
+		c.SetPermissionError("the signing key belongs to another user")
+	case errors.Is(err, certServices.ErrCACertForbidden):
+		c.SetPermissionError("the CA certificate belongs to another user")
+	case errors.Is(err, certServices.ErrSigningKeyUnusable):
+		c.SetPermissionError("signing key is revoked, disabled or outside its valid time window")
+	case errors.Is(err, certServices.ErrSigningKeyNotFound):
+		c.SetNotFound("key")
+	case errors.Is(err, certServices.ErrCACertNotFound):
+		c.SetNotFound("CA certificate")
 	default:
 		c.SetInternalError(err)
 	}
 }
 
-// writeCertificateRenewError maps a renewal error. It differs from
-// writeCertificateError in one arm: renewal goes through GetCertificate, so a
-// disabled certificate, or one outside its valid time window, is refused with
-// ErrCertLifecycleDenied, which the design maps to 409 for this route.
+// writeCertificateRenewError maps a renewal error. Renewal goes through
+// GetCertificate, so a disabled certificate, or one outside its valid time
+// window, is refused with ErrCertLifecycleDenied, which the design maps to 409
+// for this route. The other arms below are renewal refusals too; anything
+// else falls through to writeCertificateError.
 func writeCertificateRenewError(c *Context, err error) {
 	if errors.Is(err, certServices.ErrCertLifecycleDenied) {
 		c.SetConflict("certificate is disabled or outside its valid time window and cannot be renewed")
@@ -58,6 +72,16 @@ func writeCertificateRenewError(c *Context, err error) {
 	}
 	if errors.Is(err, certServices.ErrRenewNotPossible) {
 		c.SetConflict("the certificate cannot be renewed in its current state")
+		return
+	}
+	// A key or signing CA that has become unusable is a state the caller can
+	// fix, like the arms above, so renewal reports it as 409 (B77, B78).
+	if errors.Is(err, certServices.ErrSigningKeyUnusable) {
+		c.SetConflict("the certificate's signing key, or its CA's key, is revoked, disabled or outside its valid time window")
+		return
+	}
+	if errors.Is(err, certServices.ErrCACertNotFound) {
+		c.SetConflict("the certificate's signing CA is not available, so it cannot be renewed")
 		return
 	}
 	writeCertificateError(c, err)

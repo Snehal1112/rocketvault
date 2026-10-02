@@ -101,18 +101,46 @@ func TestAPIError_IsDiscoverableWithErrorsAs(t *testing.T) {
 }
 
 // TestAPIError_CertificateIssueHintNamesKeySign pins that a 403 on issuing or
-// renewing a certificate points at the second action it needs (B77).
+// renewing a certificate points at the second action it needs (B77), and,
+// since a refused signing key also answers 403, at the key itself instead of
+// asserting that a role is missing (B78).
 func TestAPIError_CertificateIssueHintNamesKeySign(t *testing.T) {
 	for _, path := range []string{"/api/v1/vaults/prod/certificates", "/api/v1/vaults/prod/certificates/tls/renew"} {
 		err := doAgainstStatus(t, http.StatusForbidden, `{}`, http.MethodPost, path)
 		var apiErr *APIError
 		require.ErrorAs(t, err, &apiErr)
+		require.Contains(t, apiErr.Hint, "certificates/create")
 		require.Contains(t, apiErr.Hint, "Key Vault Certificates Officer")
 		require.Contains(t, apiErr.Hint, "keys/sign/action")
+		require.Contains(t, apiErr.Hint, "Key Vault Crypto User")
+		require.Contains(t, apiErr.Hint, `in vault "prod"`)
+		require.Contains(t, apiErr.Hint, "signing key")
+		require.Contains(t, apiErr.Hint, "revoked")
+		require.NotContains(t, apiErr.Hint, "principal lacks", "a 403 here can be a key refusal, not a missing role")
 	}
+
+	flat := doAgainstStatus(t, http.StatusForbidden, `{}`, http.MethodPost, "/api/v1/certificates")
+	var flatAPI *APIError
+	require.ErrorAs(t, flat, &flatAPI)
+	require.Contains(t, flatAPI.Hint, "keys/sign/action")
+	require.NotContains(t, flatAPI.Hint, "in vault")
 
 	err := doAgainstStatus(t, http.StatusForbidden, `{}`, http.MethodGet, "/api/v1/vaults/prod/certificates")
 	var readAPI *APIError
 	require.ErrorAs(t, err, &readAPI)
 	require.NotContains(t, readAPI.Hint, "keys/sign")
+}
+
+// TestAPIError_CertificateCreateNotFoundNamesSigningMaterial pins that a 404
+// on certificate creation points at the key or CA in the body, which is what
+// the server reports as missing there (B78). Other 404s keep the generic hint.
+func TestAPIError_CertificateCreateNotFoundNamesSigningMaterial(t *testing.T) {
+	err := doAgainstStatus(t, http.StatusNotFound, `{}`, http.MethodPost, "/api/v1/vaults/prod/certificates")
+	var apiErr *APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Contains(t, apiErr.Hint, "signing key or CA certificate")
+
+	err = doAgainstStatus(t, http.StatusNotFound, `{}`, http.MethodPost, "/api/v1/vaults/prod/certificates/tls/renew")
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, "no such resource in this vault", apiErr.Hint)
 }

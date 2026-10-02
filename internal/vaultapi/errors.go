@@ -87,6 +87,9 @@ func hintFor(e *APIError) string {
 		if strings.HasPrefix(e.Path, auditLogsPath) {
 			return "audit querying requires the global admin role; no per-vault role assignment grants it"
 		}
+		if issuesCertificate(e.Method, e.Path) {
+			return certificateIssueForbiddenHint(e.Path)
+		}
 		resource, verb := resourceAndVerb(e.Method, e.Path)
 		action := fmt.Sprintf("Microsoft.KeyVault/vaults/%s/%s", resource, verb)
 		role := roleFor(resource, verb)
@@ -95,11 +98,13 @@ func hintFor(e *APIError) string {
 		if vault != "" {
 			hint = fmt.Sprintf("principal lacks %s in vault %q; grant e.g. %q", action, vault, role)
 		}
-		if issuesCertificate(e.Method, e.Path) {
-			hint += "; issuing or renewing a certificate also needs Microsoft.KeyVault/vaults/keys/sign/action, e.g. \"Key Vault Crypto User\""
-		}
 		return hint
 	case KindNotFound:
+		// On create, a 404 means the key or CA named in the body is missing
+		// (B78). Renewal's 404 is the certificate itself, as elsewhere.
+		if e.Method == http.MethodPost && strings.HasSuffix(e.Path, "/certificates") {
+			return "the signing key or CA certificate named in the request does not exist in this vault"
+		}
 		return "no such resource in this vault"
 	case KindConflict:
 		return "a resource with that name already exists, or the operation conflicts with current state"
@@ -136,6 +141,22 @@ func resourceAndVerb(method, path string) (resource, verb string) {
 		verb = "read"
 	}
 	return resource, verb
+}
+
+// certificateIssueForbiddenHint covers every reason issuing or renewing a
+// certificate answers 403. The response body is never read, so the hint
+// cannot tell a missing role from a refused signing key; it names both
+// (B77, B78).
+func certificateIssueForbiddenHint(path string) string {
+	where := ""
+	if vault := vaultFromPath(path); vault != "" {
+		where = fmt.Sprintf(" in vault %q", vault)
+	}
+	return fmt.Sprintf("issuing or renewing a certificate needs Microsoft.KeyVault/vaults/certificates/create "+
+		"(e.g. %q) and Microsoft.KeyVault/vaults/keys/sign/action (e.g. %q)%s, "+
+		"and a signing key and CA certificate the principal owns, with the key enabled, not revoked "+
+		"and inside its valid time window",
+		roleFor("certificates", "create"), roleFor("keys", "read"), where)
 }
 
 // issuesCertificate reports whether a request issues or renews a

@@ -48,6 +48,23 @@ var ErrRenewNotPossible = errors.New("certificate cannot be renewed")
 // window (B77).
 var ErrSigningKeyUnusable = errors.New("signing key is revoked, disabled or outside its valid time window")
 
+// ErrSigningKeyForbidden is returned when the signing key named at creation
+// belongs to another user. Its text is the message this refusal always had.
+var ErrSigningKeyForbidden = errors.New("forbidden: cannot use other users' keys")
+
+// ErrSigningKeyNotFound is returned when the signing key named at creation
+// does not resolve in the caller's vault scope.
+var ErrSigningKeyNotFound = errors.New("key not found")
+
+// ErrCACertForbidden is returned when the signing CA certificate belongs to
+// another user. Its text is the message this refusal always had.
+var ErrCACertForbidden = errors.New("forbidden: cannot access other users' certificates")
+
+// ErrCACertNotFound is returned when the signing CA certificate does not
+// resolve in the caller's vault scope. It is distinct from ErrCertNotFound,
+// so a missing CA is never reported as the certificate being acted on.
+var ErrCACertNotFound = errors.New("certificate not found")
+
 // renewError carries a fixed message while still matching a renew sentinel
 // through errors.Is, so the text callers already see does not change.
 type renewError struct {
@@ -1024,6 +1041,10 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 	key, err := s.keyRepo.Read(ctx, original.KeyID, scope)
 	if err != nil {
 		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", fmt.Sprintf("key not found: %s", err), err)
+		// A database fault is not the 409 "key not available" refusal (B78).
+		if !isRepositoryNotFound(err) {
+			return nil, fmt.Errorf("failed to read key: %w", err)
+		}
 		return nil, &renewError{"key not found: " + err.Error(), ErrRenewKeyNotFound}
 	}
 	if key.UserID != userID {
@@ -1289,12 +1310,17 @@ func (s *certificateService) ValidateCertificateAccess(ctx context.Context, cert
 	cert, err := s.certRepo.Read(ctx, certID, scope)
 	if err != nil {
 		s.logger.LogAuditError(actorID.String(), "validate_certificate_access", "failed", fmt.Sprintf("certificate not found: %s", err), err)
-		return fmt.Errorf("certificate not found: %w", err)
+		// Only a real not-found carries the sentinel; a database fault stays a
+		// server error (B78).
+		if isRepositoryNotFound(err) {
+			return fmt.Errorf("%w: %w", ErrCACertNotFound, err)
+		}
+		return fmt.Errorf("failed to read certificate: %w", err)
 	}
 
 	if cert.UserID != actorID {
 		s.logger.LogAuditError(actorID.String(), "validate_certificate_access", "failed", "forbidden: cannot access other users' certificates", nil)
-		return fmt.Errorf("forbidden: cannot access other users' certificates")
+		return ErrCACertForbidden
 	}
 
 	return nil
@@ -1335,12 +1361,17 @@ func (s *certificateService) ValidateKeyOwnership(ctx context.Context, keyID uui
 	key, err := s.keyRepo.Read(ctx, keyID, scope)
 	if err != nil {
 		s.logger.LogAuditError(actorID.String(), "validate_key_ownership", "failed", fmt.Sprintf("key not found: %s", err), err)
-		return fmt.Errorf("key not found: %w", err)
+		// Only a real not-found carries the sentinel; a database fault stays a
+		// server error (B78).
+		if isRepositoryNotFound(err) {
+			return fmt.Errorf("%w: %w", ErrSigningKeyNotFound, err)
+		}
+		return fmt.Errorf("failed to read key: %w", err)
 	}
 
 	if key.UserID != actorID {
 		s.logger.LogAuditError(actorID.String(), "validate_key_ownership", "failed", "forbidden: cannot use other users' keys", nil)
-		return fmt.Errorf("forbidden: cannot use other users' keys")
+		return ErrSigningKeyForbidden
 	}
 
 	// Issuing a certificate signs with the key, so it refuses the keys the
@@ -1366,9 +1397,41 @@ func (s *certificateService) requireCAKeyUsable(ctx context.Context, caCert *mod
 	}
 	key, err := s.keyRepo.Read(ctx, caCert.KeyID, scope)
 	if err != nil {
-		return fmt.Errorf("%w: CA signing key %s is not readable: %w", ErrSigningKeyUnusable, caCert.KeyID, err)
+		// A key that does not resolve in scope means the CA cannot sign, which
+		// is a refusal. A database fault is not a refusal, so it is returned
+		// without the sentinel and still stops the signing (B78).
+		if isRepositoryNotFound(err) {
+			return fmt.Errorf("%w: CA signing key %s is not readable: %w", ErrSigningKeyUnusable, caCert.KeyID, err)
+		}
+		return fmt.Errorf("failed to read CA signing key %s: %w", caCert.KeyID, err)
 	}
 	return requireUsableKey(key)
+}
+
+// isRepositoryNotFound reports whether err from KeyRepository.Read or
+// CertificateRepository.Read means the row does not resolve in scope, as
+// opposed to a database fault.
+//
+// The repositories export no not-found sentinel, and this plan does not
+// change them, so the decision rests on the shape of their errors: a
+// not-found is a fresh error that wraps nothing, while every fault (the
+// query, the scan, the tag read, a cancelled context) wraps its cause with
+// %w, and a bad scope wraps repositories.ErrInvalidScope. Matching the
+// message text instead would break silently on a reworded message. The shape
+// is pinned against the real repositories by
+// TestIsRepositoryNotFound_RealRepositories. Either answer still refuses the
+// operation; only the status code the caller sees depends on it.
+func isRepositoryNotFound(err error) bool {
+	if err == nil || errors.Is(err, repositories.ErrInvalidScope) {
+		return false
+	}
+	switch e := err.(type) { //nolint:errorlint // The shape of err itself is the point here.
+	case interface{ Unwrap() error }:
+		return e.Unwrap() == nil
+	case interface{ Unwrap() []error }:
+		return len(e.Unwrap()) == 0
+	}
+	return true
 }
 
 // requireUsableKey refuses a key that is revoked, disabled, or outside its
