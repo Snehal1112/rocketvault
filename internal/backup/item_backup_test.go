@@ -198,7 +198,7 @@ func TestBackupRestoreSecret(t *testing.T) {
 	}
 	require.NoError(t, repo.Create(ctx, original))
 
-	svc := backup.NewItemBackupService(repo, nil, nil, newStubSecretVersionRepo())
+	svc := newTestItemBackupService(repo, nil, nil, newStubSecretVersionRepo())
 
 	// Backup the secret.
 	blob, err := svc.BackupSecret(ctx, secretID, userID, uuid.Nil)
@@ -241,7 +241,7 @@ func TestBackupSecretNonOwnerInSameVaultSucceeds(t *testing.T) {
 		Enabled: true,
 	}))
 
-	svc := backup.NewItemBackupService(repo, nil, nil, newStubSecretVersionRepo())
+	svc := newTestItemBackupService(repo, nil, nil, newStubSecretVersionRepo())
 
 	// A Secrets Officer authorized in this vault who does not own the secret
 	// must be able to back it up.
@@ -412,7 +412,7 @@ func TestRestoreSecretBlobTypeMismatch(t *testing.T) {
 		Enabled: true,
 	}))
 
-	svc := backup.NewItemBackupService(newStubSecretRepo(), keyRepo, nil, nil)
+	svc := newTestItemBackupService(newStubSecretRepo(), keyRepo, nil, nil)
 
 	// Backup a key but try to restore it as a secret.
 	blob, err := svc.BackupKey(ctx, keyID, userID, uuid.Nil)
@@ -421,6 +421,10 @@ func TestRestoreSecretBlobTypeMismatch(t *testing.T) {
 	err = svc.RestoreSecret(ctx, blob, userID, uuid.New(), uuid.New())
 	require.Error(t, err)
 	require.True(t, errors.Is(err, backup.ErrInvalidBlob), "expected ErrInvalidBlob, got: %v", err)
+	// The blob is genuinely sealed, so the refusal must come from the type
+	// check and not from the seal.
+	require.NotErrorIs(t, err, backup.ErrUnsealedBlob)
+	require.NotErrorIs(t, err, backup.ErrBlobAuthentication)
 }
 
 // TestRestoreSecretWritesAuthorizedVaultNotBlobVault verifies that
@@ -433,7 +437,7 @@ func TestRestoreSecretWritesAuthorizedVaultNotBlobVault(t *testing.T) {
 
 	ctx := context.Background()
 	repo := newStubSecretRepo()
-	svc := backup.NewItemBackupService(repo, nil, nil, newStubSecretVersionRepo())
+	svc := newTestItemBackupService(repo, nil, nil, newStubSecretVersionRepo())
 
 	vaultA := uuid.New()
 	vaultB := uuid.New()
@@ -474,7 +478,7 @@ func TestRestoreSecretPreservesPurgeProtection(t *testing.T) {
 
 	ctx := context.Background()
 	repo := newStubSecretRepo()
-	svc := backup.NewItemBackupService(repo, nil, nil, newStubSecretVersionRepo())
+	svc := newTestItemBackupService(repo, nil, nil, newStubSecretVersionRepo())
 
 	owner := uuid.New()
 	vaultID := uuid.New()
@@ -508,7 +512,7 @@ func TestRestoreKeyPreservesPurgeProtection(t *testing.T) {
 
 	ctx := context.Background()
 	repo := newStubKeyRepo()
-	svc := backup.NewItemBackupService(nil, repo, nil, nil)
+	svc := newTestItemBackupService(nil, repo, nil, nil)
 
 	owner := uuid.New()
 	vaultID := uuid.New()
@@ -555,7 +559,7 @@ func TestRestoreKey_FailedVersionReplayLeavesNoPurgeProtectedOrphan(t *testing.T
 
 	ctx := context.Background()
 	repo := newStubKeyRepo()
-	svc := backup.NewItemBackupService(nil, repo, nil, nil)
+	svc := newTestItemBackupService(nil, repo, nil, nil)
 
 	owner := uuid.New()
 	vaultID := uuid.New()
@@ -581,7 +585,7 @@ func TestRestoreKey_FailedVersionReplayLeavesNoPurgeProtectedOrphan(t *testing.T
 	// with the parent row already written.
 	restoreRepo := newStubKeyRepo()
 	restoreRepo.failCreateVersionAt = 2
-	restoreSvc := backup.NewItemBackupService(nil, restoreRepo, nil, nil)
+	restoreSvc := newTestItemBackupService(nil, restoreRepo, nil, nil)
 
 	newID := uuid.New()
 	err = restoreSvc.RestoreKey(ctx, blob, owner, vaultID, newID)
@@ -600,7 +604,7 @@ func TestRestoreCertificatePreservesPurgeProtection(t *testing.T) {
 
 	ctx := context.Background()
 	repo := newStubCertRepo()
-	svc := backup.NewItemBackupService(nil, nil, repo, nil)
+	svc := newTestItemBackupService(nil, nil, repo, nil)
 
 	owner := uuid.New()
 	vaultID := uuid.New()
@@ -650,7 +654,7 @@ func TestBackupRestoreKey_CarriesVersionHistory(t *testing.T) {
 	require.NoError(t, repo.CreateVersion(ctx, keyID, 1, "pem-v1"))
 	require.NoError(t, repo.CreateVersion(ctx, keyID, 2, "pem-v2"))
 
-	svc := backup.NewItemBackupService(nil, repo, nil, nil)
+	svc := newTestItemBackupService(nil, repo, nil, nil)
 
 	blob, err := svc.BackupKey(ctx, keyID, caller, vaultID)
 	require.NoError(t, err)
@@ -682,7 +686,7 @@ func TestRestoreKey_OldFormatBlob_NoVersionsField(t *testing.T) {
 		Value: "pem-v1", Type: model.KeyTypeRSA, Enabled: true,
 	}))
 
-	svc := backup.NewItemBackupService(nil, repo, nil, nil)
+	svc := newTestItemBackupService(nil, repo, nil, nil)
 
 	// A key with zero key_versions rows produces a blob with an empty/absent
 	// "versions" field today, which is exactly the old-format shape.
@@ -817,13 +821,16 @@ func TestBackupSecret_CarriesVersionHistory(t *testing.T) {
 		}))
 	}
 
-	svc := backup.NewItemBackupService(repo, nil, nil, vr)
+	svc := newTestItemBackupService(repo, nil, nil, vr)
 
 	blob, err := svc.BackupSecret(ctx, secretID, ownerID, vaultID)
 	require.NoError(t, err)
 
+	inner, err := svc.ExportedOpenBlob(blob)
+	require.NoError(t, err)
+
 	var restored model.Secret
-	got, err := backup.ExportedDecodeBlob(blob, "secret", &restored)
+	got, err := backup.ExportedDecodeBlob(inner, "secret", &restored)
 	require.NoError(t, err)
 	require.Len(t, got.Secret, 2, "both archived versions must reach the blob")
 
@@ -859,7 +866,7 @@ func TestBackupRestoreSecret_CarriesVersionHistory(t *testing.T) {
 		}))
 	}
 
-	svc := backup.NewItemBackupService(repo, nil, nil, vr)
+	svc := newTestItemBackupService(repo, nil, nil, vr)
 
 	blob, err := svc.BackupSecret(ctx, secretID, ownerID, vaultID)
 	require.NoError(t, err)
@@ -920,11 +927,13 @@ func TestRestoreSecret_OldFormatBlob_NoVersionsField(t *testing.T) {
 		"data":          json.RawMessage(`{"id":"` + secretID.String() + `","name":"legacy","value":"enc","version":1}`),
 	})
 	require.NoError(t, err)
-	blob := base64.URLEncoding.EncodeToString(raw)
-
 	repo := newStubSecretRepo()
 	vr := newStubSecretVersionRepo()
-	svc := backup.NewItemBackupService(repo, nil, nil, vr)
+	svc := newTestItemBackupService(repo, nil, nil, vr)
+
+	// The inner envelope keeps its pre-versions shape. Only the outer seal is
+	// new, and every blob this server hands out carries it.
+	blob := sealForTest(t, svc, base64.URLEncoding.EncodeToString(raw))
 
 	newID := uuid.New()
 	require.NoError(t, svc.RestoreSecret(ctx, blob, uuid.New(), uuid.New(), newID),

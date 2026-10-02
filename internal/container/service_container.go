@@ -761,6 +761,16 @@ func (c *ServiceContainer) initializeServices() error {
 	// Certificate backups carry their archived versions, and restores
 	// replay them in the same transaction.
 	c.itemBackupService.SetCertificateVersionRepository(c.certificateVersionRepository)
+	// Seals every item-backup blob under a key derived from the master key,
+	// so a forged or edited blob is refused at restore (B76). A missing or
+	// malformed master key leaves the service unsealed, and backup and
+	// restore then fail closed instead of using the unauthenticated format.
+	// bootstrap.ValidateMasterKey already aborts server startup on a bad key.
+	if masterKey, keyErr := common.ParseMasterKey(viper.GetString("master_key")); keyErr != nil {
+		c.logger.WithError(keyErr).Warn("master key unavailable, item backup and restore are disabled")
+	} else if err := c.itemBackupService.SetSealKey(masterKey); err != nil {
+		return fmt.Errorf("failed to configure item backup sealing: %w", err)
+	}
 
 	return nil
 }

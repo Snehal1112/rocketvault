@@ -378,7 +378,7 @@ func (m *mockVersionRepo) DeleteSpecificVersion(_ context.Context, _ uuid.UUID, 
 // newBackupCtxWithSecret creates a Context backed by a real ItemBackupService
 // that uses a custom mockSecretRepo, allowing success-path testing.
 func newBackupCtxWithSecret(secretRepo *mockSecretRepo) *Context {
-	svc := backup.NewItemBackupService(secretRepo, nil, nil, &mockVersionRepo{})
+	svc := newSealedItemBackupService(secretRepo, nil, nil, &mockVersionRepo{})
 	container := &backupItemContainer{
 		secretSvcTestContainer: &secretSvcTestContainer{},
 		backupSvc:              svc,
@@ -487,7 +487,7 @@ func buildValidSecretBlob(t *testing.T, secretID, userID uuid.UUID) string {
 			return &model.Secret{ID: id, Name: "s", Value: "v", UserID: userID}, nil
 		},
 	}
-	svc := backup.NewItemBackupService(secretRepo, nil, nil, &mockVersionRepo{})
+	svc := newSealedItemBackupService(secretRepo, nil, nil, &mockVersionRepo{})
 	blob, err := svc.BackupSecret(context.Background(), secretID, userID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("buildValidSecretBlob: %v", err)
@@ -588,7 +588,7 @@ func TestRestoreSecretHandler_WritesRequestVaultNotBlobVault(t *testing.T) {
 			return &model.Secret{ID: id, Name: "s", Value: "v", UserID: userID, VaultID: vaultA}, nil
 		},
 	}
-	blobSvc := backup.NewItemBackupService(blobSecretRepo, nil, nil, &mockVersionRepo{})
+	blobSvc := newSealedItemBackupService(blobSecretRepo, nil, nil, &mockVersionRepo{})
 	blob, err := blobSvc.BackupSecret(context.Background(), secretID, userID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("failed to build blob: %v", err)
@@ -765,7 +765,7 @@ func (c *backupItemContainerWithKey) GetItemBackupService() *backup.ItemBackupSe
 
 // newBackupCtxWithKey creates a Context backed by a real ItemBackupService with a key repo.
 func newBackupCtxWithKey(keyRepo *mockKeyRepo) *Context {
-	svc := backup.NewItemBackupService(nil, keyRepo, nil, nil)
+	svc := newSealedItemBackupService(nil, keyRepo, nil, nil)
 	container := &backupItemContainerWithKey{
 		secretSvcTestContainer: &secretSvcTestContainer{},
 		backupSvc:              svc,
@@ -789,7 +789,7 @@ func (c *backupItemContainerWithCert) GetItemBackupService() *backup.ItemBackupS
 
 // newBackupCtxWithCert creates a Context backed by a real ItemBackupService with a cert repo.
 func newBackupCtxWithCert(certRepo *mockCertRepo) *Context {
-	svc := backup.NewItemBackupService(nil, nil, certRepo, nil)
+	svc := newSealedItemBackupService(nil, nil, certRepo, nil)
 	container := &backupItemContainerWithCert{
 		secretSvcTestContainer: &secretSvcTestContainer{},
 		backupSvc:              svc,
@@ -895,7 +895,7 @@ func buildValidKeyBlob(t *testing.T, keyID, userID uuid.UUID) string {
 			return &model.Key{ID: id, Name: "k", Type: "RSA", UserID: userID}, nil
 		},
 	}
-	svc := backup.NewItemBackupService(nil, keyRepo, nil, nil)
+	svc := newSealedItemBackupService(nil, keyRepo, nil, nil)
 	blob, err := svc.BackupKey(context.Background(), keyID, userID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("buildValidKeyBlob: %v", err)
@@ -1091,7 +1091,7 @@ func buildValidCertBlob(t *testing.T, certID, userID uuid.UUID) string {
 			return &model.Certificate{ID: id, Name: "c", UserID: userID}, nil
 		},
 	}
-	svc := backup.NewItemBackupService(nil, nil, certRepo, nil)
+	svc := newSealedItemBackupService(nil, nil, certRepo, nil)
 	blob, err := svc.BackupCertificate(context.Background(), certID, userID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("buildValidCertBlob: %v", err)

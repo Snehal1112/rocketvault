@@ -44,7 +44,7 @@ func newCertBackupFixture(t *testing.T) *certBackupFixture {
 		userID:   uuid.New(),
 		vaultID:  uuid.New(),
 	}
-	f.svc = backup.NewItemBackupService(nil, nil, f.certs, nil)
+	f.svc = newTestItemBackupService(nil, nil, f.certs, nil)
 	f.svc.SetTxBeginner(conn)
 	f.svc.SetCertificateVersionRepository(f.versions)
 	return f
@@ -120,11 +120,12 @@ func TestRestoreCertificate_PreVersioningBlobRestoresAsVersionOne(t *testing.T) 
 	f := newCertBackupFixture(t)
 	ctx := context.Background()
 	id := uuid.New()
-	blob, err := backup.ExportedEncodeBlob("certificate", id.String(), legacyCertificate{
+	inner, err := backup.ExportedEncodeBlob("certificate", id.String(), legacyCertificate{
 		ID: id, UserID: f.userID, VaultID: f.vaultID, Name: "legacy", Certificate: "PEM",
 		PrivateKey: "ENC", CreatedAt: time.Now().UTC(), Enabled: true,
 	}, backup.ExportedBlobVersions{})
 	require.NoError(t, err)
+	blob := sealForTest(t, f.svc, inner)
 
 	newID := uuid.New()
 	require.NoError(t, f.svc.RestoreCertificate(ctx, blob, f.userID, f.vaultID, newID))
@@ -207,14 +208,19 @@ func TestRestoreCertificate_RejectsInconsistentVersionNumbers(t *testing.T) {
 				current = 3
 				records[0].Version = 4
 			}
-			blob, err := backup.ExportedEncodeBlob("certificate", id.String(), &model.Certificate{
+			inner, err := backup.ExportedEncodeBlob("certificate", id.String(), &model.Certificate{
 				ID: id, Name: "forged", Certificate: "PEM", PrivateKey: "ENC", Enabled: true, Version: current,
 			}, backup.ExportedBlobVersions{Certificate: records})
 			require.NoError(t, err)
+			// Sealed, so the refusal below comes from the version check and
+			// not from the seal.
+			blob := sealForTest(t, f.svc, inner)
 
 			newID := uuid.New()
 			err = f.svc.RestoreCertificate(context.Background(), blob, f.userID, f.vaultID, newID)
 			require.ErrorIs(t, err, backup.ErrInvalidBlob)
+			require.NotErrorIs(t, err, backup.ErrUnsealedBlob)
+			require.NotErrorIs(t, err, backup.ErrBlobAuthentication)
 			assert.Zero(t, f.countRows(t, "SELECT COUNT(*) FROM certificates WHERE id = ?", newID))
 		})
 	}
@@ -225,7 +231,7 @@ func TestRestoreCertificate_RejectsInconsistentVersionNumbers(t *testing.T) {
 func TestBackupCertificate_HistoryWithoutVersionRepoFailsClosed(t *testing.T) {
 	f := newCertBackupFixture(t)
 	cert := f.seedCertAtVersion3(t)
-	unwired := backup.NewItemBackupService(nil, nil, f.certs, nil)
+	unwired := newTestItemBackupService(nil, nil, f.certs, nil)
 
 	_, err := unwired.BackupCertificate(context.Background(), cert.ID, f.userID, f.vaultID)
 	require.Error(t, err)

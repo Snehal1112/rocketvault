@@ -66,8 +66,9 @@ type txCapableCertVersionRepo interface {
 }
 
 // ItemBackupService provides per-item backup and restore for secrets, keys,
-// and certificates. Each backup is a base64url-encoded JSON envelope that is
-// opaque to the caller.
+// and certificates. Each backup is a JSON envelope, encrypted and
+// authenticated under a key derived from the master key (see blob_seal.go),
+// and is opaque to the caller.
 type ItemBackupService struct {
 	secretRepo      repositories.SecretRepositoryInterface
 	keyRepo         repositories.KeyRepositoryInterface
@@ -75,6 +76,9 @@ type ItemBackupService struct {
 	versionRepo     repositories.SecretVersionRepositoryInterface
 	certVersionRepo repositories.CertificateVersionRepositoryInterface
 	txBeginner      TxBeginner
+	// sealKey is set by SetSealKey. While it is nil, backup and restore fail
+	// with ErrSealKeyUnset.
+	sealKey []byte
 }
 
 // NewItemBackupService creates an ItemBackupService wired to the given repos.
@@ -152,7 +156,7 @@ type backupEnvelope struct {
 	CertificateVersions []model.CertificateVersionRecord `json:"certificate_versions,omitempty"` // certificates only
 }
 
-// BackupSecret creates a base64url-encoded backup blob for the given secret.
+// BackupSecret creates a sealed backup blob for the given secret.
 //
 // vaultID is the vault the caller's request was authorized against. See
 // BackupKey for why the scoped read replaces the previous unscoped read plus
@@ -170,7 +174,11 @@ func (s *ItemBackupService) BackupSecret(ctx context.Context, id, userID, vaultI
 	if err != nil {
 		return "", fmt.Errorf("backup secret: list versions: %w", err)
 	}
-	return encodeBlob("secret", id.String(), secret, blobVersions{Secret: versions})
+	inner, err := encodeBlob("secret", id.String(), secret, blobVersions{Secret: versions})
+	if err != nil {
+		return "", err
+	}
+	return s.sealBlob(inner)
 }
 
 // RestoreSecret decodes blob and re-inserts it as newID, owned by userID,
@@ -183,8 +191,12 @@ func (s *ItemBackupService) BackupSecret(ctx context.Context, id, userID, vaultI
 // primary key: secret_versions.id is a PRIMARY KEY, and the source secret
 // usually still exists, so reusing the blob's IDs would collide.
 func (s *ItemBackupService) RestoreSecret(ctx context.Context, blob string, userID, vaultID, newID uuid.UUID) error {
+	inner, err := s.openBlob(blob)
+	if err != nil {
+		return err
+	}
 	var secret model.Secret
-	versions, err := decodeBlob(blob, "secret", &secret)
+	versions, err := decodeBlob(inner, "secret", &secret)
 	if err != nil {
 		return err
 	}
@@ -273,7 +285,7 @@ func (s *ItemBackupService) restoreSecretWith(
 	return nil
 }
 
-// BackupKey creates a base64url-encoded backup blob for the given key.
+// BackupKey creates a sealed backup blob for the given key.
 //
 // vaultID is the vault the caller's request was authorized against, never a
 // vault taken from user input — the same rule RestoreKey follows. The scoped
@@ -293,22 +305,31 @@ func (s *ItemBackupService) BackupKey(ctx context.Context, id, userID, vaultID u
 	if err != nil {
 		return "", fmt.Errorf("backup key: list versions: %w", err)
 	}
-	return encodeBlob("key", id.String(), key, blobVersions{Key: versions})
+	inner, err := encodeBlob("key", id.String(), key, blobVersions{Key: versions})
+	if err != nil {
+		return "", err
+	}
+	return s.sealBlob(inner)
 }
 
 // RestoreKey decodes blob and re-inserts it as newID, owned by userID, into
 // vaultID — the vault authorized by the caller's request. See RestoreSecret.
 func (s *ItemBackupService) RestoreKey(ctx context.Context, blob string, userID, vaultID, newID uuid.UUID) error {
+	inner, err := s.openBlob(blob)
+	if err != nil {
+		return err
+	}
 	var key model.Key
-	versions, err := decodeBlob(blob, "key", &key)
+	versions, err := decodeBlob(inner, "key", &key)
 	if err != nil {
 		return err
 	}
 	key.ID = newID
 	key.UserID = userID
 	key.VaultID = vaultID
-	// A restore never grants exportability: the blob is unauthenticated
-	// base64 JSON, so its exportable value cannot be trusted.
+	// A restore never grants exportability. The blob is now sealed, but the
+	// exportable decision belongs to the item's creator, and a restore may
+	// land in a vault whose owners never made it.
 	key.Exportable = false
 
 	if txKeyRepo, repoOK := s.keyRepo.(txCapableKeyRepo); repoOK && s.txBeginner != nil {
@@ -371,7 +392,7 @@ func (s *ItemBackupService) restoreKeyWith(
 	return nil
 }
 
-// BackupCertificate creates a base64url-encoded backup blob for the given
+// BackupCertificate creates a sealed backup blob for the given
 // certificate, archived versions included.
 //
 // vaultID is the vault the caller's request was authorized against. See
@@ -397,7 +418,11 @@ func (s *ItemBackupService) BackupCertificate(ctx context.Context, id, userID, v
 	case cert.CurrentVersion() > 1:
 		return "", fmt.Errorf("backup certificate: %s is at version %d but no version repository is configured", id, cert.CurrentVersion())
 	}
-	return encodeBlob("certificate", id.String(), cert, blobVersions{Certificate: versions})
+	inner, err := encodeBlob("certificate", id.String(), cert, blobVersions{Certificate: versions})
+	if err != nil {
+		return "", err
+	}
+	return s.sealBlob(inner)
 }
 
 // validateCertificateVersions refuses a blob whose archived versions do not
@@ -419,8 +444,12 @@ func validateCertificateVersions(current int, versions []model.CertificateVersio
 // blob's archived versions are replayed under their own numbers. See
 // RestoreSecret.
 func (s *ItemBackupService) RestoreCertificate(ctx context.Context, blob string, userID, vaultID, newID uuid.UUID) error {
+	inner, err := s.openBlob(blob)
+	if err != nil {
+		return err
+	}
 	var cert model.Certificate
-	versions, err := decodeBlob(blob, "certificate", &cert)
+	versions, err := decodeBlob(inner, "certificate", &cert)
 	if err != nil {
 		return err
 	}

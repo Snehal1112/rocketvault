@@ -16,7 +16,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/require"
 
-	"rocketvault/internal/backup"
 	rvdb "rocketvault/internal/db"
 	"rocketvault/internal/repositories"
 	"rocketvault/internal/testutils"
@@ -202,12 +201,12 @@ func TestRestoreSecret_TxBeginnerSet_FailurePartwayRollsBackEverything(t *testin
 	f.seedTwoArchivedVersions(t)
 	ctx := context.Background()
 
-	backupSvc := backup.NewItemBackupService(f.secretRepo, nil, nil, f.versionRepo)
+	backupSvc := newTestItemBackupService(f.secretRepo, nil, nil, f.versionRepo)
 	blob, err := backupSvc.BackupSecret(ctx, f.secretID, f.userID, f.vaultID)
 	require.NoError(t, err)
 
 	failingVersions := newFailingVersionRepo(t, f.versionRepo, 2) // fail on the 2nd version
-	restoreSvc := backup.NewItemBackupService(f.secretRepo, nil, nil, failingVersions)
+	restoreSvc := newTestItemBackupService(f.secretRepo, nil, nil, failingVersions)
 	restoreSvc.SetTxBeginner(f.dbConn)
 
 	newID := uuid.New()
@@ -225,12 +224,12 @@ func TestRestoreSecret_NoTxBeginner_FailurePartwayLeavesDocumentedPartialRestore
 	f.seedTwoArchivedVersions(t)
 	ctx := context.Background()
 
-	backupSvc := backup.NewItemBackupService(f.secretRepo, nil, nil, f.versionRepo)
+	backupSvc := newTestItemBackupService(f.secretRepo, nil, nil, f.versionRepo)
 	blob, err := backupSvc.BackupSecret(ctx, f.secretID, f.userID, f.vaultID)
 	require.NoError(t, err)
 
 	failingVersions := newFailingVersionRepo(t, f.versionRepo, 2) // fail on the 2nd version
-	restoreSvc := backup.NewItemBackupService(f.secretRepo, nil, nil, failingVersions)
+	restoreSvc := newTestItemBackupService(f.secretRepo, nil, nil, failingVersions)
 	// No SetTxBeginner call: this is the pre-existing, still-supported
 	// non-transactional path (e.g. a caller that never wires one up).
 
@@ -254,11 +253,11 @@ func TestRestoreSecret_TxBeginnerSet_SuccessCommitsSecretAndAllVersions(t *testi
 	f.seedTwoArchivedVersions(t)
 	ctx := context.Background()
 
-	backupSvc := backup.NewItemBackupService(f.secretRepo, nil, nil, f.versionRepo)
+	backupSvc := newTestItemBackupService(f.secretRepo, nil, nil, f.versionRepo)
 	blob, err := backupSvc.BackupSecret(ctx, f.secretID, f.userID, f.vaultID)
 	require.NoError(t, err)
 
-	restoreSvc := backup.NewItemBackupService(f.secretRepo, nil, nil, f.versionRepo)
+	restoreSvc := newTestItemBackupService(f.secretRepo, nil, nil, f.versionRepo)
 	restoreSvc.SetTxBeginner(f.dbConn)
 
 	newID := uuid.New()
