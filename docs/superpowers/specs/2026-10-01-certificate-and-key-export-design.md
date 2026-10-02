@@ -1,7 +1,7 @@
 # Certificate and Key Export — Design
 
 **Date**: 2026-10-01
-**Status**: Proposed
+**Status**: Implemented on v-4.0.0 (2026-10-02)
 **Branch target**: v-4.0.0
 **Intent**: [2026-10-01-certificate-and-key-export.md](../intents/2026-10-01-certificate-and-key-export.md)
 **Depends on**: [2026-10-01-certificate-versioning-design.md](2026-10-01-certificate-versioning-design.md)

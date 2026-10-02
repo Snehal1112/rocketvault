@@ -437,9 +437,19 @@ PKCS12 response carries <code>pkcs12_base64</code> instead of the two PEM fields
 </tbody>
 </table>
 <p>A 401 (no session) and a 403 for a missing role come from the middleware and
-keep their usual bodies; read the status, not the body, for those.</p>
+keep their usual bodies; read the status, not the body, for those. To tell the
+two 403s apart: a 403 whose body is the <code>{&quot;error&quot;: {&quot;code&quot;: ...}}</code> object above
+means the item cannot be exported (read <code>code</code>), and a 403 with any other body
+means the caller lacks the exporter role in that vault.</p>
 <h4 id="export-caveats">Export Caveats</h4>
 <ul>
+<li><strong>Finding a certificate by name.</strong> The export routes take the certificate
+UUID. <code>GET /api/v1/vaults/{vault_name}/certificates</code> returns each
+certificate's <code>id</code> and <code>name</code>; it has no name filter and is paged with
+<code>page</code> (starting at 0) and <code>per_page</code> (default 60, maximum 200), so a client
+resolving a name must walk the pages until it finds the name or runs out.
+A certificate (or key) name is unique per vault among items that are not
+soft-deleted, so a name resolves to at most one id.</li>
 <li><strong>Existing items are permanently non-exportable.</strong> <code>exportable</code> is set only
 at creation or import and can never be changed. Re-create or re-import to
 get an exportable item.</li>

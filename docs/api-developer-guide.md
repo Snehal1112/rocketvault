@@ -535,10 +535,20 @@ The two export routes use their own error body:
 | 500 | `internal_error` | anything else, including an unbuildable issuer chain; the message is generic |
 
 A 401 (no session) and a 403 for a missing role come from the middleware and
-keep their usual bodies; read the status, not the body, for those.
+keep their usual bodies; read the status, not the body, for those. To tell the
+two 403s apart: a 403 whose body is the `{"error": {"code": ...}}` object above
+means the item cannot be exported (read `code`), and a 403 with any other body
+means the caller lacks the exporter role in that vault.
 
 #### Export Caveats
 
+- **Finding a certificate by name.** The export routes take the certificate
+  UUID. `GET /api/v1/vaults/{vault_name}/certificates` returns each
+  certificate's `id` and `name`; it has no name filter and is paged with
+  `page` (starting at 0) and `per_page` (default 60, maximum 200), so a client
+  resolving a name must walk the pages until it finds the name or runs out.
+  A certificate (or key) name is unique per vault among items that are not
+  soft-deleted, so a name resolves to at most one id.
 - **Existing items are permanently non-exportable.** `exportable` is set only
   at creation or import and can never be changed. Re-create or re-import to
   get an exportable item.
