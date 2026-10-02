@@ -286,3 +286,38 @@ func TestPostgres_DefaultVaultSeeded(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, count, "default vault must be seeded on Postgres")
 }
+
+// The claim must work on Postgres through placeholder rebinding and the real
+// users.totp_last_step column.
+func TestPostgres_TOTPStepClaim(t *testing.T) {
+	conn, cleanup := newPostgresConn(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	userID := uuid.New()
+	seedUser(t, conn, userID)
+	steps := repositories.NewTOTPStepRepository(conn)
+
+	// A realistic step: the Unix time divided by the 30 second period.
+	step := time.Now().Unix() / 30
+
+	claimed, err := steps.ClaimTOTPStep(ctx, userID, step)
+	require.NoError(t, err)
+	require.True(t, claimed, "the first use of a step must be accepted")
+
+	claimed, err = steps.ClaimTOTPStep(ctx, userID, step)
+	require.NoError(t, err)
+	require.False(t, claimed, "the same step must not be accepted twice")
+
+	claimed, err = steps.ClaimTOTPStep(ctx, userID, step-1)
+	require.NoError(t, err)
+	require.False(t, claimed, "an older step must be rejected")
+
+	claimed, err = steps.ClaimTOTPStep(ctx, userID, step+1)
+	require.NoError(t, err)
+	require.True(t, claimed, "a newer step must be accepted")
+
+	claimed, err = steps.ClaimTOTPStep(ctx, uuid.New(), step+2)
+	require.NoError(t, err)
+	require.False(t, claimed, "a missing user can never claim a step")
+}

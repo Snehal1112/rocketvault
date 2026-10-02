@@ -54,6 +54,7 @@ func setupUserDB(t *testing.T) *sql.DB {
 			role                 TEXT NOT NULL,
 			auth_provider        TEXT NOT NULL DEFAULT 'local',
 			external_idp_subject TEXT,
+			totp_last_step       INTEGER NOT NULL DEFAULT 0,
 			created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_external_idp ON users(auth_provider, external_idp_subject) WHERE external_idp_subject IS NOT NULL;
