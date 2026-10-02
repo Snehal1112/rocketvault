@@ -155,3 +155,44 @@ func TestExportThroughRealChain_MissingRoleIsAudited(t *testing.T) {
 	assert.Contains(t, audit.dump(), string(model.ActionCertificatesExportItem))
 	svc.AssertNotCalled(t, "ExportCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
+
+// TestExportThroughRealChain_NoSessionIs401 pins that both export routes, on
+// both route shapes, refuse a request without a session token. The services
+// would return key material if they were reached, so the test also proves
+// that nothing is exported.
+func TestExportThroughRealChain_NoSessionIs401(t *testing.T) {
+	keyText := "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49unauthenticated\n-----END PRIVATE KEY-----\n"
+	certID, keyID := uuid.New(), uuid.New()
+
+	certSvc := &mockCertService{}
+	certSvc.On("ExportCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&certServices.ExportCertificateResult{ID: certID, Name: "client", Version: 1, Format: "pem",
+			CertificatePEM: "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n", PrivateKeyPEM: keyText, KeyAlgorithm: "EC-P256"}, nil).Maybe()
+	keySvc := &mockKeyService{}
+	keySvc.On("ExportKey", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&keyservices.ExportKeyResult{ID: keyID, Name: "k", Type: "ECDSA", Version: 1, Format: "pem",
+			PrivateKeyPEM: keyText, KeyAlgorithm: "EC-P256"}, nil).Maybe()
+
+	router, _, _ := newExportChain(t, certSvc, keySvc, "")
+	for _, path := range []string{
+		"/api/v1/certificates/" + certID.String() + "/export",
+		"/api/v1/vaults/default/certificates/" + certID.String() + "/export",
+		"/api/v1/keys/" + keyID.String() + "/export",
+		"/api/v1/vaults/default/keys/" + keyID.String() + "/export",
+	} {
+		t.Run(path, func(t *testing.T) {
+			// The request carries no Authorization header at all.
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(`{"format":"pem"}`))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, http.StatusUnauthorized, w.Code)
+			for _, material := range []string{"BEGIN PRIVATE KEY", "BEGIN CERTIFICATE", "MIGHAgEAMBMG", "unauthenticated", "private_key_pem"} {
+				assert.NotContains(t, w.Body.String(), material, "an unauthenticated response carried export material")
+			}
+		})
+	}
+	certSvc.AssertNotCalled(t, "ExportCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	keySvc.AssertNotCalled(t, "ExportKey", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
