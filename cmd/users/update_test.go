@@ -100,7 +100,7 @@ func TestUpdateUserCommand_MultipleRoles_AdminAllowed(t *testing.T) {
 
 	tc.MockUserService.On("UpdateUser", mock.Anything, mock.MatchedBy(func(req userService.UpdateUserRequest) bool {
 		return assert.ObjectsAreEqualValues([]string{"secrets_manager", "crypto_manager"}, req.Roles)
-	})).Return(nil)
+	})).Return(&userService.UpdateUserResult{}, nil)
 
 	err := cmd.Execute()
 	require.NoError(t, err)

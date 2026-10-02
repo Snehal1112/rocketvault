@@ -35,9 +35,10 @@ func (s *retryUserService) CreateUser(ctx context.Context, req users.CreateUserR
 	})
 }
 
-// UpdateUser updates a user with retry logic for database operations
-func (s *retryUserService) UpdateUser(ctx context.Context, req users.UpdateUserRequest) error {
-	return s.retryService.ExecuteDatabaseOperation(ctx, func() error {
+// UpdateUser updates a user with retry logic for database operations.
+// The base result is passed through, so a one-time TOTP enrollment URL is not lost.
+func (s *retryUserService) UpdateUser(ctx context.Context, req users.UpdateUserRequest) (*users.UpdateUserResult, error) {
+	return retried(ctx, s.retryService, func() (*users.UpdateUserResult, error) {
 		return s.baseService.UpdateUser(ctx, req)
 	})
 }

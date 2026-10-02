@@ -118,14 +118,15 @@ a vault-scoped resource.`,
 			rolesArg = roles
 		}
 
-		if err := userSvc.UpdateUser(ctx, userService.UpdateUserRequest{
+		result, err := userSvc.UpdateUser(ctx, userService.UpdateUserRequest{
 			UserID:      id,
 			CallerID:    claims.UserID,
 			CallerRoles: claims.Roles,
 			Username:    usernamePtr,
 			Password:    passwordPtr,
 			Roles:       rolesArg,
-		}); err != nil {
+		})
+		if err != nil {
 			logger := serviceContainer.GetLogger()
 			logger.LogAuditError(claims.UserID.String(), "update_user", "failed", fmt.Sprintf("failed to update user: %s", err), err)
 			return fmt.Errorf("failed to update user: %w", err)
@@ -133,7 +134,15 @@ a vault-scoped resource.`,
 
 		logger := serviceContainer.GetLogger()
 		logger.LogAuditInfo(claims.UserID.String(), "update_user", "success", fmt.Sprintf("user updated: %s", id))
-		fmt.Printf("User %s updated successfully\n", id)
+		out := cmd.OutOrStdout()
+		fmt.Fprintf(out, "User %s updated successfully\n", id) //nolint:errcheck
+		// The enrollment URL is a credential. It goes to stdout once and never to the log.
+		if result != nil && result.TOTPEnrollmentURL != "" {
+			fmt.Fprintf(out, "TOTP Secret: %s\n"+ //nolint:errcheck
+				"\nThis account had no second factor. Add this TOTP secret to your authenticator app now.\n"+
+				"It is shown only once, and local password login requires it.\n",
+				result.TOTPEnrollmentURL)
+		}
 		return nil
 	},
 }

@@ -127,9 +127,12 @@ func (m *MockUserService) CreateUser(ctx context.Context, req users.CreateUserRe
 	return args.Get(0).(*users.CreateUserResult), args.Error(1)
 }
 
-func (m *MockUserService) UpdateUser(ctx context.Context, req users.UpdateUserRequest) error {
+func (m *MockUserService) UpdateUser(ctx context.Context, req users.UpdateUserRequest) (*users.UpdateUserResult, error) {
 	args := m.Called(ctx, req)
-	return args.Error(0)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*users.UpdateUserResult), args.Error(1)
 }
 
 func (m *MockUserService) GetUser(ctx context.Context, userID uuid.UUID) (*model.User, error) {
@@ -891,21 +894,23 @@ func TestRetryUser_CreateUser_Error(t *testing.T) {
 func TestRetryUser_UpdateUser_Success(t *testing.T) {
 	base := &MockUserService{}
 	req := users.UpdateUserRequest{UserID: uuid.New()}
-	base.On("UpdateUser", mock.Anything, req).Return(nil)
+	want := &users.UpdateUserResult{TOTPEnrollmentURL: "otpauth://totp/PasswordManager:alice?secret=ABC"}
+	base.On("UpdateUser", mock.Anything, req).Return(want, nil)
 
 	svc := NewRetryUserService(base, newNoop())
-	err := svc.UpdateUser(ctx, req)
+	got, err := svc.UpdateUser(ctx, req)
 	assert.NoError(t, err)
+	assert.Equal(t, want, got, "the wrapper must not drop the one-time enrollment URL")
 	base.AssertExpectations(t)
 }
 
 func TestRetryUser_UpdateUser_Error(t *testing.T) {
 	base := &MockUserService{}
 	req := users.UpdateUserRequest{UserID: uuid.New()}
-	base.On("UpdateUser", mock.Anything, req).Return(fmt.Errorf("update failed"))
+	base.On("UpdateUser", mock.Anything, req).Return(nil, fmt.Errorf("update failed"))
 
 	svc := NewRetryUserService(base, newNoop())
-	err := svc.UpdateUser(ctx, req)
+	_, err := svc.UpdateUser(ctx, req)
 	assert.Error(t, err)
 	base.AssertExpectations(t)
 }

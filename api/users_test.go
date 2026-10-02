@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"rocketvault/app"
+	"rocketvault/common"
 	rvconfig "rocketvault/config"
 	"rocketvault/internal/backup"
 	"rocketvault/internal/cache"
@@ -66,9 +68,12 @@ func (m *mockUserService) CreateUser(ctx context.Context, req userServices.Creat
 	return args.Get(0).(*userServices.CreateUserResult), args.Error(1)
 }
 
-func (m *mockUserService) UpdateUser(ctx context.Context, req userServices.UpdateUserRequest) error {
+func (m *mockUserService) UpdateUser(ctx context.Context, req userServices.UpdateUserRequest) (*userServices.UpdateUserResult, error) {
 	args := m.Called(ctx, req)
-	return args.Error(0)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*userServices.UpdateUserResult), args.Error(1)
 }
 
 func (m *mockUserService) GetUser(ctx context.Context, userID uuid.UUID) (*model.User, error) {
@@ -885,7 +890,7 @@ func TestUpdateUser_NonAdminUpdatingOtherUser_Returns403(t *testing.T) {
 func TestUpdateUser_ServiceError_Returns500(t *testing.T) {
 	svc := &mockUserService{}
 	targetID := uuid.New()
-	svc.On("UpdateUser", mock.Anything, mock.Anything).Return(errors.New("db error"))
+	svc.On("UpdateUser", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
 
 	c := newUserCtx(svc, nil, uAdminClaims("aaa"))
 	c.Params = &ApiParams{UserID: targetID.String(), PerPage: 60}
@@ -904,7 +909,7 @@ func TestUpdateUser_ServiceError_Returns500(t *testing.T) {
 func TestUpdateUser_Success_Returns200(t *testing.T) {
 	svc := &mockUserService{}
 	targetID := uuid.New()
-	svc.On("UpdateUser", mock.Anything, mock.Anything).Return(nil)
+	svc.On("UpdateUser", mock.Anything, mock.Anything).Return(&userServices.UpdateUserResult{}, nil)
 	svc.On("GetUser", mock.Anything, targetID).Return(&model.User{
 		ID: targetID, Username: "newname", Roles: []string{model.RoleAdmin}, CreatedAt: time.Now(),
 	}, nil)
@@ -920,6 +925,105 @@ func TestUpdateUser_Success_Returns200(t *testing.T) {
 	}
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+}
+
+// A password set that enrolls TOTP must hand the otpauth URL back once.
+func TestUpdateUser_PasswordEnrollment_ReturnsTOTPURL(t *testing.T) {
+	svc := &mockUserService{}
+	targetID := uuid.New()
+	enrollURL := "otpauth://totp/PasswordManager:alice?secret=ABC"
+	svc.On("UpdateUser", mock.Anything, mock.MatchedBy(func(req userServices.UpdateUserRequest) bool {
+		return req.Password != nil && *req.Password == "newpass123"
+	})).Return(&userServices.UpdateUserResult{TOTPEnrollmentURL: enrollURL}, nil)
+	svc.On("GetUser", mock.Anything, targetID).Return(&model.User{
+		ID: targetID, Username: "alice", Roles: []string{model.RoleUser}, CreatedAt: time.Now(),
+	}, nil)
+
+	c := newUserCtx(svc, nil, uViewerClaims(targetID.String()))
+	c.Params = &ApiParams{UserID: targetID.String(), PerPage: 60}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/users/"+targetID.String(), encodeBody(map[string]string{"password": "newpass123"}))
+
+	updateUser(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	require.Equal(t, http.StatusOK, w.Code)
+	// The body carries a TOTP secret, so no cache may keep it.
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	var body model.UserResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, enrollURL, body.TOTPSecret)
+}
+
+// An update that enrolls nothing must not carry a totp_secret field at all.
+func TestUpdateUser_NoEnrollment_OmitsTOTPSecret(t *testing.T) {
+	svc := &mockUserService{}
+	targetID := uuid.New()
+	svc.On("UpdateUser", mock.Anything, mock.Anything).Return(&userServices.UpdateUserResult{}, nil)
+	svc.On("GetUser", mock.Anything, targetID).Return(&model.User{
+		ID: targetID, Username: "alice", Roles: []string{model.RoleUser}, TOTPSecret: "STOREDSECRET", CreatedAt: time.Now(),
+	}, nil)
+
+	c := newUserCtx(svc, nil, uViewerClaims(targetID.String()))
+	c.Params = &ApiParams{UserID: targetID.String(), PerPage: 60}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/users/"+targetID.String(), encodeBody(map[string]string{"password": "newpass123"}))
+
+	updateUser(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.NotContains(t, w.Body.String(), "totp_secret")
+	assert.NotContains(t, w.Body.String(), "STOREDSECRET")
+}
+
+// enrollRouteContainer allows every endpoint, so the real route and its
+// ApiSessionRequired wrapper can be exercised end to end.
+type enrollRouteContainer struct {
+	userSvcContainer
+}
+
+func (c *enrollRouteContainer) GetRBACService() authzServices.RBACService {
+	return permissiveRBAC{}
+}
+
+// The enrollment response must be marked no-store on the real
+// PUT /api/v1/users/{id} route, not only when the handler is called directly.
+func TestUpdateUserRoute_PasswordEnrollment_NoStore(t *testing.T) {
+	svc := &mockUserService{}
+	targetID := uuid.New()
+	enrollURL := "otpauth://totp/PasswordManager:alice?secret=ABC"
+	svc.On("UpdateUser", mock.Anything, mock.Anything).
+		Return(&userServices.UpdateUserResult{TOTPEnrollmentURL: enrollURL}, nil)
+	svc.On("GetUser", mock.Anything, targetID).Return(&model.User{
+		ID: targetID, Username: "alice", Roles: []string{model.RoleUser}, CreatedAt: time.Now(),
+	}, nil)
+
+	application := &app.App{
+		ServiceContainer: &enrollRouteContainer{userSvcContainer{userSvc: svc}},
+		Logger:           userTestLog(),
+	}
+	router := mux.NewRouter()
+	a := &API{App: application, BaseRoutes: &Routes{Users: router.PathPrefix("/api/v1/users").Subrouter()}}
+	a.InitUsers()
+
+	ctx := context.WithValue(context.Background(), common.UserIDKey, targetID.String())
+	ctx = context.WithValue(ctx, common.RoleKey, []string{model.RoleUser})
+	r := httptest.NewRequestWithContext(ctx, http.MethodPut, "/api/v1/users/"+targetID.String(),
+		encodeBody(map[string]string{"password": "newpass123"}))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	var body model.UserResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, enrollURL, body.TOTPSecret)
 	svc.AssertExpectations(t)
 }
 

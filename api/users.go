@@ -307,14 +307,15 @@ func updateUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	// Update user using service. Role validation (allowed values,
 	// at-least-one-required, admin-only-can-change) is delegated entirely
 	// to UserService.
-	if err := userSvc.UpdateUser(r.Context(), userService.UpdateUserRequest{
+	result, err := userSvc.UpdateUser(r.Context(), userService.UpdateUserRequest{
 		UserID:      userID,
 		CallerID:    callerID,
 		CallerRoles: currentRoles,
 		Username:    usernamePtr,
 		Password:    passwordPtr,
 		Roles:       req.Roles,
-	}); err != nil {
+	})
+	if err != nil {
 		// Role validation errors from UserService ("invalid role: ...",
 		// "at least one role is required") are client errors, not server
 		// errors -- surface them as 400s instead of masking as 500.
@@ -341,7 +342,13 @@ func updateUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		CreatedAt: user.CreatedAt.Format(time.RFC3339),
 	}
 
-	// Send response.
+	// The enrollment URL is returned only by the call that generated the secret.
+	if result != nil {
+		response.TOTPSecret = result.TOTPEnrollmentURL
+	}
+
+	// Send response. It may carry a TOTP secret, so no cache may keep it.
+	setNoStore(w)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(response.ToJson())) //nolint:errcheck,gosec
 

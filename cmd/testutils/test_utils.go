@@ -438,9 +438,12 @@ func (m *MockUserService) GetUser(ctx context.Context, userID uuid.UUID) (*model
 	return args.Get(0).(*model.User), args.Error(1)
 }
 
-func (m *MockUserService) UpdateUser(ctx context.Context, req userServices.UpdateUserRequest) error {
+func (m *MockUserService) UpdateUser(ctx context.Context, req userServices.UpdateUserRequest) (*userServices.UpdateUserResult, error) {
 	args := m.Called(ctx, req)
-	return args.Error(0)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*userServices.UpdateUserResult), args.Error(1)
 }
 
 func (m *MockUserService) DeleteUser(ctx context.Context, userID uuid.UUID) error {

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"rocketvault/cmd/testutils"
 	"rocketvault/common"
@@ -269,7 +271,7 @@ func TestUpdateCmdRunE_InvalidRole(t *testing.T) {
 	// forwards --new-role verbatim and surfaces whatever error UpdateUser
 	// returns.
 	tc.MockUserService.On("UpdateUser", mock.Anything, mock.Anything).
-		Return(fmt.Errorf("invalid role: superuser"))
+		Return(nil, fmt.Errorf("invalid role: superuser"))
 
 	err := cmd.Execute()
 	assert.ErrorContains(t, err, "invalid role")
@@ -288,7 +290,7 @@ func TestUpdateCmdRunE_Success(t *testing.T) {
 	// see the comment above `var rolesArg []string` there.
 	tc.MockUserService.On("UpdateUser", mock.Anything, mock.MatchedBy(func(r userServices.UpdateUserRequest) bool {
 		return r.UserID == targetID && r.Username != nil && *r.Username == "renamed" && r.Roles == nil
-	})).Return(nil)
+	})).Return(&userServices.UpdateUserResult{}, nil)
 
 	cmd := newUpdateTestCmd()
 	cmd.SetContext(ctx)
@@ -303,11 +305,58 @@ func TestUpdateCmdRunE_ServiceError(t *testing.T) {
 	targetID := uuid.New()
 	ctx := newUsersTestCtx(tc.MockContainer)
 
-	tc.MockUserService.On("UpdateUser", mock.Anything, mock.Anything).Return(fmt.Errorf("update failed"))
+	tc.MockUserService.On("UpdateUser", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("update failed"))
 
 	cmd := newUpdateTestCmd()
 	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{targetID.String(), "--new-username=x"})
 	err := cmd.Execute()
 	assert.ErrorContains(t, err, "failed to update user")
+}
+
+func TestUpdateCmdRunE_PasswordEnrollment_PrintsTOTPURL(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+	targetID := uuid.New()
+	ctx := newUsersTestCtx(tc.MockContainer)
+	enrollURL := "otpauth://totp/PasswordManager:alice?secret=ABC"
+
+	// Capture the audit log, which must never carry the enrollment URL.
+	var logBuf bytes.Buffer
+	tc.Logger.SetOutput(&logBuf)
+
+	tc.MockUserService.On("UpdateUser", mock.Anything, mock.MatchedBy(func(r userServices.UpdateUserRequest) bool {
+		return r.Password != nil && *r.Password == "newpass123"
+	})).Return(&userServices.UpdateUserResult{TOTPEnrollmentURL: enrollURL}, nil)
+
+	var out bytes.Buffer
+	cmd := newUpdateTestCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{targetID.String(), "--new-password=newpass123"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), enrollURL)
+	assert.Equal(t, 1, strings.Count(out.String(), enrollURL), "the URL is printed exactly once")
+	assert.Contains(t, out.String(), "shown only once")
+	assert.NotContains(t, logBuf.String(), enrollURL)
+	assert.NotContains(t, logBuf.String(), "secret=ABC")
+}
+
+func TestUpdateCmdRunE_NoEnrollment_PrintsNoTOTPSecret(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+	targetID := uuid.New()
+	ctx := newUsersTestCtx(tc.MockContainer)
+
+	tc.MockUserService.On("UpdateUser", mock.Anything, mock.Anything).
+		Return(&userServices.UpdateUserResult{}, nil)
+
+	var out bytes.Buffer
+	cmd := newUpdateTestCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{targetID.String(), "--new-password=newpass123"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "updated successfully")
+	assert.NotContains(t, out.String(), "TOTP Secret")
 }

@@ -1,6 +1,7 @@
 package users
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -435,7 +436,7 @@ func TestUpdateUser_RoleChangeByNonAdmin_Forbidden(t *testing.T) {
 		Roles:       []string{model.RoleSecretsManager},
 	}
 
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "forbidden")
@@ -456,7 +457,7 @@ func TestUpdateUser_InvalidRole(t *testing.T) {
 		Roles:       []string{"super_hacker"},
 	}
 
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid role")
@@ -478,7 +479,7 @@ func TestUpdateUser_UserNotFound(t *testing.T) {
 		CallerRoles: []string{model.RoleUser},
 	}
 
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "user not found")
@@ -509,7 +510,7 @@ func TestUpdateUser_PasswordHashFails(t *testing.T) {
 		Password:    &newPw,
 	}
 
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to hash password")
@@ -537,7 +538,7 @@ func TestUpdateUser_RepoUpdateFails(t *testing.T) {
 		CallerRoles: []string{model.RoleUser},
 	}
 
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to update user")
@@ -569,7 +570,7 @@ func TestUpdateUser_SuccessUsernameChange(t *testing.T) {
 		Username:    &newUsername,
 	}
 
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 	require.NoError(t, err)
 	repo.AssertExpectations(t)
 }
@@ -599,7 +600,7 @@ func TestUpdateUser_SuccessRoleChange(t *testing.T) {
 		Roles:       []string{model.RoleSecretsManager},
 	}
 
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 	require.NoError(t, err)
 	repo.AssertExpectations(t)
 }
@@ -620,7 +621,7 @@ func TestUpdateUser_SelfPromotion_Blocked(t *testing.T) {
 		Roles:       []string{model.RoleUser, model.RoleAdmin}, // self-promotion attempt
 	}
 
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "forbidden")
 	repo.AssertNotCalled(t, "Update")
@@ -646,7 +647,7 @@ func TestUpdateUser_AdminCanGrantMultipleRoles(t *testing.T) {
 		CallerRoles: []string{model.RoleAdmin},
 		Roles:       []string{model.RoleSecretsManager, model.RoleCryptoManager},
 	}
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 	require.NoError(t, err)
 	repo.AssertExpectations(t)
 }
@@ -664,7 +665,7 @@ func TestUpdateUser_InvalidRoleInList_Rejected(t *testing.T) {
 		CallerRoles: []string{model.RoleAdmin},
 		Roles:       []string{model.RoleAdmin, "not_a_real_role"},
 	}
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid role")
 	repo.AssertNotCalled(t, "Update")
@@ -699,7 +700,7 @@ func TestUpdateUser_RoleSubstringBypass_Rejected(t *testing.T) {
 				CallerRoles: []string{model.RoleAdmin},
 				Roles:       []string{tt.role},
 			}
-			err := svc.UpdateUser(context.Background(), req)
+			_, err := svc.UpdateUser(context.Background(), req)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "invalid role")
 			repo.AssertNotCalled(t, "Update")
@@ -723,7 +724,7 @@ func TestUpdateUser_WhitespaceOnlyRoles_Rejected(t *testing.T) {
 		CallerRoles: []string{model.RoleAdmin},
 		Roles:       []string{"  "},
 	}
-	err := svc.UpdateUser(context.Background(), req)
+	_, err := svc.UpdateUser(context.Background(), req)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid role")
@@ -986,7 +987,7 @@ func TestUpdateUser_AllValidRoles_Accepted(t *testing.T) {
 				CallerRoles: []string{model.RoleAdmin},
 				Roles:       []string{role},
 			}
-			err := svc.UpdateUser(context.Background(), req)
+			_, err := svc.UpdateUser(context.Background(), req)
 			require.NoError(t, err)
 		})
 	}
@@ -1099,7 +1100,7 @@ func TestUpdateUser_SystemUser_Refused(t *testing.T) {
 	svc := newService(repo, &mockPasswordService{}, &mockTOTPService{})
 
 	newName := "attacker"
-	err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+	_, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
 		UserID:      uuid.MustParse(model.SystemUserID),
 		CallerRoles: []string{model.RoleAdmin},
 		Username:    &newName,
@@ -1121,4 +1122,176 @@ func TestDeleteUser_OrdinaryUser_Allowed(t *testing.T) {
 
 	require.NoError(t, svc.DeleteUser(context.Background(), id))
 	repo.AssertExpectations(t)
+}
+
+// ---------------------------------------------------------------------------
+// TOTP enrollment on password set (B73)
+// ---------------------------------------------------------------------------
+
+func TestUpdateUser_PasswordOnAccountWithoutTOTP_EnrollsSecret(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	pw := &mockPasswordService{}
+	totpSvc := &mockTOTPService{}
+	svc := newService(repo, pw, totpSvc)
+
+	userID := uuid.New()
+	existing := &model.User{
+		ID:           userID,
+		Username:     "oidc-alice",
+		Roles:        []string{model.RoleUser},
+		AuthProvider: model.AuthProviderOIDC,
+		TOTPSecret:   "",
+	}
+	key := realTOTPKey(t)
+	repo.On("Read", mock.Anything, userID).Return(existing, nil)
+	pw.On("HashPassword", "newpass123").Return("hashed-new", nil)
+	totpSvc.On("GenerateSecret", "PasswordManager", "oidc-alice").Return(key, nil)
+	repo.On("Update", mock.Anything, mock.MatchedBy(func(u *model.User) bool {
+		return u.PasswordHash == "hashed-new" && u.TOTPSecret == key.Secret()
+	})).Return(nil)
+
+	newPw := "newpass123"
+	result, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID:      userID,
+		CallerID:    userID,
+		CallerRoles: []string{model.RoleUser},
+		Password:    &newPw,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, key.URL(), result.TOTPEnrollmentURL)
+	assert.Contains(t, result.TOTPEnrollmentURL, "otpauth://totp/")
+	repo.AssertExpectations(t)
+	totpSvc.AssertExpectations(t)
+}
+
+func TestUpdateUser_PasswordOnEnrolledAccount_KeepsSecret(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	pw := &mockPasswordService{}
+	totpSvc := &mockTOTPService{}
+	svc := newService(repo, pw, totpSvc)
+
+	userID := uuid.New()
+	existing := &model.User{ID: userID, Username: "bob", Roles: []string{model.RoleUser}, TOTPSecret: "EXISTINGSECRET"}
+	repo.On("Read", mock.Anything, userID).Return(existing, nil)
+	pw.On("HashPassword", "newpass123").Return("hashed-new", nil)
+	repo.On("Update", mock.Anything, mock.MatchedBy(func(u *model.User) bool {
+		return u.PasswordHash == "hashed-new" && u.TOTPSecret == "EXISTINGSECRET"
+	})).Return(nil)
+
+	newPw := "newpass123"
+	result, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerID: userID, CallerRoles: []string{model.RoleUser}, Password: &newPw,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.TOTPEnrollmentURL)
+	totpSvc.AssertNotCalled(t, "GenerateSecret", mock.Anything, mock.Anything)
+	repo.AssertExpectations(t)
+}
+
+func TestUpdateUser_UsernameOnlyOnAccountWithoutTOTP_DoesNotEnroll(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	totpSvc := &mockTOTPService{}
+	svc := newService(repo, &mockPasswordService{}, totpSvc)
+
+	userID := uuid.New()
+	existing := &model.User{ID: userID, Username: "oidc-carol", Roles: []string{model.RoleUser}, TOTPSecret: ""}
+	repo.On("Read", mock.Anything, userID).Return(existing, nil)
+	repo.On("Update", mock.Anything, mock.MatchedBy(func(u *model.User) bool {
+		return u.Username == "carol2" && u.TOTPSecret == ""
+	})).Return(nil)
+
+	newName := "carol2"
+	result, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerRoles: []string{model.RoleUser}, Username: &newName,
+	})
+
+	require.NoError(t, err)
+	assert.Empty(t, result.TOTPEnrollmentURL)
+	totpSvc.AssertNotCalled(t, "GenerateSecret", mock.Anything, mock.Anything)
+}
+
+func TestUpdateUser_EnrollmentSecretGenerationFails(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	pw := &mockPasswordService{}
+	totpSvc := &mockTOTPService{}
+	svc := newService(repo, pw, totpSvc)
+
+	userID := uuid.New()
+	existing := &model.User{ID: userID, Username: "oidc-dave", Roles: []string{model.RoleUser}}
+	repo.On("Read", mock.Anything, userID).Return(existing, nil)
+	pw.On("HashPassword", "newpass123").Return("hashed-new", nil)
+	totpSvc.On("GenerateSecret", "PasswordManager", "oidc-dave").Return(nil, errors.New("rng failure"))
+
+	newPw := "newpass123"
+	result, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerRoles: []string{model.RoleUser}, Password: &newPw,
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to generate TOTP secret")
+	repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+}
+
+// recordingPersister captures every audit record the service writes.
+type recordingPersister struct {
+	records []string
+}
+
+func (p *recordingPersister) PersistAudit(userID, action, details string) error {
+	p.records = append(p.records, userID+" "+action+" "+details)
+	return nil
+}
+
+// The generated secret is a credential, so neither the audit log nor the
+// persisted audit records may carry the secret or its otpauth URL.
+func TestUpdateUser_Enrollment_NeverLogsOrAuditsSecret(t *testing.T) {
+	t.Parallel()
+	repo := &mockUserRepository{}
+	pw := &mockPasswordService{}
+	totpSvc := &mockTOTPService{}
+
+	var logBuf bytes.Buffer
+	base := logrus.New()
+	base.SetOutput(&logBuf)
+	logger := &logging.Logger{Logger: base}
+	persister := &recordingPersister{}
+	logger.SetAuditPersister(persister)
+	svc := NewUserService(UserServiceConfig{
+		UserRepository:  repo,
+		PasswordService: pw,
+		TOTPService:     totpSvc,
+		Logger:          logger,
+	})
+
+	userID := uuid.New()
+	existing := &model.User{ID: userID, Username: "oidc-erin", Roles: []string{model.RoleUser}}
+	key := realTOTPKey(t)
+	repo.On("Read", mock.Anything, userID).Return(existing, nil)
+	pw.On("HashPassword", "newpass123").Return("hashed-new", nil)
+	totpSvc.On("GenerateSecret", "PasswordManager", "oidc-erin").Return(key, nil)
+	repo.On("Update", mock.Anything, mock.Anything).Return(nil)
+
+	newPw := "newpass123"
+	result, err := svc.UpdateUser(context.Background(), UpdateUserRequest{
+		UserID: userID, CallerID: userID, CallerRoles: []string{model.RoleUser}, Password: &newPw,
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.TOTPEnrollmentURL)
+	require.NotEmpty(t, persister.records, "the enrollment must still be audited")
+	assert.Contains(t, logBuf.String(), "enroll_totp")
+	assert.NotContains(t, logBuf.String(), key.Secret())
+	for _, rec := range persister.records {
+		assert.NotContains(t, rec, key.Secret())
+		assert.NotContains(t, rec, "otpauth://")
+	}
 }
