@@ -1446,7 +1446,8 @@ explicit about carrying history. Nothing tested for the absence.
 
 **Security note**: a secret backup blob now carries every historical secret
 value, so it is exactly as sensitive as a key backup blob — the response
-body is a merely base64url-encoded, not encrypted, JSON envelope.
+body is a merely base64url-encoded, not encrypted, JSON envelope
+(superseded: item-backup blobs have been sealed since B76).
 
 **Back-compat**: the new field is `omitempty` and additive, so blobs taken
 before this change decode with a nil slice and restore unchanged — pinned by
@@ -4499,6 +4500,11 @@ wrapped driver error and assert a 500 with no driver text.
 
 **Status**: Open (GitHub issue #53; found 2026-10-02 during the final review
 of the secrets-and-error-responses plan).
+
+**Update (B76)**: item-backup blobs are sealed under a master-key-derived
+key, so a restore now accepts only a blob this server produced, unmodified.
+That closes the "crafted blob" half of this entry. Running
+`ValidateSecretCreate` on the decoded secret is still open.
 **Severity**: Low — not an escalation today, because only Key Vault
 Administrator and Key Vault Secrets Officer hold `secrets/restore/action`, and
 both also hold `secrets/setSecret`; it is a validation and integrity gap

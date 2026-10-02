@@ -316,6 +316,21 @@ IDs; this is a deliberate divergence). Every route below also exists under
 <code>/api/v1/vaults/{vault_name}/certificates/...</code>. No certificate response carries
 a PEM or a private key, except the export endpoint described under &quot;Export a
 Certificate with its Private Key&quot; below.</p>
+<h4 id="create-a-certificate">Create a Certificate</h4>
+<p><code>POST /api/v1/certificates</code> and <code>POST /api/v1/vaults/{vault_name}/certificates</code>
+issue a certificate over an existing key given by <code>key_id</code>. They require the
+<code>Microsoft.KeyVault/vaults/certificates/create</code> and
+<code>Microsoft.KeyVault/vaults/keys/sign/action</code> data actions in the vault, so a
+principal holding only Key Vault Certificates Officer is refused with <code>403</code>
+(Key Vault Crypto User, Crypto Officer and Administrator hold <code>keys/sign</code>). The
+<code>keys/sign</code> check runs before the request's <code>ca_cert_id</code> is parsed, so a
+caller without it gets <code>403</code> even if that field is malformed.
+<code>validity_days</code> must not exceed 36500 (<code>400</code>). The key must be owned by the
+caller and be enabled, not revoked, and inside its validity window; a CA
+certificate named by <code>ca_cert_id</code> must be owned by the caller, and its own key
+must be usable the same way. Status codes: <code>403</code> for another user's key or CA,
+or an unusable key; <code>404</code> for a missing key or CA certificate; <code>500</code> only for a
+database fault.</p>
 <h4 id="renew-a-certificate">Renew a Certificate</h4>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">POST /api/v1/certificates/{certificate_id}/renew
 Authorization: Bearer &lt;token&gt;
@@ -324,8 +339,14 @@ Content-Type: application/json
 {&quot;validity_days&quot;: 90}
 </pre></div>
 <p>The body is optional; without <code>validity_days</code> the new version keeps the
-current version's validity period. Requires the
-<code>Microsoft.KeyVault/vaults/certificates/create</code> data action.</p>
+current version's validity period, capped at 36500 days. An explicit
+<code>validity_days</code> must be between 1 and 36500, or the request answers <code>400</code>.
+Requires the <code>Microsoft.KeyVault/vaults/certificates/create</code> and
+<code>Microsoft.KeyVault/vaults/keys/sign/action</code> data actions, and an explicit
+deny on <code>(keys, sign)</code> refuses it too. Key Vault Certificates Officer alone is
+not enough: Administrator, Key Vault Crypto Officer and Key Vault Crypto User
+hold <code>keys/sign</code>. The refusal is a <code>403</code> audited as <code>denied</code>, whether an
+explicit deny or a missing role grant caused it.</p>
 <p><strong>Response:</strong> <code>200 OK</code>, the new version's metadata:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">json</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">{
   &quot;certificate_id&quot;: &quot;550e8400-e29b-41d4-a716-446655440000&quot;,
@@ -338,10 +359,13 @@ current version's validity period. Requires the
 }
 </pre></div>
 <p>Renewal re-signs over the certificate's existing key, so the caller must own
-that key: <code>403</code> means the key belongs to another user. <code>409</code> means the
-certificate is disabled or outside its validity window, its key is no longer
-available, it was signed by a CA this installation no longer records, or a
-concurrent renewal won; re-read and retry only in the last case.</p>
+that key: <code>403</code> means the key belongs to another user, or the caller lacks
+<code>keys/sign</code>. <code>409</code> means the certificate is disabled or outside its validity
+window, its key is no longer available, its key (or its signing CA's key) is
+revoked, disabled or outside its validity window, it was signed by a CA this
+installation no longer records, or a concurrent renewal won; re-read and retry
+only in the last case. A database fault while reading the key answers <code>500</code>,
+not <code>409</code>.</p>
 <h4 id="list-and-read-versions">List and Read Versions</h4>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">GET /api/v1/certificates/{certificate_id}/versions
 GET /api/v1/certificates/{certificate_id}/versions/{version}

@@ -1012,7 +1012,7 @@ echo $TOKEN | cut -d. -f2 | base64 -d | python3 -m json.tool</pre>
       <tr><td><code>Key Vault Secrets Officer</code></td><td>Full secret control</td></tr>
       <tr><td><code>Key Vault Crypto User</code></td><td>Use key material: encrypt, decrypt, sign, verify, wrap, unwrap</td></tr>
       <tr><td><code>Key Vault Crypto Officer</code></td><td>Full key control, including create, import, delete, rotation</td></tr>
-      <tr><td><code>Key Vault Certificates Officer</code></td><td>Full certificate control</td></tr>
+      <tr><td><code>Key Vault Certificates Officer</code></td><td>Full certificate control; issuing or renewing also needs a role with <code>keys/sign</code>, such as <code>Key Vault Crypto User</code></td></tr>
       <tr><td><code>Key Vault Purge Operator</code></td><td>Permanently purge a soft-deleted vault</td></tr>
       <tr><td><code>Key Vault Certificate User</code></td><td>Read certificates — currently identical to Reader's certificate access; gains full parity once certificates are linked to key/secret material</td></tr>
       <tr><td><code>Key Vault Crypto Service Encryption User</code></td><td>Read key metadata plus wrap/unwrap only — narrower than Crypto User</td></tr>
@@ -1776,7 +1776,7 @@ curl -s -X POST $BASE/api/v1/keys -H "Authorization: Bearer $TOKEN" \
 <section id="backup">
   <h2>18. Backup &amp; Restore</h2>
   <h3>What it is</h3>
-  <p>Two levels: full database backups via the CLI, and per-item base64url-encoded (not encrypted) backup/restore blobs for individual secrets, keys, and certificates via the API.</p>
+  <p>Two levels: full database backups via the CLI, and per-item backup/restore blobs, sealed under a master-key-derived key (blobs from before v4.11.0 no longer restore), for individual secrets, keys, and certificates via the API.</p>
   <h3>Full backup (CLI)</h3>
   <pre class="code">rocketvault backup create  --username admin --password admin123 --totp-code 123456
 rocketvault backup list    --username admin --password admin123 --totp-code 123456

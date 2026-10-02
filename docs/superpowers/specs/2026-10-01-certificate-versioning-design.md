@@ -134,6 +134,7 @@ No new data actions or roles. `mapCertificateAction` and `mapDeletedAction`
 - The certificate blob gains an additive `certificate_versions` field
   (`backupEnvelope`, `blobVersions` get a certificate slot; never rename or
   retype, per the existing comment). A blob without it restores unchanged.
+- Amended 2026-10-03 (B76): blobs are now sealed. A pre-versioning inner envelope still restores once sealed, but a blob taken before the seal no longer restores at all.
 - `restoreCertificateWith` creates the certificate, replays versions under the
   same numbers, then applies purge protection, in one transaction.
 - `purgeItem`, `purgeVaultContents` and `deleteItemWithTags`

@@ -409,6 +409,23 @@ IDs; this is a deliberate divergence). Every route below also exists under
 a PEM or a private key, except the export endpoint described under "Export a
 Certificate with its Private Key" below.
 
+#### Create a Certificate
+
+`POST /api/v1/certificates` and `POST /api/v1/vaults/{vault_name}/certificates`
+issue a certificate over an existing key given by `key_id`. They require the
+`Microsoft.KeyVault/vaults/certificates/create` and
+`Microsoft.KeyVault/vaults/keys/sign/action` data actions in the vault, so a
+principal holding only Key Vault Certificates Officer is refused with `403`
+(Key Vault Crypto User, Crypto Officer and Administrator hold `keys/sign`). The
+`keys/sign` check runs before the request's `ca_cert_id` is parsed, so a
+caller without it gets `403` even if that field is malformed.
+`validity_days` must not exceed 36500 (`400`). The key must be owned by the
+caller and be enabled, not revoked, and inside its validity window; a CA
+certificate named by `ca_cert_id` must be owned by the caller, and its own key
+must be usable the same way. Status codes: `403` for another user's key or CA,
+or an unusable key; `404` for a missing key or CA certificate; `500` only for a
+database fault.
+
 #### Renew a Certificate
 
 ```http
@@ -420,8 +437,14 @@ Content-Type: application/json
 ```
 
 The body is optional; without `validity_days` the new version keeps the
-current version's validity period. Requires the
-`Microsoft.KeyVault/vaults/certificates/create` data action.
+current version's validity period, capped at 36500 days. An explicit
+`validity_days` must be between 1 and 36500, or the request answers `400`.
+Requires the `Microsoft.KeyVault/vaults/certificates/create` and
+`Microsoft.KeyVault/vaults/keys/sign/action` data actions, and an explicit
+deny on `(keys, sign)` refuses it too. Key Vault Certificates Officer alone is
+not enough: Administrator, Key Vault Crypto Officer and Key Vault Crypto User
+hold `keys/sign`. The refusal is a `403` audited as `denied`, whether an
+explicit deny or a missing role grant caused it.
 
 **Response:** `200 OK`, the new version's metadata:
 
@@ -438,10 +461,13 @@ current version's validity period. Requires the
 ```
 
 Renewal re-signs over the certificate's existing key, so the caller must own
-that key: `403` means the key belongs to another user. `409` means the
-certificate is disabled or outside its validity window, its key is no longer
-available, it was signed by a CA this installation no longer records, or a
-concurrent renewal won; re-read and retry only in the last case.
+that key: `403` means the key belongs to another user, or the caller lacks
+`keys/sign`. `409` means the certificate is disabled or outside its validity
+window, its key is no longer available, its key (or its signing CA's key) is
+revoked, disabled or outside its validity window, it was signed by a CA this
+installation no longer records, or a concurrent renewal won; re-read and retry
+only in the last case. A database fault while reading the key answers `500`,
+not `409`.
 
 #### List and Read Versions
 

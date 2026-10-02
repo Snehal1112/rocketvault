@@ -120,7 +120,7 @@ in a 3.5rem gutter.
 
 `Suite.context` holds the journey-level prose as one string per paragraph.
 
-Most cases carry none of these — 74 of the 245 are deliberately bare, because
+Most cases carry none of these — 74 of the 247 are deliberately bare, because
 the sources do not explain them. `verify` earns its place only where the
 expected line genuinely leaves room for doubt; `after` only where the check
 leaves state behind. Journey J is the reference for all of them, and `J2`

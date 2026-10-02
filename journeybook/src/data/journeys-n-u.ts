@@ -483,7 +483,7 @@ curl -s -o /dev/null -w '%{http_code}\\n' $BASE/secrets/rotation \\
     title: "Certificate manager issues, chains and retires a TLS certificate",
     actor: "Noor — certificate_manager",
     premise:
-      "A certificate is always issued over an existing key, and key creation needs a role Noor does not hold. The divergence to catch: `renew` checks `certificates/create`, not `certificates/update`, unlike every other mutating cert command.",
+      "A certificate is always issued over an existing key, and key creation needs a role Noor does not hold. Issuing or renewing also needs `keys/sign` in the vault, a key Noor owns, and a usable key. The divergence to catch: `renew` checks `certificates/create`, not `certificates/update`, unlike every other mutating cert command.",
     cases: [
       {
         id: "Q1",
@@ -510,23 +510,33 @@ rocketvault vault-access grant noor --role "Key Vault Certificates Officer" --va
         assert: "She cannot self-serve the key her certificate needs",
         why: "`keys create`'s global-role gate checks `HasAnyRole(admin, crypto_manager)` against the caller's claims before any vault check runs. Noor's `certificate_manager` role is not in that list, so she is denied here regardless of what she holds in `prod`.",
         related: [{ id: "C1", rel: "contrasts" }],
-        source: "cmd/keys/create.go:79",
+        source: "cmd/keys/create.go:72",
       },
       {
         id: "Q3",
-        title: "Sofia creates the two keys the journey needs",
+        title: "Noor creates her own keys once Priya widens her roles",
         surface: "cli",
         gate: "global-role",
-        command: `rocketvault keys create --name checkout-ca-key --type RSA --bits 4096 --vault prod
+        precondition:
+          "Run as Priya first, then as Noor after logging in again.",
+        command: `rocketvault users update <noor-user-id> --new-role certificate_manager --new-role crypto_manager
+rocketvault vault-access grant noor --role "Key Vault Crypto Officer" --vault prod
+
+rocketvault keys create --name checkout-ca-key --type RSA --bits 4096 --vault prod
 rocketvault keys create --name checkout-tls-leaf --type ECDSA --curve P-384 --vault prod`,
-        expected: "Two keys.",
-        assert: "Created by crypto_manager, consumed by certificate_manager",
+        expected: "Two keys, created by Noor.",
+        assert: "The keys the certificates use are owned by Noor, not by Sofia",
+        why: "Issuing a certificate requires the caller to own the signing key (the B32 owner check in `ValidateKeyOwnership`), and no `cmd/keys` command changes a key's owner. Key Vault Crypto Officer holds `keys/create` and `keys/sign`. A role change ends the user's sessions, so Noor logs in again.",
+        related: [{ id: "Q2", rel: "depends" }],
+        source:
+          "internal/services/certificates/certificate_service.go:1388-1391; model/azure_roles.go:205-211; internal/services/users/user_service.go:397-418",
       },
       {
         id: "Q4",
         title: "Self-signed certificate over an existing key",
         surface: "cli",
         gate: "global-role",
+        precondition: "Run as Noor, over a key Noor created in Q3.",
         command: `rocketvault certificates create --name checkout-tls-selfsigned \\
   --key-id <checkout-tls-leaf-key-id> --validity-days 365 --tags prod,tls --vault prod`,
         expected: `ID    Name                       Created
@@ -626,7 +636,8 @@ Version: <previous version + 1>
 Validity: 180 days`,
         assert: "Same id, same key, next version, new validity",
         why: "`RenewCertificate` archives the current version under its own number and bumps the same row to the next version in one transaction (`ArchiveAndRenew`), so the ID and the `KeyID` are unchanged while the certificate body and validity are new. The command prints the new version number.",
-        source: "internal/services/certificates/certificate_service.go:1050-1066, cmd/certificates/renew.go:93-96",
+        source:
+          "internal/services/certificates/certificate_service.go:1050-1066, cmd/certificates/renew.go:93-96",
       },
       {
         id: "Q13",
@@ -641,9 +652,9 @@ Validity: 180 days`,
         flag: "divergence",
         notes:
           "Unlike every other mutating cert command. A principal with update but not create can run `certificate update` and not `certificate renew`.",
-        why: "`certificate renew`'s `RunE` calls `vaultcli.RequireDataAction` with `model.ActionCertificatesCreate`, not `ActionCertificatesUpdate` — the only mutating certificate command that does. A principal holding `Key Vault Certificate User` (read-only) or any role granting update-but-not-create fails here even though `certificate update` would succeed for that same principal.",
+        why: "`certificate renew`'s `RunE` authorizes with `model.ActionCertificatesCreate`, not `ActionCertificatesUpdate` — the only mutating certificate command that does — and then requires `keys/sign` as well (Q18). A principal holding `Key Vault Certificate User` (read-only) or any role granting update-but-not-create fails here even though `certificate update` would succeed for that same principal.",
         related: [{ id: "Q12", rel: "contrasts" }],
-        source: "cmd/certificates/renew.go:37-38,87",
+        source: "cmd/certificates/renew.go:58,83",
       },
       {
         id: "Q14",
@@ -685,6 +696,44 @@ Error: failed to get certificate: certificate not found: certificate not found o
           look: "Follow with `rocketvault certificate get <leaf-cert-id> --vault prod` and confirm it succeeds again — the restore call returning is not itself proof the certificate is usable, only that the row's `deleted_at` was cleared.",
         },
         source: "api/soft_delete.go:329",
+      },
+      {
+        id: "Q17",
+        title: "Another user's key is refused even with every role",
+        surface: "cli",
+        gate: "none",
+        precondition:
+          "Run as Noor, holding Certificates Officer and Crypto Officer in prod. Sofia created sofia-owned-key in prod.",
+        command: `rocketvault certificates create --name not-allowed \\
+  --key-id <sofia-owned-key-id> --validity-days 365 --vault prod`,
+        expected:
+          "Error: failed to create certificate: forbidden: cannot use other users' keys",
+        assert: "Refused by the owner check, not by a role",
+        why: "`ValidateKeyOwnership` compares the key's `UserID` with the caller and returns `ErrSigningKeyForbidden`, whose text is `forbidden: cannot use other users' keys`. The vault-role checks passed before it ran.",
+        related: [{ id: "Q3", rel: "depends" }],
+        source:
+          "internal/services/certificates/certificate_service.go:1388-1391; cmd/certificates/create.go:110",
+      },
+      {
+        id: "Q18",
+        title: "Certificates Officer alone cannot issue or renew",
+        surface: "cli",
+        gate: "vault-role",
+        precondition:
+          "Run as Noor in dev, where Priya granted her Key Vault Certificates Officer and nothing else.",
+        command: `rocketvault vault-access grant noor --role "Key Vault Certificates Officer" --vault dev
+rocketvault certificate renew <dev-cert-id> --vault dev`,
+        expected:
+          "Error: failed to renew certificate: forbidden: no role grants Microsoft.KeyVault/vaults/keys/sign/action in this vault",
+        assert:
+          "The action named in the error is keys/sign, not certificates/create",
+        flag: "divergence",
+        notes:
+          "Granting Key Vault Crypto User in dev clears it. `certificate create` is refused the same way.",
+        why: "`certificate renew` and `certificate create` call `s.RequireAlso(model.ActionKeysSign, model.OpSign)` right after `s.Authorize()`, before the certificate is looked up. Key Vault Certificates Officer holds no `keys/sign`; Administrator, Crypto Officer and Crypto User do. Over REST the same refusal is a 403 audited as `denied`, while the CLI audits it as `failed`.",
+        related: [{ id: "Q13", rel: "contrasts" }],
+        source:
+          "cmd/certificates/renew.go:83; cmd/certificates/create.go:110; model/azure_roles.go:170-217; api/certificates.go:287-303",
       },
     ],
   },

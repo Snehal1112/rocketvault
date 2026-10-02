@@ -449,7 +449,7 @@ go run main.go vault-access roles
 | Key Vault Secrets Officer | Full control of secrets — create, read, update, delete, back up, restore. |
 | Key Vault Crypto User | Use existing keys — encrypt, decrypt, sign, verify, wrap, unwrap. Cannot create or delete keys. |
 | Key Vault Crypto Officer | Full control of keys — everything Crypto User can do, plus create, delete, and rotate. |
-| Key Vault Certificates Officer | Full control of certificates — create, update, delete, back up, restore. |
+| Key Vault Certificates Officer | Full control of certificates — create, update, delete, back up, restore. Issuing or renewing also needs Key Vault Crypto User (keys/sign) in the same vault. |
 | Key Vault Purge Operator | Permanently purge a soft-deleted vault. Nothing else. |
 | Key Vault Certificate User | Read certificates. |
 | Key Vault Crypto Service Encryption User | Read key metadata and wrap/unwrap with it — a narrower version of Crypto User. |

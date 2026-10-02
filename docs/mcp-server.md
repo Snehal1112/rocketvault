@@ -139,8 +139,14 @@ Pick by what you actually want the assistant to do:
 | Create and rotate secrets | `Key Vault Secrets Officer` | touch keys or certificates |
 | Sign, verify, encrypt or decrypt with vault keys | `Key Vault Crypto User` | create, rotate or delete keys |
 | Create and rotate keys | `Key Vault Crypto Officer` | read secrets |
-| Manage certificates and their policies | `Key Vault Certificates Officer` | read secrets or use keys |
+| Manage certificates and their policies | `Key Vault Certificates Officer`, plus `Key Vault Crypto User` to issue or renew | read secrets |
 | Review and change who has access | `Key Vault Data Access Administrator` | read any secret, key or certificate |
+
+The certificate row needs both grants because `create_certificate` and
+`renew_certificate` call the REST create and renew routes, which require
+`keys/sign` as well as `certificates/create`. The signing key must also be one
+the MCP principal itself created, and be enabled and inside its validity
+window.
 
 Grant only what the task needs. Roles combine, so two narrow grants are better
 than one broad one:

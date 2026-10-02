@@ -100,11 +100,10 @@ func cloneTimePtr(t *time.Time) *time.Time {
 // master-key-encrypted form the database stores.
 //
 // This type IS marshaled into a secret backup blob, which
-// POST /secrets/{id}/backup returns in its response body as a merely
-// base64url-encoded (not encrypted) JSON envelope. A secret backup blob
-// therefore contains every historical value of that secret and must be
-// handled as secret material — the same warning model.KeyVersionRecord
-// carries for keys.
+// POST /secrets/{id}/backup returns sealed under a master-key-derived key
+// (B76). A secret backup blob contains every historical value of that secret
+// and must still be handled as secret material — the same warning
+// model.KeyVersionRecord carries for keys.
 type SecretVersion struct {
 	ID        uuid.UUID `json:"id"`
 	SecretID  uuid.UUID `json:"secret_id"`

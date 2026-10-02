@@ -6,7 +6,7 @@ Guidance for Claude Code when working in `journeybook/`.
 
 A single-file, offline HTML page that a QA engineer opens from disk to work
 through RocketVault's vault, user and access journeys, recording a pass or fail
-against each check. 23 journeys, 245 checks, transcribed from
+against each check. 23 journeys, 247 checks, transcribed from
 `../docs/VAULT_USER_ACCESS_JOURNEYS_v3.md`.
 
 It is a **static artifact**, not an app: it never talks to a RocketVault
@@ -114,7 +114,7 @@ without its reason.
   plausible section.
 - **Enrichment is applied by `scripts/apply-enrichment.mjs`, not by hand.** It
   locates the case object structurally and refuses to apply a field twice.
-  Hand-editing 245 cases is how transcription errors get back in. The refusal
+  Hand-editing 247 cases is how transcription errors get back in. The refusal
   is a feature — during the backfill it caught three separate collisions that
   would otherwise have silently overwritten or duplicated a field.
 - `bunx shadcn add` needs network access to `ui.shadcn.com`. When that is

@@ -97,10 +97,10 @@ type KeyVersion struct {
 // response — those use KeyVersion, which has no Value field, so the
 // versions-list and versions-get handlers cannot leak material even by
 // future mistake. It IS marshaled into a key backup blob, which
-// POST /keys/{key_id}/backup returns in its response body as a merely
-// base64url-encoded (not encrypted) JSON envelope, so a backup blob must be
-// handled as key material. Value itself still carries the same
-// master-key-encrypted form the database stores.
+// POST /keys/{key_id}/backup returns sealed under a master-key-derived key
+// (B76). A blob must still be handled as key material: anyone holding the
+// master key can open it. Value itself carries the same master-key-encrypted
+// form the database stores.
 type KeyVersionRecord struct {
 	KeyID     uuid.UUID `json:"key_id"`
 	Version   int       `json:"version"`

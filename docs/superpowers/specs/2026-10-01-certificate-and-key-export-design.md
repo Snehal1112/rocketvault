@@ -315,6 +315,7 @@ requirement, not a hope, and each point below has a test or a delivery gate:
 - **Backup, restore and rekey stay compatible.** Blobs written before this change
   restore unchanged (as non-exportable); a restore never grants exportability;
   master-key rotation and the backup table order are unaffected.
+- Amended 2026-10-03 (B76): blobs are sealed, so blobs written before the seal no longer restore. Restore still forces exportable=false.
 - **No new weakness in the old surfaces.** Caching, retry and logging behavior of
   existing methods is unchanged; the new methods are pass-through only, and the
   existing middleware and policy chain is not modified beyond the new route

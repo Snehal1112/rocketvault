@@ -30,5 +30,5 @@ export const caseCount = allCases.length
 export const source = {
   doc: "docs/VAULT_USER_ACCESS_JOURNEYS_v3.md",
   branch: "v-4.0.0",
-  asOf: "2026-09-05",
+  asOf: "2026-10-03",
 }

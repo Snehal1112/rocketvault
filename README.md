@@ -100,7 +100,7 @@ Data-plane access — reading or writing secrets, keys, and certificates — is 
 | `Key Vault Secrets Officer` | Full secret control |
 | `Key Vault Crypto User` | Use key material: encrypt, decrypt, sign, verify, wrap, unwrap — plus routine key maintenance: update and backup |
 | `Key Vault Crypto Officer` | Full key control, including create, import, delete, and rotation |
-| `Key Vault Certificates Officer` | Full certificate control |
+| `Key Vault Certificates Officer` | Full certificate control; issuing or renewing also needs a role with keys/sign, such as Key Vault Crypto User |
 
 Grant a role with the CLI:
 

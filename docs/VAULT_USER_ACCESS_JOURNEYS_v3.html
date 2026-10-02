@@ -1043,7 +1043,7 @@ curl -s -o /dev/null -w '%{http_code}\n' $BASE/secrets/rotation \
 <p>Every other mutating resource in this codebase — <code>keys</code>, <code>certificate</code>, <code>secrets</code> itself — layers a CLI-only global-role gate on top of the vault check. <code>secrets rotation *</code> is the one command tree where a bare <code>user</code> global role, plus nothing but an ordinary vault role assignment, is sufficient to create policies, assign them to secrets, and rotate credentials on demand. Whether that is an oversight or a deliberate scope decision, it is not documented anywhere as intentional — it is simply what the code does.</p>
 <hr>
 <h2 id="journey-q--certificate-manager-issues-chains-and-retires-a-tls-certificate">Journey Q — Certificate Manager Issues, Chains, and Retires a TLS Certificate</h2>
-<p><strong>Actor</strong>: Noor (<code>certificate_manager</code> — required for every CLI certificate mutation, exactly like Sofia's <code>crypto_manager</code> requirement in Journey C)</p>
+<p><strong>Actor</strong>: Noor (<code>certificate_manager</code> — required for every CLI certificate mutation, exactly like Sofia's <code>crypto_manager</code> requirement in Journey C; she also needs <code>crypto_manager</code>, <code>keys/sign</code> and her own keys to issue anything, see below)</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd"># Priya creates the account with the global role Correction 8 requires.
 rocketvault users create --new-username noor --new-password '&lt;pw&gt;' --new-role certificate_manager
 
@@ -1058,25 +1058,38 @@ rocketvault vault-access grant noor --role &quot;Key Vault Certificates Officer&
 rocketvault keys create --name checkout-tls-leaf --type RSA --bits 2048 --vault prod
 # Error: forbidden: requires admin or crypto_manager role
 </pre></div>
-<p>Sofia (<code>crypto_manager</code>) creates the two keys this journey needs — one for the CA, one for the leaf certificate it will sign:</p>
-<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd"># As Sofia:
+<p><strong>Issuing a certificate signs with a key, so three things must all be true of the key and the caller.</strong> None of them is satisfied by Noor's current grants:</p>
+<ol>
+<li>The caller holds <code>Microsoft.KeyVault/vaults/certificates/create</code> in the vault (Key Vault Certificates Officer) <strong>and</strong> <code>Microsoft.KeyVault/vaults/keys/sign/action</code> in the same vault. Of the built-in roles, Administrator, Crypto Officer and Crypto User hold <code>keys/sign</code> (<code>model/azure_roles.go</code>); Certificates Officer alone does not, so it is refused. An explicit deny policy on <code>(keys, sign)</code> refuses the call too. The same rule applies to <code>certificate renew</code>, to the REST create and renew routes, to the MCP <code>create_certificate</code> and <code>renew_certificate</code> tools, and to the background auto-renew scheduler, which checks it for the certificate's owner.</li>
+<li>The caller <strong>owns</strong> the key (the B32 owner check): the key's creator must be the caller. A key Sofia created cannot be used by Noor, even with every role in the vault. No <code>cmd/keys</code> command changes a key's owner, so the CLI has no way for one user to issue over another user's key. Noor has to create her own keys.</li>
+<li>The key is enabled, not revoked, and inside its validity window. The same holds for a CA certificate's own key when the certificate is signed by that CA.</li>
+</ol>
+<p>So Priya gives Noor what she needs to make her own keys and to sign with them: the <code>crypto_manager</code> global role alongside <code>certificate_manager</code> (<code>--new-role</code> is repeatable, and the update replaces the role list, so both are passed), and <code>Key Vault Crypto Officer</code> in <code>prod</code>, which holds <code>keys/create</code> and <code>keys/sign</code>:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd"># As Priya:
+rocketvault users update &lt;noor-user-id&gt; --new-role certificate_manager --new-role crypto_manager
+rocketvault vault-access grant noor --role &quot;Key Vault Crypto Officer&quot; --vault prod
+
+# As Noor, after logging in again (a role change ends the user's sessions):
 rocketvault keys create --name checkout-ca-key --type RSA --bits 4096 --vault prod
 rocketvault keys create --name checkout-tls-leaf --type ECDSA --curve P-384 --vault prod
 </pre></div>
+<p>Sofia (<code>crypto_manager</code>) also has a key in <code>prod</code>, but it is hers. Noor holds every role she needs and is still refused, by the owner check:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd"># As Sofia:
+rocketvault keys create --name sofia-owned-key --type RSA --bits 2048 --vault prod
+
+# As Noor:
+rocketvault certificates create --name not-allowed \
+  --key-id &lt;sofia-owned-key-id&gt; --validity-days 365 --vault prod
+# Error: failed to create certificate: forbidden: cannot use other users' keys
+</pre></div>
 <p><strong>Self-signed certificate over an existing key</strong> — the simple case, no CA involved:</p>
-<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd"># As Noor:
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd"># As Noor, over a key Noor created:
 rocketvault certificates create --name checkout-tls-selfsigned \
   --key-id &lt;checkout-tls-leaf-key-id&gt; --validity-days 365 --tags prod,tls --vault prod
 # ID    Name                       Created
 # &lt;id&gt;  checkout-tls-selfsigned    2026-08-25T...
 </pre></div>
-<p>Flag validation runs before the vault-scoped authorization check and the key
-lookup — but <strong>after</strong> the global-role gate. <code>cmd/certificates/create.go</code> checks
-<code>HasAnyRole(admin, certificate_manager)</code> at line 74, ahead of the
-<code>name</code>/<code>key-id</code>/<code>validity-days</code> check at line 88; only <code>RequireDataAction</code>
-(line 115) runs after flag validation. Noor holds <code>certificate_manager</code>, so she
-reaches the missing-field error below. A caller without that global role who
-also omits a required flag gets the forbidden error instead, never this one:</p>
+<p><code>--validity-days</code> must be between 1 and 36500. Flag validation runs before the vault-scoped authorization checks and the key lookup — but <strong>after</strong> the global-role gate. <code>cmd/certificates/create.go</code> checks the global roles (<code>admin</code> or <code>certificate_manager</code>) in <code>vaultcli.Caller</code>, ahead of the <code>name</code>/<code>key-id</code>/<code>validity-days</code> check; only <code>s.Authorize()</code> (<code>certificates/create</code>) and <code>s.RequireAlso</code> (<code>keys/sign</code>) run after flag validation. Noor holds <code>certificate_manager</code>, so she reaches the missing-field error below. A caller without that global role who also omits a required flag gets the forbidden error instead, never this one:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault certificates create --key-id &lt;checkout-tls-leaf-key-id&gt; --validity-days 365 --vault prod
 # Error: name, key-id, and validity-days are required
 </pre></div>
@@ -1112,7 +1125,7 @@ rocketvault certificate get &lt;ca-cert-id&gt; --vault prod
 rocketvault certificate get &lt;leaf-cert-id&gt; --vault prod --output json | jq .name
 # unchanged — --name was not passed on this call
 </pre></div>
-<p><strong>Renew</strong> — re-issues over the <em>same</em> key and ID as a new version (the previous one is archived), and, unlike every other mutating cert command, checks <code>certificates/create</code>, not <code>certificates/update</code>:</p>
+<p><strong>Renew</strong> — re-issues over the <em>same</em> key and ID as a new version (the previous one is archived), and, unlike every other mutating cert command, checks <code>certificates/create</code>, not <code>certificates/update</code>. Like issuance it also needs <code>keys/sign</code> in the vault, and the key must still exist, be owned by the caller, and be enabled, not revoked and inside its validity window. Without <code>--validity-days</code> the current version's period is kept, capped at 36500 days:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault certificate renew &lt;leaf-cert-id&gt; --validity-days 180 --vault prod
 # Certificate renewed successfully!
 # Certificate ID: &lt;leaf-cert-id&gt;
@@ -1125,6 +1138,14 @@ rocketvault certificate get &lt;leaf-cert-id&gt; --vault prod --output json | jq
 rocketvault certificate renew &lt;staging-cert-id&gt; --vault staging
 # Error: failed to renew certificate: forbidden: no role grants Microsoft.KeyVault/vaults/certificates/create in this vault
 </pre></div>
+<p><strong>Certificates Officer alone is refused.</strong> The <code>keys/sign</code> check runs right after the <code>certificates/create</code> check and before the certificate is looked up, so it fires whatever certificate ID is named. Priya grants Noor Certificates Officer in <code>dev</code> and nothing else there:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault vault-access grant noor --role &quot;Key Vault Certificates Officer&quot; --vault dev
+# As noor, in dev (Certificates Officer holds certificates/create, not keys/sign):
+rocketvault certificate renew &lt;dev-cert-id&gt; --vault dev
+# Error: failed to renew certificate: forbidden: no role grants Microsoft.KeyVault/vaults/keys/sign/action in this vault
+</pre></div>
+<p><code>certificate create</code> is refused the same way. Granting <code>Key Vault Crypto User</code> (or Crypto Officer) in <code>dev</code> clears it.</p>
+<p>Over REST the same refusal is a <code>403</code> whose message is <code>Insufficient permissions: Microsoft.KeyVault/vaults/keys/sign/action</code>, on both <code>POST .../certificates</code> and <code>POST .../certificates/{certificate_id}/renew</code>. The two paths audit it differently: the HTTP handler writes an audit row with status <code>denied</code> (operation <code>create_certificate</code> or <code>renew_certificate</code>), while the CLI writes status <code>failed</code>. The HTTP row's text is the same whether an explicit deny policy or a missing role grant caused the refusal; the CLI's error text distinguishes them (<code>access denied by an explicit access policy for ...</code> versus <code>no role grants ... in this vault</code>).</p>
 <p>A CA cert past its own validity window, or disabled, blocks renewal of anything it signed — the renewal is refused, never silently downgraded to self-signed.</p>
 <p><strong>Delete</strong> — soft-delete only; the CLI has no <code>recover</code>/<code>purge</code> for certificates (REST-only, mirroring Correction 9's key-lifecycle gaps):</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">rocketvault certificate delete &lt;leaf-cert-id&gt; --vault prod
