@@ -53,6 +53,15 @@ set. Set it explicitly only if you want that intent visible in the dashboard:</p
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">railway variable set RV_DB_DRIVER=sqlite3 -s &lt;service-name&gt;
 </pre></div>
 <p><code>RV_HSM_PIN</code> is left unset — HSM is off by default.</p>
+<p>Railway's edge proxy sits in front of the service, so set <code>RV_TRUSTED_PROXIES</code> to the
+address ranges that proxy connects from. Take the ranges from Railway's own documentation;
+this guide does not list them. The value is rendered into <code>server.trusted_proxies</code>:
+comma-separated IPs or CIDR ranges, each one double-quoted:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">railway variable set RV_TRUSTED_PROXIES='&quot;&lt;range-1&gt;&quot;,&quot;&lt;range-2&gt;&quot;' -s &lt;service-name&gt;
+</pre></div>
+<p>Unset, it renders <code>[]</code>: the forwarded headers are ignored, every client shares the proxy's
+address, and one client can throttle every login. The proxy must append to or overwrite
+<code>X-Forwarded-For</code>.</p>
 <h2 id="optional-softhsm-software-hsm">Optional: SoftHSM (software HSM)</h2>
 <p>SoftHSM2 is a software token that implements PKCS#11, letting you test the HSM code path without hardware — note: key material lives on disk with no hardware tamper-resistance.</p>
 <p>To enable SoftHSM2 in your Railway deployment:</p>

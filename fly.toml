@@ -16,6 +16,11 @@
 #        RV_BOOTSTRAP_TOKEN="$(openssl rand -base64 32)" \
 #        RV_ISSUER="https://<your-app>.fly.dev" \
 #        RV_CORS_ORIGINS="https://<your-app>.fly.dev"
+#      Fly's edge proxy sits in front of the app, so also set
+#      RV_TRUSTED_PROXIES to the address ranges Fly's proxy connects from
+#      (take them from Fly's own documentation), each double-quoted and
+#      comma-separated, e.g. RV_TRUSTED_PROXIES='"<range-1>","<range-2>"'.
+#      Unset, every client shares one login rate-limit bucket.
 #   6. fly deploy
 #   7. Create first admin:
 #      fly ssh console -C \

@@ -68,10 +68,19 @@ server:
   # Reverse proxies whose X-Forwarded-For / X-Real-IP headers may be trusted,
   # as IP addresses or CIDR ranges. Leave empty when clients connect directly:
   # the headers are then ignored, since any client can forge them. Behind a
-  # proxy (Railway, Fly, nginx) set this to the proxy's address range, or every
-  # client shares the proxy's rate-limit bucket. An invalid entry is logged as
-  # an error and the whole list is ignored.
-  trusted_proxies: []
+  # proxy (Railway, Fly, nginx, Caddy) set this to the proxy's address range,
+  # or every client shares the proxy's rate-limit bucket and one client can
+  # throttle every login. An invalid entry is logged as an error and the whole
+  # list is ignored.
+  #
+  # Set it with RV_TRUSTED_PROXIES: comma-separated IPs or CIDR ranges, each
+  # double-quoted, which are pasted between the brackets below. Example:
+  #   RV_TRUSTED_PROXIES='"10.0.0.0/8","172.16.0.0/12"'
+  # Unset or empty renders [] (nothing trusted). Fly.io and Railway publish
+  # the address ranges their edge proxies connect from: take the ranges from
+  # the platform's own documentation. The proxy must append to or overwrite
+  # X-Forwarded-For, never pass the client's value through unchanged.
+  trusted_proxies: [${RV_TRUSTED_PROXIES}]
   http2:
     enabled: true
   tls:

@@ -51,6 +51,19 @@ railway variable set RV_DB_DRIVER=sqlite3 -s <service-name>
 
 `RV_HSM_PIN` is left unset — HSM is off by default.
 
+Railway's edge proxy sits in front of the service, so set `RV_TRUSTED_PROXIES` to the
+address ranges that proxy connects from. Take the ranges from Railway's own documentation;
+this guide does not list them. The value is rendered into `server.trusted_proxies`:
+comma-separated IPs or CIDR ranges, each one double-quoted:
+
+```bash
+railway variable set RV_TRUSTED_PROXIES='"<range-1>","<range-2>"' -s <service-name>
+```
+
+Unset, it renders `[]`: the forwarded headers are ignored, every client shares the proxy's
+address, and one client can throttle every login. The proxy must append to or overwrite
+`X-Forwarded-For`.
+
 ## Optional: SoftHSM (software HSM)
 
 SoftHSM2 is a software token that implements PKCS#11, letting you test the HSM code path without hardware — note: key material lives on disk with no hardware tamper-resistance.

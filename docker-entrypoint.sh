@@ -48,6 +48,16 @@
 #                                  (only used to initialize/re-initialize the
 #                                  token, never by RocketVault itself at
 #                                  runtime). Defaults to RV_HSM_PIN if unset.
+#   RV_TRUSTED_PROXIES          -- reverse proxies whose X-Forwarded-For may
+#                                  be trusted, rendered into
+#                                  server.trusted_proxies. Comma-separated,
+#                                  each entry double-quoted, e.g.
+#                                  '"10.0.0.0/8","172.16.0.0/12"'. Default:
+#                                  empty, which renders [] (trust nothing).
+#                                  Set it whenever a proxy sits in front of
+#                                  the container (Fly, Railway, Caddy, nginx),
+#                                  or every client shares one login
+#                                  rate-limit bucket.
 set -eu
 
 RV_DB_DRIVER="${RV_DB_DRIVER:-sqlite3}"
@@ -58,6 +68,8 @@ RENDERED="/app/.rocketvault.yaml"
 : "${RV_MASTER_KEY:?RV_MASTER_KEY is required — generate with: openssl rand -base64 32}"
 : "${RV_BOOTSTRAP_TOKEN:?RV_BOOTSTRAP_TOKEN is required — generate with: openssl rand -base64 32}"
 : "${RV_HSM_PIN:=}"
+: "${RV_TRUSTED_PROXIES:=}"
+export RV_TRUSTED_PROXIES
 
 case "$RV_DB_DRIVER" in
     sqlite3)
@@ -124,7 +136,7 @@ EOF
 fi
 export RV_HSM_ENABLED
 
-envsubst '${RV_MASTER_KEY} ${RV_BOOTSTRAP_TOKEN} ${RV_CORS_ORIGINS} ${RV_ISSUER} ${RV_HSM_PIN} ${RV_HSM_ENABLED} ${RV_DATABASE_DRIVER} ${RV_DATABASE_CONNECTION} ${RV_LOG_FILE}' \
+envsubst '${RV_MASTER_KEY} ${RV_BOOTSTRAP_TOKEN} ${RV_CORS_ORIGINS} ${RV_ISSUER} ${RV_HSM_PIN} ${RV_HSM_ENABLED} ${RV_DATABASE_DRIVER} ${RV_DATABASE_CONNECTION} ${RV_LOG_FILE} ${RV_TRUSTED_PROXIES}' \
     < "$TEMPLATE" > "$RENDERED"
 chown rocketvault:rocketvault "$RENDERED"
 

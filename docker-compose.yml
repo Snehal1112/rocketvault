@@ -84,6 +84,12 @@ services:
       RV_HSM_ENABLED: ${RV_HSM_ENABLED:-false}
       RV_HSM_PIN: ${RV_HSM_PIN:-}
       RV_HSM_SO_PIN: ${RV_HSM_SO_PIN:-}
+      # Reverse proxies whose X-Forwarded-For may be trusted, rendered into
+      # server.trusted_proxies. Default: empty (trust nothing). With the
+      # "proxy" profile, set it to the rocketvault_net subnet Caddy connects
+      # from (see `docker network inspect`), or every client shares one login
+      # rate-limit bucket. Format and examples: .env.example.
+      RV_TRUSTED_PROXIES: ${RV_TRUSTED_PROXIES:-}
     volumes:
       - ./.rocketvault.docker.yaml.tmpl:/app/.rocketvault.docker.yaml.tmpl:ro
       - rocketvault_logs:/app/logs
