@@ -118,6 +118,7 @@ func buildKeyResponse(key *model.Key, jwk *model.PublicJWK) KeyResponse {
 // - PUT /keys/{key_id}: Update a key.
 // - DELETE /keys/{key_id}: Delete a key.
 // - POST /keys/{key_id}/rotate: Rotate a key (generate new key pair, revoke old).
+// - POST /keys/{key_id}/export: Export an exportable software key as PKCS#8 PEM.
 func (api *API) InitKeys() {
 	api.registerKeyRoutes(api.BaseRoutes.Keys, "legacy")
 	if api.BaseRoutes.VaultScoped != nil {
@@ -147,6 +148,9 @@ func (api *API) registerKeyRoutes(k *mux.Router, scope string) {
 	k.Handle("/{key_id:[A-Fa-f0-9-]+}/verify", ApiSessionRequired(api.App, verifyKey)).Methods("POST")
 	k.Handle("/{key_id:[A-Fa-f0-9-]+}/encrypt", ApiSessionRequired(api.App, encryptKey)).Methods("POST")
 	k.Handle("/{key_id:[A-Fa-f0-9-]+}/decrypt", ApiSessionRequired(api.App, decryptKey)).Methods("POST")
+	// Per-key export of an exportable software key. Requires ActionKeysExport;
+	// see api/keys_export.go.
+	k.Handle("/{key_id:[A-Fa-f0-9-]+}/export", ApiSessionRequired(api.App, exportKey)).Methods("POST")
 
 	// Rotation policy sub-resource: GET/PUT/DELETE /keys/{key_id}/rotationpolicy
 	k.Handle("/{key_id:[A-Fa-f0-9-]+}/rotationpolicy", ApiSessionRequired(api.App, getKeyRotationPolicy)).Methods("GET")

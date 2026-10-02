@@ -2816,6 +2816,50 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/keys/{key_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/KeyId"
+    post:
+      summary: Export a software key's private material
+      description: |
+        Returns one version of an exportable, software-backed key as
+        unencrypted PKCS#8 PEM. Requires the
+        `Microsoft.KeyVault/vaults/keys/export/action` data action (Key Vault
+        Key Exporter or Administrator) and a key created or imported with
+        `exportable: true`. HSM-backed (`pkcs11:`), `oct` and ES256K keys are
+        never exportable (403 `key_not_exportable`). The body is optional.
+        Every response carries `Cache-Control: no-store` and
+        `Pragma: no-cache`; errors use the `ExportError` body except the 401
+        and the missing-role 403, which come from the middleware.
+      operationId: exportKey
+      tags:
+        - Keys
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportKeyRequest"
+      responses:
+        "200":
+          description: The exported key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportKeyResponse"
+        "400":
+          $ref: "#/components/responses/ExportBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ExportForbidden"
+        "404":
+          $ref: "#/components/responses/ExportNotFound"
+        "409":
+          $ref: "#/components/responses/ExportConflict"
+        "500":
+          $ref: "#/components/responses/ExportInternalError"
+
   /api/v1/keys/{key_id}/rotationpolicy:
     parameters:
       - $ref: "#/components/parameters/KeyId"
@@ -3379,6 +3423,51 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /api/v1/vaults/{vault_name}/keys/{key_id}/export:
+    parameters:
+      - $ref: "#/components/parameters/VaultName"
+      - $ref: "#/components/parameters/KeyId"
+    post:
+      summary: Export a software key's private material from a vault
+      description: |
+        Returns one version of an exportable, software-backed key as
+        unencrypted PKCS#8 PEM. Requires the
+        `Microsoft.KeyVault/vaults/keys/export/action` data action (Key Vault
+        Key Exporter or Administrator) and a key created or imported with
+        `exportable: true`. HSM-backed (`pkcs11:`), `oct` and ES256K keys are
+        never exportable (403 `key_not_exportable`). The body is optional.
+        Every response carries `Cache-Control: no-store` and
+        `Pragma: no-cache`; errors use the `ExportError` body except the 401
+        and the missing-role 403, which come from the middleware.
+      operationId: exportKeyInVault
+      tags:
+        - Keys
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportKeyRequest"
+      responses:
+        "200":
+          description: The exported key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportKeyResponse"
+        "400":
+          $ref: "#/components/responses/ExportBadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/ExportForbidden"
+        "404":
+          $ref: "#/components/responses/ExportNotFound"
+        "409":
+          $ref: "#/components/responses/ExportConflict"
+        "500":
+          $ref: "#/components/responses/ExportInternalError"
 
   /api/v1/vaults/{vault_name}/keys/{key_id}/rotationpolicy:
     parameters:
@@ -7364,6 +7453,40 @@ components:
           type: integer
           minimum: 0
           description: 0 or omitted exports the current version.
+    ExportKeyRequest:
+      type: object
+      properties:
+        format:
+          type: string
+          enum: [pem]
+          default: pem
+        version:
+          type: integer
+          minimum: 0
+          description: 0 or omitted exports the current version.
+    ExportKeyResponse:
+      type: object
+      required: [id, name, type, version, format, private_key_pem, key_algorithm]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          example: "RSA"
+        version:
+          type: integer
+        format:
+          type: string
+          enum: [pem]
+        private_key_pem:
+          type: string
+          description: Unencrypted PKCS#8, starting with -----BEGIN PRIVATE KEY-----.
+        key_algorithm:
+          type: string
+          example: "EC-P256"
     ExportCertificateResponse:
       type: object
       required: [id, name, version, format, key_algorithm]

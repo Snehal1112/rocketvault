@@ -50,6 +50,7 @@ PUT	/api/v1/keys/{key_id:[A-Fa-f0-9-]+}
 POST	/api/v1/keys/{key_id:[A-Fa-f0-9-]+}/backup
 POST	/api/v1/keys/{key_id:[A-Fa-f0-9-]+}/decrypt
 POST	/api/v1/keys/{key_id:[A-Fa-f0-9-]+}/encrypt
+POST	/api/v1/keys/{key_id:[A-Fa-f0-9-]+}/export
 POST	/api/v1/keys/{key_id:[A-Fa-f0-9-]+}/rotate
 DELETE	/api/v1/keys/{key_id:[A-Fa-f0-9-]+}/rotationpolicy
 GET	/api/v1/keys/{key_id:[A-Fa-f0-9-]+}/rotationpolicy
@@ -137,6 +138,7 @@ PUT	/api/v1/vaults/{vault_name:[a-z0-9-]+}/keys/{key_id:[A-Fa-f0-9-]+}
 POST	/api/v1/vaults/{vault_name:[a-z0-9-]+}/keys/{key_id:[A-Fa-f0-9-]+}/backup
 POST	/api/v1/vaults/{vault_name:[a-z0-9-]+}/keys/{key_id:[A-Fa-f0-9-]+}/decrypt
 POST	/api/v1/vaults/{vault_name:[a-z0-9-]+}/keys/{key_id:[A-Fa-f0-9-]+}/encrypt
+POST	/api/v1/vaults/{vault_name:[a-z0-9-]+}/keys/{key_id:[A-Fa-f0-9-]+}/export
 POST	/api/v1/vaults/{vault_name:[a-z0-9-]+}/keys/{key_id:[A-Fa-f0-9-]+}/rotate
 DELETE	/api/v1/vaults/{vault_name:[a-z0-9-]+}/keys/{key_id:[A-Fa-f0-9-]+}/rotationpolicy
 GET	/api/v1/vaults/{vault_name:[a-z0-9-]+}/keys/{key_id:[A-Fa-f0-9-]+}/rotationpolicy
