@@ -33,8 +33,8 @@ func (m *mockRoleAssignmentService) AssignRole(ctx context.Context, in authzServ
 	return args.Get(0).(*model.RoleAssignment), args.Error(1)
 }
 
-func (m *mockRoleAssignmentService) RevokeAssignment(ctx context.Context, assignmentID, vaultID uuid.UUID, callerIsGlobalAdmin bool) error {
-	args := m.Called(ctx, assignmentID, vaultID, callerIsGlobalAdmin)
+func (m *mockRoleAssignmentService) RevokeAssignment(ctx context.Context, assignmentID, vaultID, actorID uuid.UUID, callerIsGlobalAdmin bool) error {
+	args := m.Called(ctx, assignmentID, vaultID, actorID, callerIsGlobalAdmin)
 	return args.Error(0)
 }
 
@@ -275,7 +275,7 @@ func TestRoleAssignments_RevokeDeniedRoleNotGrantable_Returns403(t *testing.T) {
 	roleSvc := &mockRoleAssignmentService{}
 	roleSvc.On("HasDataAction", mock.Anything, callerID, vaultID, model.ActionRoleAssignmentsDelete).
 		Return(true, nil)
-	roleSvc.On("RevokeAssignment", mock.Anything, assignmentID, vaultID, false).
+	roleSvc.On("RevokeAssignment", mock.Anything, assignmentID, vaultID, callerID, false).
 		Return(authzServices.ErrRoleNotGrantable)
 
 	mc := &testutils.MockServiceContainer{}
@@ -358,7 +358,7 @@ func TestRoleAssignments_RevokeAllowedForDataAccessAdministrator(t *testing.T) {
 	roleSvc := &mockRoleAssignmentService{}
 	roleSvc.On("HasDataAction", mock.Anything, callerID, vaultID, model.ActionRoleAssignmentsDelete).
 		Return(true, nil)
-	roleSvc.On("RevokeAssignment", mock.Anything, assignmentID, vaultID, false).Return(nil)
+	roleSvc.On("RevokeAssignment", mock.Anything, assignmentID, vaultID, callerID, false).Return(nil)
 
 	mc := &testutils.MockServiceContainer{}
 	mc.On("GetAccessPolicyService").Return(policySvc)
@@ -405,7 +405,7 @@ func TestRoleAssignments_DataAccessAdministrator_GrantAndRevokeComposeAcrossVaul
 	roleSvc.On("HasDataAction", mock.Anything, callerID, vaultB, model.ActionRoleAssignmentsDelete).Return(false, nil)
 	roleSvc.On("AssignRole", mock.Anything, mock.Anything).
 		Return(&model.RoleAssignment{ID: uuid.New(), VaultID: vaultA, Role: "Key Vault Secrets User"}, nil)
-	roleSvc.On("RevokeAssignment", mock.Anything, assignmentID, vaultA, false).Return(nil)
+	roleSvc.On("RevokeAssignment", mock.Anything, assignmentID, vaultA, callerID, false).Return(nil)
 
 	mc := &testutils.MockServiceContainer{}
 	mc.On("GetAccessPolicyService").Return(policySvc)

@@ -29,8 +29,8 @@ func TestExporterRoles_OnlyGlobalAdminCanGrantOrRevoke(t *testing.T) {
 		})
 		require.NoError(t, err, role)
 
-		err = svc.RevokeAssignment(context.Background(), granted.ID, vaultID, false)
+		err = svc.RevokeAssignment(context.Background(), granted.ID, vaultID, uuid.New(), false)
 		require.ErrorIs(t, err, ErrRoleNotGrantable, role)
-		require.NoError(t, svc.RevokeAssignment(context.Background(), granted.ID, vaultID, true), role)
+		require.NoError(t, svc.RevokeAssignment(context.Background(), granted.ID, vaultID, uuid.New(), true), role)
 	}
 }

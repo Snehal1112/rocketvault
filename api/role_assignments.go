@@ -223,7 +223,7 @@ func deleteRoleAssignment(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	svc := c.App.ServiceContainer.GetRoleAssignmentService()
-	if err := svc.RevokeAssignment(r.Context(), id, vaultID, isGlobalAdmin); err != nil {
+	if err := svc.RevokeAssignment(r.Context(), id, vaultID, callerID, isGlobalAdmin); err != nil {
 		switch {
 		case errors.Is(err, authzServices.ErrAssignmentNotFound):
 			c.SetNotFound("role assignment")

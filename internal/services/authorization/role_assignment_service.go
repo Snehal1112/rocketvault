@@ -84,12 +84,13 @@ type AssignRoleInput struct {
 // RoleAssignmentService grants, revokes, and lists vault-scoped role assignments.
 type RoleAssignmentService interface {
 	AssignRole(ctx context.Context, in AssignRoleInput) (*model.RoleAssignment, error)
-	// RevokeAssignment revokes assignmentID in vaultID. callerIsGlobalAdmin
+	// RevokeAssignment revokes assignmentID in vaultID on behalf of actorID,
+	// who is recorded in the audit row. callerIsGlobalAdmin
 	// mirrors AssignRoleInput.CallerIsGlobalAdmin: when false, revoking an
 	// assignment whose Role is outside nonAdminGrantableRoles is refused with
 	// ErrRoleNotGrantable, so a non-global-admin Data Access Administrator
 	// can't revoke a role they aren't allowed to grant.
-	RevokeAssignment(ctx context.Context, assignmentID, vaultID uuid.UUID, callerIsGlobalAdmin bool) error
+	RevokeAssignment(ctx context.Context, assignmentID, vaultID, actorID uuid.UUID, callerIsGlobalAdmin bool) error
 	ListAssignments(ctx context.Context, vaultID uuid.UUID) ([]*model.RoleAssignment, error)
 	// HasDataAction reports whether the principal holds a role assignment in the
 	// given vault that grants the data action. It is the fail-closed
@@ -182,7 +183,7 @@ func (s *roleAssignmentService) AssignRole(ctx context.Context, in AssignRoleInp
 	return ra, nil
 }
 
-func (s *roleAssignmentService) RevokeAssignment(ctx context.Context, assignmentID, vaultID uuid.UUID, callerIsGlobalAdmin bool) error {
+func (s *roleAssignmentService) RevokeAssignment(ctx context.Context, assignmentID, vaultID, actorID uuid.UUID, callerIsGlobalAdmin bool) error {
 	ra, err := s.roleRepo.GetByID(ctx, assignmentID)
 	if err != nil {
 		return ErrAssignmentNotFound
@@ -200,7 +201,7 @@ func (s *roleAssignmentService) RevokeAssignment(ctx context.Context, assignment
 		return fmt.Errorf("delete assignment: %w", err)
 	}
 	if s.log != nil {
-		s.log.LogAuditInfo("", "revoke_role_assignment", "success",
+		s.log.LogAuditInfo(actorID.String(), "revoke_role_assignment", "success",
 			fmt.Sprintf("Role assignment %s (role %q) revoked in vault %s", assignmentID, ra.Role, vaultID))
 	}
 	return nil

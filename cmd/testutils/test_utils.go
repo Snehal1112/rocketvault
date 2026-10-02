@@ -723,8 +723,8 @@ func (m *MockRoleAssignmentService) AssignRole(ctx context.Context, in authzServ
 	return args.Get(0).(*model.RoleAssignment), args.Error(1)
 }
 
-func (m *MockRoleAssignmentService) RevokeAssignment(ctx context.Context, assignmentID, vaultID uuid.UUID, callerIsGlobalAdmin bool) error {
-	args := m.Called(ctx, assignmentID, vaultID, callerIsGlobalAdmin)
+func (m *MockRoleAssignmentService) RevokeAssignment(ctx context.Context, assignmentID, vaultID, actorID uuid.UUID, callerIsGlobalAdmin bool) error {
+	args := m.Called(ctx, assignmentID, vaultID, actorID, callerIsGlobalAdmin)
 	return args.Error(0)
 }
 

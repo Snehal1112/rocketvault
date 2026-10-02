@@ -450,7 +450,7 @@ type stubRoleAssignmentService struct {
 func (s *stubRoleAssignmentService) AssignRole(context.Context, authzServices.AssignRoleInput) (*model.RoleAssignment, error) {
 	return nil, fmt.Errorf("not implemented in stub")
 }
-func (s *stubRoleAssignmentService) RevokeAssignment(context.Context, uuid.UUID, uuid.UUID, bool) error {
+func (s *stubRoleAssignmentService) RevokeAssignment(context.Context, uuid.UUID, uuid.UUID, uuid.UUID, bool) error {
 	return fmt.Errorf("not implemented in stub")
 }
 func (s *stubRoleAssignmentService) ListAssignments(context.Context, uuid.UUID) ([]*model.RoleAssignment, error) {

@@ -17,7 +17,7 @@ func TestRevokeRemote_DeletesByAssignmentID(t *testing.T) {
 	id := uuid.New()
 
 	roleSvc := &testutils.MockRoleAssignmentService{}
-	roleSvc.On("RevokeAssignment", mock.Anything, id, mock.Anything, mock.Anything).
+	roleSvc.On("RevokeAssignment", mock.Anything, id, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil)
 	roleSvc.On("HasDataAction", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(true, nil).Maybe()

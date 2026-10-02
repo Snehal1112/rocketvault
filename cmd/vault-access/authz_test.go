@@ -50,6 +50,7 @@ type fakeRoleSvc struct {
 	actionsAsked              []model.DataAction
 	assignedInput             authzServices.AssignRoleInput
 	revokeCallerIsGlobalAdmin bool
+	revokeActor               uuid.UUID
 }
 
 func (f *fakeRoleSvc) AssignRole(_ context.Context, in authzServices.AssignRoleInput) (*model.RoleAssignment, error) {
@@ -58,8 +59,9 @@ func (f *fakeRoleSvc) AssignRole(_ context.Context, in authzServices.AssignRoleI
 	return &model.RoleAssignment{ID: uuid.New(), VaultID: in.VaultID, Role: in.Role}, nil
 }
 
-func (f *fakeRoleSvc) RevokeAssignment(_ context.Context, _, _ uuid.UUID, callerIsGlobalAdmin bool) error {
+func (f *fakeRoleSvc) RevokeAssignment(_ context.Context, _, _ uuid.UUID, actorID uuid.UUID, callerIsGlobalAdmin bool) error {
 	f.revokeCalled = true
+	f.revokeActor = actorID
 	f.revokeCallerIsGlobalAdmin = callerIsGlobalAdmin
 	return nil
 }
@@ -182,6 +184,7 @@ func TestVaultAccessRevoke_PassesNonAdminCallerFlag(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	require.True(t, roleSvc.revokeCalled)
 	assert.False(t, roleSvc.revokeCallerIsGlobalAdmin, "a plain user's revoke must not carry the global-admin bypass")
+	assert.Equal(t, tc.TestUserID, roleSvc.revokeActor, "the CLI must pass the caller as the audit actor")
 }
 
 // TestVaultAccessList_DeniedWithoutGrant is the CLI twin of the HTTP

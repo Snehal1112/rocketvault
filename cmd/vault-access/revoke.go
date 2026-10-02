@@ -75,12 +75,12 @@ assignment did not exist.`,
 			if err := requireCanManageRoleAssignments(ctx, sc, vaultID, false); err != nil {
 				return err
 			}
-			callerRoles, _, err := vaultcli.CallerIdentity(ctx)
+			callerRoles, callerID, err := vaultcli.CallerIdentity(ctx)
 			if err != nil {
 				return err
 			}
 			isGlobalAdmin := common.HasAnyRole(callerRoles, string(model.RoleAdmin))
-			if err := sc.GetRoleAssignmentService().RevokeAssignment(ctx, id, vaultID, isGlobalAdmin); err != nil {
+			if err := sc.GetRoleAssignmentService().RevokeAssignment(ctx, id, vaultID, callerID, isGlobalAdmin); err != nil {
 				return fmt.Errorf("revoke failed: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "revoked assignment %s\n", id) //nolint:errcheck
