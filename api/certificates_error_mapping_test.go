@@ -97,12 +97,49 @@ func TestSigningKeyUnusable_NotA500OnBothRouteShapes(t *testing.T) {
 			w := doVaultRequest(api, http.MethodPost, prefix, createBody)
 			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
 			assert.NotContains(t, w.Body.String(), leakedKeyID.String())
+			// The sentinel also comes from the CA's own key, which may be
+			// missing, so the fixed text names both keys and that case.
+			assert.Contains(t, w.Body.String(), signingKeyUnusableMessage)
 
 			w = doVaultRequest(api, http.MethodPost, prefix+"/"+certID+"/renew", []byte(`{"validity_days":30}`))
 			require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 			assert.NotContains(t, w.Body.String(), leakedKeyID.String())
+			assert.Contains(t, w.Body.String(), signingKeyUnusableMessage)
 
 			svc.AssertCalled(t, "CreateSelfSignedCertificate", mock.Anything, mock.Anything)
+			svc.AssertCalled(t, "RenewCertificate", mock.Anything, mock.Anything, mock.Anything, 30)
+		})
+	}
+}
+
+// TestRenewCertificate_ForeignCAIs403OnBothRouteShapes pins that a signing CA
+// owned by another user, which renewal reaches through
+// ValidateCertificateAccess, falls through writeCertificateRenewError to the
+// 403 arm of writeCertificateError rather than to 500 (B78).
+func TestRenewCertificate_ForeignCAIs403OnBothRouteShapes(t *testing.T) {
+	foreignCA := fmt.Errorf("cannot renew CA-signed certificate: signing CA %s is not accessible: %w",
+		leakedKeyID, certServices.ErrCACertForbidden)
+	certID := uuid.New().String()
+
+	for _, shape := range []string{"flat", "vault-scoped"} {
+		t.Run(shape, func(t *testing.T) {
+			svc := &mockCertService{}
+			svc.On("RenewCertificate", mock.Anything, mock.Anything, mock.Anything, 30).Return(nil, foreignCA)
+			api, repo := newVaultScopedKeyCertTestAPI(nil, svc, nil)
+			allowKeySignOn(api)
+
+			prefix := "/api/v1/certificates"
+			if shape == "vault-scoped" {
+				id := uuid.New()
+				repo.byName["prod"] = &model.Vault{ID: id, Name: "prod", Enabled: true}
+				repo.byID[id.String()] = repo.byName["prod"]
+				prefix = "/api/v1/vaults/prod/certificates"
+			}
+
+			w := doVaultRequest(api, http.MethodPost, prefix+"/"+certID+"/renew", []byte(`{"validity_days":30}`))
+			require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), "the CA certificate belongs to another user")
+			assert.NotContains(t, w.Body.String(), leakedKeyID.String())
 			svc.AssertCalled(t, "RenewCertificate", mock.Anything, mock.Anything, mock.Anything, 30)
 		})
 	}

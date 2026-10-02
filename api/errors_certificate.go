@@ -8,6 +8,10 @@ import (
 	"rocketvault/model"
 )
 
+// signingKeyUnusableMessage is the fixed text for ErrSigningKeyUnusable on
+// both routes. It names no key, so no key ID reaches the response.
+const signingKeyUnusableMessage = "the signing key, or its CA's key, is unusable: revoked, disabled, missing or outside its valid time window"
+
 // writeCertificateError maps a certificate-service error onto an HTTP response.
 //
 // It mirrors writeSecretError and writeKeyError so every certificate handler
@@ -42,7 +46,9 @@ func writeCertificateError(c *Context, err error) {
 	case errors.Is(err, certServices.ErrCACertForbidden):
 		c.SetPermissionError("the CA certificate belongs to another user")
 	case errors.Is(err, certServices.ErrSigningKeyUnusable):
-		c.SetPermissionError("signing key is revoked, disabled or outside its valid time window")
+		// The sentinel also comes from the CA's own key (B77), so the text
+		// covers both keys and a CA key that is missing.
+		c.SetPermissionError(signingKeyUnusableMessage)
 	case errors.Is(err, certServices.ErrSigningKeyNotFound):
 		c.SetNotFound("key")
 	case errors.Is(err, certServices.ErrCACertNotFound):
@@ -77,7 +83,7 @@ func writeCertificateRenewError(c *Context, err error) {
 	// A key or signing CA that has become unusable is a state the caller can
 	// fix, like the arms above, so renewal reports it as 409 (B77, B78).
 	if errors.Is(err, certServices.ErrSigningKeyUnusable) {
-		c.SetConflict("the certificate's signing key, or its CA's key, is revoked, disabled or outside its valid time window")
+		c.SetConflict(signingKeyUnusableMessage)
 		return
 	}
 	if errors.Is(err, certServices.ErrCACertNotFound) {

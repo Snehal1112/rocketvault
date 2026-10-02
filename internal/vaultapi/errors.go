@@ -100,10 +100,10 @@ func hintFor(e *APIError) string {
 		}
 		return hint
 	case KindNotFound:
-		// On create, a 404 means the key or CA named in the body is missing
-		// (B78). Renewal's 404 is the certificate itself, as elsewhere.
+		// On create, a 404 means the vault, or the key or CA named in the
+		// body, is missing (B78). Renewal's 404 is the certificate itself.
 		if e.Method == http.MethodPost && strings.HasSuffix(e.Path, "/certificates") {
-			return "the signing key or CA certificate named in the request does not exist in this vault"
+			return "the vault, or the signing key or CA certificate named in the request, does not exist"
 		}
 		return "no such resource in this vault"
 	case KindConflict:
@@ -143,20 +143,26 @@ func resourceAndVerb(method, path string) (resource, verb string) {
 	return resource, verb
 }
 
-// certificateIssueForbiddenHint covers every reason issuing or renewing a
+// certificateIssueForbiddenHint covers the reasons issuing or renewing a
 // certificate answers 403. The response body is never read, so the hint
-// cannot tell a missing role from a refused signing key; it names both
-// (B77, B78).
+// cannot tell a missing role from a refused key; it names both (B77, B78).
+// A key that is revoked, disabled or outside its window answers 403 only on
+// create; renewal reports it as 409, so the renew hint leaves it out.
 func certificateIssueForbiddenHint(path string) string {
 	where := ""
 	if vault := vaultFromPath(path); vault != "" {
 		where = fmt.Sprintf(" in vault %q", vault)
 	}
-	return fmt.Sprintf("issuing or renewing a certificate needs Microsoft.KeyVault/vaults/certificates/create "+
-		"(e.g. %q) and Microsoft.KeyVault/vaults/keys/sign/action (e.g. %q)%s, "+
-		"and a signing key and CA certificate the principal owns, with the key enabled, not revoked "+
-		"and inside its valid time window",
+	roles := fmt.Sprintf("needs Microsoft.KeyVault/vaults/certificates/create (e.g. %q) and "+
+		"Microsoft.KeyVault/vaults/keys/sign/action (e.g. %q)%s",
 		roleFor("certificates", "create"), roleFor("keys", "read"), where)
+	if strings.HasSuffix(path, "/renew") {
+		return "renewing a certificate " + roles +
+			"; it is also refused when the certificate's signing key or signing CA belongs to another user"
+	}
+	return "issuing a certificate " + roles +
+		"; it is also refused unless the signing key is the principal's own in this vault, enabled, " +
+		"not revoked and inside its valid time window, and, when ca_cert_id is set, the CA certificate is the principal's own"
 }
 
 // issuesCertificate reports whether a request issues or renews a

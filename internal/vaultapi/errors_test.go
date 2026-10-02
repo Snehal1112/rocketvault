@@ -115,9 +115,22 @@ func TestAPIError_CertificateIssueHintNamesKeySign(t *testing.T) {
 		require.Contains(t, apiErr.Hint, "Key Vault Crypto User")
 		require.Contains(t, apiErr.Hint, `in vault "prod"`)
 		require.Contains(t, apiErr.Hint, "signing key")
-		require.Contains(t, apiErr.Hint, "revoked")
 		require.NotContains(t, apiErr.Hint, "principal lacks", "a 403 here can be a key refusal, not a missing role")
 	}
+
+	create := doAgainstStatus(t, http.StatusForbidden, `{}`, http.MethodPost, "/api/v1/vaults/prod/certificates")
+	var createAPI *APIError
+	require.ErrorAs(t, create, &createAPI)
+	require.Contains(t, createAPI.Hint, "revoked", "a key-state refusal on create is a 403")
+	require.Contains(t, createAPI.Hint, "when ca_cert_id is set")
+
+	// Renewal reports key-state refusals as 409, so its 403 hint must not
+	// send the operator to the key's lifecycle.
+	renew := doAgainstStatus(t, http.StatusForbidden, `{}`, http.MethodPost, "/api/v1/vaults/prod/certificates/tls/renew")
+	var renewAPI *APIError
+	require.ErrorAs(t, renew, &renewAPI)
+	require.NotContains(t, renewAPI.Hint, "revoked")
+	require.Contains(t, renewAPI.Hint, "belongs to another user")
 
 	flat := doAgainstStatus(t, http.StatusForbidden, `{}`, http.MethodPost, "/api/v1/certificates")
 	var flatAPI *APIError
@@ -138,7 +151,7 @@ func TestAPIError_CertificateCreateNotFoundNamesSigningMaterial(t *testing.T) {
 	err := doAgainstStatus(t, http.StatusNotFound, `{}`, http.MethodPost, "/api/v1/vaults/prod/certificates")
 	var apiErr *APIError
 	require.ErrorAs(t, err, &apiErr)
-	require.Contains(t, apiErr.Hint, "signing key or CA certificate")
+	require.Equal(t, "the vault, or the signing key or CA certificate named in the request, does not exist", apiErr.Hint)
 
 	err = doAgainstStatus(t, http.StatusNotFound, `{}`, http.MethodPost, "/api/v1/vaults/prod/certificates/tls/renew")
 	require.ErrorAs(t, err, &apiErr)
