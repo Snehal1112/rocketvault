@@ -4,6 +4,7 @@
 package middleware
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"net/http"
@@ -55,31 +56,130 @@ type Container interface {
 	GetVaultService() vaultServices.VaultService
 }
 
+const (
+	// limiterIdleTTL is how long a bucket may sit unused before it is dropped.
+	// A bucket refills completely within a minute, so dropping an idle one
+	// loses no rate-limit state.
+	limiterIdleTTL = 2 * time.Minute
+	// limiterSweepInterval bounds how often get() scans for idle buckets.
+	limiterSweepInterval = time.Minute
+	// defaultLimiterMaxEntries caps the map so a flood of distinct keys cannot
+	// exhaust memory.
+	defaultLimiterMaxEntries = 100000
+)
+
+// limiterEntry is one tracked bucket and the last time its key was seen.
+type limiterEntry struct {
+	key      string
+	lim      *rate.Limiter
+	lastSeen time.Time
+}
+
 // keyedRateLimiter manages token-bucket limiters keyed by an arbitrary string.
-// The key is a client IP for the per-IP limiters and a vault id for the
-// per-vault limiter. Token buckets refill continuously, so steady traffic is
-// never blocked by a fixed-window reset the way a counter-based limiter would be.
+// The key is a client IP (IPv6 grouped by /64) for the per-IP limiters and a
+// vault id for the per-vault limiter. Token buckets refill continuously, so
+// steady traffic is never blocked by a fixed-window reset. The map is bounded:
+// idle buckets are swept lazily and the oldest is evicted at the cap.
+//
+// Entries are kept in a recency list (front is most recently seen), so a
+// sweep stops at the first live entry and cap eviction takes the back in
+// O(1). The lock is therefore held only for the work of removing entries
+// that are actually expired, never for a scan of the whole map.
+//
+// Known limit: once the map holds maxEntries live keys, every new key evicts
+// the least recently seen one, and that key starts over with a full burst if
+// it returns. A caller who can present more than maxEntries distinct keys
+// within limiterIdleTTL can therefore reset a quieter client's bucket. With
+// IPv6 bucketed by /64 that needs 100000 distinct IPv4 addresses or /64
+// prefixes inside two minutes, so the bound trades this residual risk for
+// fixed memory.
 type keyedRateLimiter struct {
-	limiters sync.Map
-	r        rate.Limit // tokens added per second
-	b        int        // burst size (= configured per-minute limit)
+	mu         sync.Mutex
+	entries    map[string]*list.Element
+	order      *list.List // Values are *limiterEntry, most recent at the front.
+	r          rate.Limit // tokens added per second
+	b          int        // burst size (= configured per-minute limit)
+	maxEntries int
+	now        func() time.Time
+	lastSweep  time.Time
 }
 
 func newKeyedRateLimiter(perMinute int64) *keyedRateLimiter {
+	return newKeyedRateLimiterWith(perMinute, defaultLimiterMaxEntries, time.Now)
+}
+
+// newKeyedRateLimiterWith lets tests inject the clock and the entry cap.
+// The rate.Limiter buckets keep using real time; only eviction uses now.
+func newKeyedRateLimiterWith(perMinute int64, maxEntries int, now func() time.Time) *keyedRateLimiter {
+	if maxEntries < 1 {
+		maxEntries = 1
+	}
 	return &keyedRateLimiter{
-		r: rate.Every(time.Minute / time.Duration(perMinute)),
-		b: int(perMinute),
+		entries:    make(map[string]*list.Element),
+		order:      list.New(),
+		r:          rate.Every(time.Minute / time.Duration(perMinute)),
+		b:          int(perMinute),
+		maxEntries: maxEntries,
+		now:        now,
+		lastSweep:  now(),
 	}
 }
 
 // get returns the limiter for the given key, creating one if it doesn't exist.
 func (l *keyedRateLimiter) get(key string) *rate.Limiter {
-	if v, ok := l.limiters.Load(key); ok {
-		return v.(*rate.Limiter)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	if now.Sub(l.lastSweep) >= limiterSweepInterval {
+		l.sweepLocked(now)
 	}
-	lim := rate.NewLimiter(l.r, l.b)
-	l.limiters.Store(key, lim)
-	return lim
+	if el, ok := l.entries[key]; ok {
+		e := el.Value.(*limiterEntry)
+		e.lastSeen = now
+		l.order.MoveToFront(el)
+		return e.lim
+	}
+	if len(l.entries) >= l.maxEntries {
+		l.sweepLocked(now)
+		if len(l.entries) >= l.maxEntries {
+			l.evictOldestLocked()
+		}
+	}
+	e := &limiterEntry{key: key, lim: rate.NewLimiter(l.r, l.b), lastSeen: now}
+	l.entries[key] = l.order.PushFront(e)
+	return e.lim
+}
+
+// sweepLocked drops every entry idle for limiterIdleTTL or longer. It walks
+// from the least recently seen end and stops at the first live entry.
+func (l *keyedRateLimiter) sweepLocked(now time.Time) {
+	l.lastSweep = now
+	for el := l.order.Back(); el != nil; el = l.order.Back() {
+		e := el.Value.(*limiterEntry)
+		if now.Sub(e.lastSeen) < limiterIdleTTL {
+			return
+		}
+		l.removeLocked(el)
+	}
+}
+
+// evictOldestLocked drops the least recently seen entry.
+func (l *keyedRateLimiter) evictOldestLocked() {
+	if el := l.order.Back(); el != nil {
+		l.removeLocked(el)
+	}
+}
+
+func (l *keyedRateLimiter) removeLocked(el *list.Element) {
+	e := l.order.Remove(el).(*limiterEntry)
+	delete(l.entries, e.key)
+}
+
+// len reports the number of tracked keys.
+func (l *keyedRateLimiter) len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.entries)
 }
 
 // Middleware provides HTTP middleware with single responsibilities.
@@ -91,8 +191,8 @@ type Middleware struct {
 	defaultLimiter *keyedRateLimiter
 	authLimiter    *keyedRateLimiter
 	// vaultLimiter buckets by vault id, so one tenant cannot spend another's
-	// request budget. Unlike the per-IP maps above its keyspace is bounded by
-	// the number of vaults, so entries are never evicted.
+	// request budget. It shares the idle eviction of the per-IP maps above,
+	// but its keyspace is bounded by the number of vaults anyway.
 	vaultLimiter      *keyedRateLimiter
 	vaultLimitMetrics VaultRateLimitRecorder
 	corsOrigins       map[string]bool
