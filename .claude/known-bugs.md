@@ -5474,7 +5474,8 @@ counts.
 **Severity**: High — key material from a vault the caller could not reach
 ended up in a row in a vault they could, usable there as a CA signing key
 **Files**: `internal/backup/item_backup.go`, `internal/backup/blob_seal.go`
-(new), `internal/services/certificates/renewal_service.go`,
+(new), `internal/backup/item_backup_cert_refs_test.go` (new),
+`internal/services/certificates/renewal_service.go`,
 `internal/container/service_container.go`
 
 **Symptom**: a caller holding `certificates/restore` in vault B could restore
@@ -5519,10 +5520,22 @@ The blob carried no integrity protection. The scheduler used an admin scope.
 **Read-error decision**: any error from the existence check, not only
 not-found (a locked or unreachable database, a missing key repository),
 clears the link and the restore proceeds. Keeping an unverified link is the
-one outcome the check exists to prevent; aborting would be equally safe but
-would turn a transient error into a failed restore for no security gain. A
-same-vault restore that hits such an error loses its links and will not
-auto-renew until the certificate is re-issued or renewed with a key.
+one outcome the check exists to prevent. Aborting instead would be equally
+safe, but aborting only on a transient error would need a repository
+not-found sentinel, and this fix changes no repository; so clearing stays.
+
+**Known limitation**: a cleared link is permanent for that row. Renewal
+refuses a certificate with no `key_id`, and no update path writes `key_id` or
+`ca_cert_id` (B37), so the only recovery is to delete and purge the restored
+certificate and restore the blob again. The restore gives the operator no
+signal that a link was dropped: `ItemBackupService` has no logger and the
+restore handler answers a bare 200. A same-vault restore that hits a
+transient read error therefore silently loses links it should have kept. A
+soft-deleted key or CA in the target vault does not resolve either, so
+restoring while it sits in the recycle bin drops the link permanently too.
+The existence reads run before the restore transaction opens; a key deleted
+in between leaves a link to a deleted key, which only leads to a refusal.
+No signal is added in this fix.
 
 **Compatibility decision**: blobs taken before the upgrade are refused, with
 no opt-in. An accepted unsealed blob is indistinguishable from a forged one.
@@ -5537,7 +5550,11 @@ object; that is what backup plus restore means (the caller held
 `keys/backup` in the source vault) and is accepted.
 
 **CA decision**: a CA certificate restored into a vault where its key does not
-resolve loses its `key_id` and can no longer sign there; re-issue it. There
+resolve loses its `key_id`. That alone does not stop it signing: at this fix,
+issuance and renewal sign with the CA row's own encrypted `private_key` and
+never read the CA's `key_id`. The CA is refused as a signer once it has no
+key link only after B77 (the CA's own key gate) lands; until then a restored
+CA keeps signing in its new vault with the key copy its blob carried. There
 is no safe way to re-link by name.
 
 **Pinned by**: `TestRestoreCertificate_RejectsLegacyUnsealedBlob`,
@@ -5552,6 +5569,7 @@ is no safe way to re-link by name.
 `TestRestoreCertificate_ForgedSealedBlobDropsForeignLinks`,
 `TestRestoreCertificate_ReadErrorDropsLinks`,
 `TestRestoreCertificate_ScopeIgnoringRepoStillDropsForeignKey`,
+`TestRestoreCertificate_ScopeIgnoringRepoStillDropsForeignCA`,
 `TestRestoreCertificate_CrossVaultKeepsHistoryDropsVersionKeyLinks`,
 `TestRestoreCertificate_ForgedVersionsDropOnlyForeignKeyLinks`
 (`internal/backup/item_backup_cert_refs_test.go`);

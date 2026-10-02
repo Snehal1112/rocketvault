@@ -262,6 +262,22 @@ func TestRestoreCertificate_ScopeIgnoringRepoStillDropsForeignKey(t *testing.T) 
 	assert.Equal(t, uuid.Nil, restored.KeyID)
 }
 
+// TestRestoreCertificate_ScopeIgnoringRepoStillDropsForeignCA is the CA twin
+// of the test above. The bare stubCertRepo ignores scope, so the CA from the
+// source vault comes back and only the vault comparison drops the link.
+func TestRestoreCertificate_ScopeIgnoringRepoStillDropsForeignCA(t *testing.T) {
+	t.Parallel()
+
+	f := newCertRefFixture(t)
+	svc := newTestItemBackupService(nil, vaultCheckingKeyRepo{f.keys}, f.certs, nil)
+	vaultB, newID := uuid.New(), uuid.New()
+	require.NoError(t, svc.RestoreCertificate(context.Background(), f.blob, f.owner, vaultB, newID))
+
+	restored := f.certs.certs[newID]
+	require.NotNil(t, restored)
+	assert.Nil(t, restored.CACertID, "a CA returned from another vault must not stay linked")
+}
+
 // TestRestoreCertificate_CrossVaultKeepsHistoryDropsVersionKeyLinks runs on
 // the real repositories. A versioned certificate restored into another vault
 // keeps every archived version, but no version keeps a key link into the
