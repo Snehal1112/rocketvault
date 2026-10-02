@@ -4576,6 +4576,82 @@ same answer as for a missing session.
 
 ---
 
+### B73 — OIDC accounts that set a password had no working second factor
+
+**Status**: Fixed (identity and sessions hardening, 2026-09-30); GitHub #55.
+Follow-ups listed under "Still open" are not fixed.
+**Severity**: Medium — needs a stolen access token or a leaked password to
+abuse; the research first rated it High, corrected in the research doc
+**Files**: `internal/services/users/user_service.go`,
+`internal/repositories/user_repository.go`,
+`internal/services/auth/authentication_service.go`, `api/users.go`,
+`cmd/users/update.go`
+
+**Symptom**: `FindOrCreateExternalUser` creates OIDC users with
+`PasswordHash: ""` and `TOTPSecret: ""`. Setting a password afterwards
+(`rocketvault users update --new-password`, or `PUT /api/v1/users/{self}`)
+produced a local login that still asked for a TOTP code, but an empty secret
+makes that code computable by anyone. The password was the only real factor.
+`TestLoginUser_EmptyTOTPSecret_FailsClosedLikeWrongCode` reproduced it: with
+the guard disabled, `POST /users/login` returned 200 and tokens for the code
+computed from the empty secret.
+
+**Root cause**: `UpdateUser` never enrolled a secret, `UserRepository.Update`
+did not even write `totp_secret`, and `AuthenticateUser` had no empty-secret
+guard.
+
+**What was fixed**: research doc Core steps 1-4. `UpdateUser` generates a TOTP
+secret when a password is set on an account whose secret is empty (existing
+secrets are kept), `UserRepository.Update` persists `totp_secret`, the
+`otpauth://` URL is returned once in the `totp_secret` field of the
+`PUT /users/{id}` response and printed once by `users update`, and
+`AuthenticateUser` rejects an empty secret after the password check. The
+returned error wraps `auth.ErrMFANotEnrolled` for `errors.Is`, but its message
+is `invalid TOTP code`, the same as a wrong code, and the HTTP response is the
+same generic 403, so nothing tells a caller that the account has no second
+factor. The reason is only in the server log and the audit event
+(`Details: "TOTP not enrolled"`). A wrong password still returns
+`invalid credentials` first. `CreateUser` and the admin bootstrap always
+generate a secret, so they are not affected.
+
+**Accepted consequence (lockout)**: every existing account that has a password
+but no TOTP secret can no longer log in with a password. These are OIDC users
+who set a password before this fix. Their OIDC login keeps working. Find them
+with (read-only; run it yourself against your own database):
+
+```sql
+SELECT id, username, auth_provider FROM users
+WHERE (totp_secret IS NULL OR totp_secret = '') AND password_hash <> '';
+```
+
+Each such OIDC user recovers by signing in with `rocketvault users login --oidc`
+and setting the password again with `rocketvault users update <id>
+--new-password <password>`, which now enrolls a secret and prints it once.
+
+**Still open**:
+- There is no TOTP reset path anywhere (no API route, CLI command or service
+  method). An account whose secret is set but unknown to its owner cannot
+  password-login, and setting the password again keeps the unknown secret.
+  The only recovery for such a local account is a direct database edit that
+  clears `totp_secret` followed by setting the password again. OIDC login is
+  unaffected.
+- If `GetUser` fails after `UpdateUser` committed the new secret, the handler
+  returns 500 and the one-time enrollment URL is lost. The account then has a
+  secret its owner never saw, which leads to the database-edit recovery above.
+- If the update commits and the retry wrapper then sees a retryable error, the
+  re-run finds a secret already present and returns success without the URL,
+  with the same outcome.
+- Research step 5 (fresh IdP login before setting a password) and step 6
+  (pending enrollment) are deferred on open questions 2 and 3 of
+  `.claude/research-oidc-user-mfa-enrollment.md`. Until step 5 lands, an
+  attacker holding a stolen OIDC session token can set a password and receives
+  the enrollment URL, which gives them a complete password-plus-TOTP login.
+- An admin who sets an OIDC user's password receives that user's TOTP
+  enrollment URL and so learns the secret. This mirrors `CreateUser`, where the
+  creating admin also sees the new user's secret.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

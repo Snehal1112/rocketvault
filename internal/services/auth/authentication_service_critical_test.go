@@ -469,3 +469,87 @@ func TestValidateSession_MalformedJti(t *testing.T) {
 	assert.Contains(t, err.Error(), "malformed jti")
 	sessionRepo.AssertNotCalled(t, "IsSessionRevoked")
 }
+
+// An account with no TOTP secret must never log in with a password alone.
+func TestAuthenticateUser_EmptyTOTPSecret_FailsClosed(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	userRepo := &MockUserRepository{}
+	sessionRepo := &MockSessionRepository{}
+	pwd := &MockPasswordService{}
+	totp := &MockTOTPService{}
+	jwt := &MockJWTService{}
+
+	user := model.User{
+		ID:           uuid.New(),
+		Username:     "oidc-user",
+		PasswordHash: "hashed",
+		TOTPSecret:   "",
+		Roles:        []string{model.RoleUser},
+		AuthProvider: model.AuthProviderOIDC,
+	}
+	userRepo.On("ReadByUsername", ctx, "oidc-user").Return(user, nil)
+	pwd.On("ValidatePassword", "pass", "hashed").Return(nil)
+
+	svc := newAuthService(userRepo, sessionRepo, pwd, totp, jwt, nil)
+	result, err := svc.AuthenticateUser(ctx, "oidc-user", "pass", "123456")
+
+	require.ErrorIs(t, err, ErrMFANotEnrolled)
+	assert.Nil(t, result)
+	totp.AssertNotCalled(t, "ValidateCode", mock.Anything, mock.Anything, mock.Anything)
+	sessionRepo.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+	jwt.AssertNotCalled(t, "GenerateToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// The unenrolled error must read exactly like a wrong TOTP code, so the
+// message never tells a caller that the account has no second factor.
+func TestAuthenticateUser_EmptyTOTPSecret_LooksLikeWrongCode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	// An unenrolled account with the right password.
+	unenrolledRepo := &MockUserRepository{}
+	unenrolledPwd := &MockPasswordService{}
+	unenrolled := model.User{ID: uuid.New(), Username: "bob", PasswordHash: "hashed", Roles: []string{model.RoleUser}}
+	unenrolledRepo.On("ReadByUsername", ctx, "bob").Return(unenrolled, nil)
+	unenrolledPwd.On("ValidatePassword", "pass", "hashed").Return(nil)
+	_, unenrolledErr := newAuthService(unenrolledRepo, &MockSessionRepository{}, unenrolledPwd,
+		&MockTOTPService{}, &MockJWTService{}, nil).AuthenticateUser(ctx, "bob", "pass", "123456")
+
+	// An enrolled account with the right password and a wrong code.
+	enrolledRepo := &MockUserRepository{}
+	enrolledPwd := &MockPasswordService{}
+	enrolledTOTP := &MockTOTPService{}
+	enrolled := model.User{ID: uuid.New(), Username: "carol", PasswordHash: "hashed", TOTPSecret: "JBSWY3DPEHPK3PXP", Roles: []string{model.RoleUser}}
+	enrolledRepo.On("ReadByUsername", ctx, "carol").Return(enrolled, nil)
+	enrolledPwd.On("ValidatePassword", "pass", "hashed").Return(nil)
+	enrolledTOTP.On("ValidateCode", "123456", "JBSWY3DPEHPK3PXP", mock.Anything).Return(false, nil)
+	_, wrongCodeErr := newAuthService(enrolledRepo, &MockSessionRepository{}, enrolledPwd,
+		enrolledTOTP, &MockJWTService{}, nil).AuthenticateUser(ctx, "carol", "pass", "123456")
+
+	require.ErrorIs(t, unenrolledErr, ErrMFANotEnrolled)
+	require.Error(t, wrongCodeErr)
+	assert.NotErrorIs(t, wrongCodeErr, ErrMFANotEnrolled)
+	assert.Equal(t, wrongCodeErr.Error(), unenrolledErr.Error())
+}
+
+// A wrong password on an unenrolled account must not reveal that it is unenrolled.
+func TestAuthenticateUser_EmptyTOTPSecret_WrongPasswordStaysGeneric(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	userRepo := &MockUserRepository{}
+	pwd := &MockPasswordService{}
+
+	user := model.User{ID: uuid.New(), Username: "oidc-user", PasswordHash: "hashed", Roles: []string{model.RoleUser}}
+	userRepo.On("ReadByUsername", ctx, "oidc-user").Return(user, nil)
+	pwd.On("ValidatePassword", "wrong", "hashed").Return(errors.New("mismatch"))
+
+	svc := newAuthService(userRepo, &MockSessionRepository{}, pwd, &MockTOTPService{}, &MockJWTService{}, nil)
+	_, err := svc.AuthenticateUser(ctx, "oidc-user", "wrong", "123456")
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrMFANotEnrolled)
+	assert.Equal(t, "invalid credentials", err.Error())
+}

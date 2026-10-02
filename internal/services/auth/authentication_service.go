@@ -42,6 +42,25 @@ type RefreshTokenResult struct {
 // or belongs to a user other than the caller.
 var ErrSessionNotFound = errors.New("session not found")
 
+// ErrMFANotEnrolled reports a login attempt on an account that has no TOTP secret.
+// The error AuthenticateUser returns for it reads like a wrong TOTP code, so the
+// message never reveals that the account has no second factor.
+var ErrMFANotEnrolled = errors.New("multi-factor authentication is not enrolled for this account")
+
+// invalidTOTPCodeMessage is the message every rejected TOTP step returns.
+const invalidTOTPCodeMessage = "invalid TOTP code"
+
+// concealedTOTPError reads like a wrong TOTP code but keeps its real cause for errors.Is.
+type concealedTOTPError struct {
+	cause error
+}
+
+// Error returns the same message a wrong TOTP code returns.
+func (e *concealedTOTPError) Error() string { return invalidTOTPCodeMessage }
+
+// Unwrap returns the real cause, which only server-side code inspects.
+func (e *concealedTOTPError) Unwrap() error { return e.cause }
+
 // RevokeSessionRequest identifies a session and the caller who revokes it.
 type RevokeSessionRequest struct {
 	SessionID   string
@@ -163,6 +182,24 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 		return nil, fmt.Errorf("invalid credentials")
 	}
 
+	// An empty secret makes every TOTP code computable by anyone, so an
+	// unenrolled account must not log in with a password alone. The check runs
+	// after the password so it tells nothing to someone without the password,
+	// and its error reads exactly like a wrong code.
+	if user.TOTPSecret == "" {
+		if s.auditService != nil {
+			_ = s.auditService.RecordEvent(ctx, auditServices.AuditEvent{
+				UserID: user.ID.String(), Action: "authenticate_user", Outcome: "failure", Source: "system",
+				ResourceType: "user", Details: "TOTP not enrolled",
+			})
+		}
+		s.logger.WithFields(logrus.Fields{
+			"username": username,
+			"user_id":  user.ID.String(),
+		}).Warn("Authentication failed: TOTP not enrolled")
+		return nil, &concealedTOTPError{cause: ErrMFANotEnrolled}
+	}
+
 	// Validate TOTP code
 	valid, err := s.totpService.ValidateCode(totpCode, user.TOTPSecret, time.Now())
 	if err != nil {
@@ -187,7 +224,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			"username": username,
 			"user_id":  user.ID.String(),
 		}).Warn("Authentication failed: invalid TOTP code")
-		return nil, fmt.Errorf("invalid TOTP code")
+		return nil, errors.New(invalidTOTPCodeMessage)
 	}
 
 	result, err := s.issueSession(ctx, &user, "authenticate_user")
