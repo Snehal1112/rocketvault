@@ -23,6 +23,7 @@ THE SOFTWARE.
 package api
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -298,93 +299,61 @@ func updateSecret(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := secretService.GetSecret(r.Context(), secretID, scope)
-	if err != nil {
-		writeSecretError(c, err)
-		return
-	}
-
-	// Update fields.
-	updated := false
-	if req.Name != "" && req.Name != secret.Name {
-		secret.Name = req.Name
-		updated = true
-	}
-	if req.Value != "" && req.Value != secret.Value {
-		secret.Value = req.Value
-		updated = true
-	}
-	if req.Tags != nil {
-		secret.Tags = req.Tags
-		updated = true
-	}
-	if req.ContentType != nil && *req.ContentType != secret.ContentType {
-		secret.ContentType = *req.ContentType
-		updated = true
-	}
-	if req.Enabled != nil {
-		secret.Enabled = *req.Enabled
-		updated = true
-	}
-	if req.ExpiresAt != nil {
-		secret.ExpiresAt = req.ExpiresAt
-		updated = true
-	}
-	if req.NotBefore != nil {
-		secret.NotBefore = req.NotBefore
-		updated = true
-	}
-	// Purge protection is persisted by the service, not by this handler, but it
-	// still counts as a change so a protection-only request is not rejected.
-	if req.PurgeProtection != nil {
-		secret.PurgeProtection = *req.PurgeProtection
-		updated = true
-	}
-
-	if !updated {
+	// "No changes" is decided from the request alone. Comparing against the
+	// stored value would make the 400 an equality oracle for the secret.
+	noFields := req.Name == "" && req.Value == "" && req.Tags == nil &&
+		req.ContentType == nil && req.Enabled == nil && req.ExpiresAt == nil &&
+		req.NotBefore == nil && req.PurgeProtection == nil
+	if noFields {
 		c.SetInvalidParam("no changes provided")
 		return
 	}
 
-	// Increment version.
-	secret.Version++
-
-	// Update secret.
+	// Only the fields the client sent are passed on. The service's scoped read
+	// is the access check, and it archives the prior value and bumps the version.
 	updateReq := secrets.UpdateSecretRequest{
-		SecretID:        secret.ID,
+		SecretID:        secretID,
 		Scope:           scope,
-		Name:            &secret.Name,
-		Value:           &secret.Value,
-		Tags:            &secret.Tags,
+		Name:            updateName,
+		Value:           updateValue,
 		ContentType:     req.ContentType,
 		Enabled:         req.Enabled,
 		ExpiresAt:       req.ExpiresAt,
 		NotBefore:       req.NotBefore,
 		PurgeProtection: req.PurgeProtection,
 	}
+	if req.Tags != nil {
+		updateReq.Tags = &req.Tags
+	}
 	if err := secretService.UpdateSecret(r.Context(), updateReq); err != nil {
 		writeSecretError(c, err)
 		return
 	}
 
-	// Prepare response (without value for security).
-	response := model.SecretResponse{
-		ID:          secret.ID.String(),
-		Name:        secret.Name,
-		Tags:        secret.Tags,
-		Version:     secret.Version,
-		ContentType: secret.ContentType,
-		CreatedAt:   secret.CreatedAt.Format(time.RFC3339),
-		Enabled:     secret.Enabled,
-		ExpiresAt:   secret.ExpiresAt,
-		NotBefore:   secret.NotBefore,
+	// The read-back only builds the response. When the update just disabled or
+	// expired the secret, it is refused by design, so answer with a minimal body.
+	response := model.SecretResponse{ID: secretID.String(), Enabled: req.Enabled != nil && *req.Enabled}
+	if secret, getErr := secretService.GetSecret(r.Context(), secretID, scope); getErr == nil {
+		response = model.SecretResponse{
+			ID:          secret.ID.String(),
+			Name:        secret.Name,
+			Tags:        secret.Tags,
+			Version:     secret.Version,
+			ContentType: secret.ContentType,
+			CreatedAt:   secret.CreatedAt.Format(time.RFC3339),
+			Enabled:     secret.Enabled,
+			ExpiresAt:   secret.ExpiresAt,
+			NotBefore:   secret.NotBefore,
+		}
+	} else if !errors.Is(getErr, secrets.ErrSecretLifecycleDenied) {
+		writeSecretError(c, getErr)
+		return
 	}
 
-	// Send response.
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(response.ToJson())) //nolint:errcheck,gosec
 
-	c.Logger.Printf("User %s updated secret %s", scope.ActorID(), secret.Name)
+	c.Logger.Printf("User %s updated secret %s", scope.ActorID(), secretID)
 }
 
 // deleteSecret handles the HTTP request to delete a secret by its ID.

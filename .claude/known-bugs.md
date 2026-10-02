@@ -4350,6 +4350,55 @@ context and respond tests added with each commit.
 
 ---
 
+### B83 — Secret export and version reads bypassed the enabled and expiry check
+
+**Status**: Fixed 2026-10-02 in commits `91b809ac`, `68225fce` and the
+`updateSecret` handler commit that closes GitHub #44, plan
+`docs/superpowers/plans/2026-09-30-secrets-and-error-responses.md`
+**Severity**: Medium — plaintext of a disabled, expired or not-yet-active
+secret was readable, and the update handler both blocked a legitimate
+re-enable and acted as an equality oracle
+**Files**: `internal/services/secrets/secret_service.go`
+(`ExportSecrets`, `accessibleOnly`),
+`internal/services/secrets/versioning_service.go` (`readAccessibleParent`),
+`api/secrets.go` (`updateSecret`)
+
+**Symptom**: secret export (json, csv, sealed) included disabled, expired and
+not-yet-active secrets with their values. `GetVersion`, `GetLatestVersion` and
+`GetVersions` returned version plaintext of a disabled parent. A `PUT` that
+only set `enabled=true` on a disabled secret returned 403, so a disabled
+secret could not be re-enabled over HTTP. A `PUT` whose value equalled the
+stored value returned 400 "no changes provided", which told the caller the
+guess was right.
+
+**Root cause**: `ExportSecrets` listed through `ListSecrets` without an
+`IsAccessible()` filter. `versioning_service.go` read versions without
+checking the parent secret's lifecycle. `updateSecret` pre-read the secret
+through `GetSecret`, which applies the lifecycle gate (hence the 403), and
+then diffed the request field by field against the stored plaintext (hence
+the 400 on equality).
+
+**Fix**: `ExportSecrets` filters through `accessibleOnly`. The three
+plaintext version reads call `readAccessibleParent` first. `updateSecret`
+no longer pre-reads: "no changes" is decided from the request alone (an
+empty body), `UpdateSecret` receives exactly the fields the client sent (the
+service's scoped read stays the access check, and it still archives the
+prior value and bumps the version), and `GetSecret` runs only afterwards to
+build the response. When that read-back is refused because the update just
+disabled or expired the secret, the handler answers 200 with a minimal body
+(`id` and `enabled`). Tests: `api/secrets_update_lifecycle_test.go` and the
+service tests added with `91b809ac` and `68225fce`.
+
+**Accepted behavior change**: version metadata listing
+(`GetVersionsMetadata`) stays allowed for a disabled secret because it
+carries no plaintext. An update of a disabled secret's value or attributes is
+now allowed over HTTP, matching Azure, where attributes of a disabled secret
+stay editable. An identical-value `PUT` is now a real update that archives a
+version. The CLI (`cmd/secrets`) calls the service directly and never had the
+handler's pre-read, so its behavior is unchanged.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

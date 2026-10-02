@@ -490,7 +490,7 @@ func buildUpdateSecretCtx(svc *mockSecretService, secretIDStr string) *Context {
 func TestUpdateSecret_NoChangesProvided_Returns400(t *testing.T) {
 	secretID := uuid.New()
 	svc := &mockSecretService{}
-	svc.On("GetSecret", mock.Anything, secretID, mock.Anything).Return(makeSecretModel(secretID), nil)
+	// No mock expectations: an empty body is rejected before any service call.
 
 	c := buildUpdateSecretCtx(svc, secretID.String())
 	w := httptest.NewRecorder()
@@ -510,8 +510,6 @@ func TestUpdateSecret_NoChangesProvided_Returns400(t *testing.T) {
 func TestUpdateSecret_UpdateServiceError_Returns500(t *testing.T) {
 	secretID := uuid.New()
 	svc := &mockSecretService{}
-	existing := makeSecretModel(secretID)
-	svc.On("GetSecret", mock.Anything, secretID, mock.Anything).Return(existing, nil)
 	svc.On("UpdateSecret", mock.Anything, mock.Anything).Return(errors.New("db error"))
 
 	c := buildUpdateSecretCtx(svc, secretID.String())

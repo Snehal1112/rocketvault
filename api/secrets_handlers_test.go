@@ -543,13 +543,12 @@ func TestUpdateSecret_InvalidSecretID_Returns400(t *testing.T) {
 func TestUpdateSecret_NoChanges_Returns400(t *testing.T) {
 	secretID := uuid.New()
 	svc := &mockSecretService{}
-	svc.On("GetSecret", mock.Anything, secretID, mock.Anything).Return(makeSecretModel(secretID), nil)
+	// No mock expectations: an empty body is rejected before any service call.
 
 	c := newSecretCtx(svc)
 	c.Params = &ApiParams{SecretID: secretID.String(), PerPage: 60}
 	w := httptest.NewRecorder()
-	// Same name and value as makeSecretModel — no actual changes.
-	body, _ := json.Marshal(map[string]any{"name": "test-secret", "value": "secret-value"})
+	body, _ := json.Marshal(map[string]any{})
 	r := httptest.NewRequest(http.MethodPut, "/secrets/"+secretID.String(), bytes.NewReader(body))
 
 	updateSecret(c, w, r)
@@ -564,8 +563,6 @@ func TestUpdateSecret_NoChanges_Returns400(t *testing.T) {
 func TestUpdateSecret_ServiceError_Returns500(t *testing.T) {
 	secretID := uuid.New()
 	svc := &mockSecretService{}
-	original := makeSecretModel(secretID)
-	svc.On("GetSecret", mock.Anything, secretID, mock.Anything).Return(original, nil)
 	svc.On("UpdateSecret", mock.Anything, mock.Anything).Return(errors.New("db error"))
 
 	c := newSecretCtx(svc)
@@ -586,8 +583,8 @@ func TestUpdateSecret_ServiceError_Returns500(t *testing.T) {
 func TestUpdateSecret_NotFound_Returns404(t *testing.T) {
 	secretID := uuid.New()
 	svc := &mockSecretService{}
-	svc.On("GetSecret", mock.Anything, secretID, mock.Anything).
-		Return(nil, secretServices.ErrSecretNotFound)
+	svc.On("UpdateSecret", mock.Anything, mock.Anything).
+		Return(secretServices.ErrSecretNotFound)
 
 	c := newSecretCtx(svc)
 	c.Params = &ApiParams{SecretID: secretID.String(), PerPage: 60}
@@ -607,8 +604,8 @@ func TestUpdateSecret_NotFound_Returns404(t *testing.T) {
 func TestUpdateSecret_LifecycleDenied_Returns403(t *testing.T) {
 	secretID := uuid.New()
 	svc := &mockSecretService{}
-	svc.On("GetSecret", mock.Anything, secretID, mock.Anything).
-		Return(nil, secretServices.ErrSecretLifecycleDenied)
+	svc.On("UpdateSecret", mock.Anything, mock.Anything).
+		Return(secretServices.ErrSecretLifecycleDenied)
 
 	c := newSecretCtx(svc)
 	c.Params = &ApiParams{SecretID: secretID.String(), PerPage: 60}
@@ -628,6 +625,7 @@ func TestUpdateSecret_LifecycleDenied_Returns403(t *testing.T) {
 func TestUpdateSecret_GetSecretError_Returns500(t *testing.T) {
 	secretID := uuid.New()
 	svc := &mockSecretService{}
+	svc.On("UpdateSecret", mock.Anything, mock.Anything).Return(nil)
 	svc.On("GetSecret", mock.Anything, secretID, mock.Anything).
 		Return(nil, errors.New("disk I/O"))
 
