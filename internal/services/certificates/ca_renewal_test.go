@@ -445,3 +445,15 @@ func TestCreateCASignedCertificate_LeafAsCARefusesCreation(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot sign certificates")
 	certRepo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
 }
+
+// A renewal result reports the immutable exportable flag and the key algorithm.
+func TestRenewCertificate_ResultReportsExportableAndKeyAlgorithm(t *testing.T) {
+	f := newCARenewalFixture(t, "RSA")
+	f.original.Exportable = true
+
+	result, err := f.svc.RenewCertificate(context.Background(), f.certID, f.scope, 365)
+	require.NoError(t, err)
+	assert.True(t, result.Exportable)
+	assert.Equal(t, crypto.KeyAlgorithmFromCertificatePEM((*f.updated).Certificate), result.KeyAlgorithm)
+	assert.NotEmpty(t, result.KeyAlgorithm)
+}

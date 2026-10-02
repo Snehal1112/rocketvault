@@ -57,6 +57,8 @@ func writeKeyError(c *Context, err error) {
 		c.SetInvalidParam("algorithm")
 	case errors.Is(err, model.ErrKeyVersionNotFound):
 		c.SetNotFound("key version")
+	case errors.Is(err, model.ErrExportableNotSupported):
+		c.SetInvalidParam("exportable: HSM-backed and OCT keys can never be exportable")
 	default:
 		c.SetInternalError(err)
 	}

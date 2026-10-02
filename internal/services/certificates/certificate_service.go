@@ -1113,6 +1113,9 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 		CreatedAt: renewed.CreatedAt,
 		ExpiresAt: renewed.ExpiresAt,
 		Version:   renewed.Version,
+
+		Exportable:   renewed.Exportable,
+		KeyAlgorithm: crypto.KeyAlgorithmFromCertificatePEM(renewed.Certificate),
 	}, nil
 }
 

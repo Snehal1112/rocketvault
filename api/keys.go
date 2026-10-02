@@ -99,10 +99,14 @@ func buildKeyResponse(key *model.Key, jwk *model.PublicJWK) KeyResponse {
 		NotBefore: key.NotBefore,
 		Bits:      key.Bits,
 		Curve:     key.Curve,
-		N:         n,
-		E:         e,
-		X:         x,
-		Y:         y,
+
+		Exportable:   key.Exportable,
+		KeyAlgorithm: key.KeyAlgorithm(),
+
+		N: n,
+		E: e,
+		X: x,
+		Y: y,
 	}
 }
 
@@ -226,6 +230,7 @@ func createKey(c *Context, w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:       req.ExpiresAt,
 		NotBefore:       req.NotBefore,
 		PurgeProtection: req.PurgeProtection,
+		Exportable:      req.Exportable,
 	}
 
 	var result *keyservices.CreateKeyResult
@@ -339,6 +344,7 @@ func importKey(c *Context, w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:       req.ExpiresAt,
 		NotBefore:       req.NotBefore,
 		PurgeProtection: req.PurgeProtection,
+		Exportable:      req.Exportable,
 	})
 	if err != nil {
 		writeKeyError(c, err)

@@ -23,6 +23,7 @@ THE SOFTWARE.
 package api
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"rocketvault/internal/container"
+	"rocketvault/internal/crypto"
 	certServices "rocketvault/internal/services/certificates"
 	vvalidation "rocketvault/internal/validation"
 	"rocketvault/model"
@@ -50,6 +52,8 @@ type CreateCertificateAPIRequest struct {
 	NotBefore    *time.Time `json:"not_before,omitempty"` // Optional activation time.
 	// PurgeProtection is optional; nil leaves the stored default alone.
 	PurgeProtection *bool `json:"purge_protection,omitempty"`
+	// Exportable requests an exportable certificate; immutable after creation.
+	Exportable bool `json:"exportable,omitempty"`
 }
 
 // UpdateCertificateAPIRequest is the HTTP request body for PUT /certificates/{certificate_id}.
@@ -77,6 +81,9 @@ type CertificateResponse struct {
 	Enabled     bool       `json:"enabled"`
 	NotBefore   *time.Time `json:"not_before,omitempty"`
 	Version     int        `json:"version"` // The current version number.
+
+	Exportable   bool   `json:"exportable"`    // Whether the certificate can be exported. Immutable.
+	KeyAlgorithm string `json:"key_algorithm"` // The leaf public key's algorithm, such as RSA-2048.
 }
 
 // CertificateListResponse is the JSON response for listing certificates.
@@ -136,6 +143,9 @@ func certToDomainResponse(cert *model.Certificate) CertificateResponse {
 		Enabled:     cert.Enabled,
 		NotBefore:   cert.NotBefore,
 		Version:     cert.CurrentVersion(),
+
+		Exportable:   cert.Exportable,
+		KeyAlgorithm: crypto.KeyAlgorithmFromCertificatePEM(cert.Certificate),
 	}
 }
 
@@ -201,6 +211,7 @@ func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 		Enabled:         req.Enabled,
 		NotBefore:       req.NotBefore,
 		PurgeProtection: req.PurgeProtection,
+		Exportable:      req.Exportable,
 	}
 
 	var result *certServices.CreateCertificateResult
@@ -219,6 +230,10 @@ func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		if errors.Is(err, model.ErrExportableKeyRequired) {
+			c.SetConflict("exportable: the key's exportable flag is false; an exportable certificate requires a key created with exportable: true")
+			return
+		}
 		c.SetInternalError(err)
 		return
 	}
@@ -241,6 +256,9 @@ func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:   result.ExpiresAt,
 		Enabled:     enabled,
 		NotBefore:   req.NotBefore,
+
+		Exportable:   result.Exportable,
+		KeyAlgorithm: result.KeyAlgorithm,
 	}
 
 	writeJSONStatus(w, http.StatusCreated, response)

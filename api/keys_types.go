@@ -43,6 +43,10 @@ type CreateKeyRequest struct {
 	NotBefore *time.Time `json:"not_before,omitempty"`
 	// PurgeProtection is optional; nil leaves the stored default alone.
 	PurgeProtection *bool `json:"purge_protection,omitempty"`
+
+	// Exportable requests an exportable key; immutable after creation. HSM
+	// and OCT keys refuse it with 400.
+	Exportable bool `json:"exportable,omitempty"`
 }
 
 // ImportKeyRequest represents the request structure for importing a
@@ -56,6 +60,10 @@ type ImportKeyRequest struct {
 	NotBefore *time.Time      `json:"not_before,omitempty"`
 	// PurgeProtection is optional; nil leaves the stored default alone.
 	PurgeProtection *bool `json:"purge_protection,omitempty"`
+
+	// Exportable requests an exportable key; immutable after creation. HSM
+	// and OCT keys refuse it with 400.
+	Exportable bool `json:"exportable,omitempty"`
 }
 
 // UpdateKeyRequest represents the request structure for updating a cryptographic key.
@@ -85,6 +93,10 @@ type KeyResponse struct {
 	NotBefore *time.Time `json:"not_before,omitempty"`
 	Bits      int        `json:"bits,omitempty"`
 	Curve     string     `json:"curve,omitempty"`
+
+	Exportable   bool   `json:"exportable"`    // Whether the key can be exported. Immutable.
+	KeyAlgorithm string `json:"key_algorithm"` // Algorithm and size, such as RSA-2048 or EC-P256.
+
 	// JWK public components (omitted for HSM-backed keys).
 	N string `json:"n,omitempty"` // RSA modulus (base64url).
 	E string `json:"e,omitempty"` // RSA public exponent (base64url).

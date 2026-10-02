@@ -6064,6 +6064,8 @@ components:
             - "Key Vault Certificate User"
             - "Key Vault Crypto Service Encryption User"
             - "Key Vault Data Access Administrator"
+            - "Key Vault Certificate Exporter"
+            - "Key Vault Key Exporter"
 
     RoleAssignmentResponse:
       type: object
@@ -6357,6 +6359,14 @@ components:
         - name
         - type
       properties:
+        exportable:
+          type: boolean
+          default: false
+          description: |
+            Opt in to export. Set only at creation and never changed after.
+            An exportable certificate requires a key created exportable (409
+            otherwise); HSM-backed and OCT keys refuse it (400). Restoring a
+            backup always yields a non-exportable item.
         name:
           type: string
         type:
@@ -6392,6 +6402,14 @@ components:
         - name
         - jwk
       properties:
+        exportable:
+          type: boolean
+          default: false
+          description: |
+            Opt in to export. Set only at creation and never changed after.
+            An exportable certificate requires a key created exportable (409
+            otherwise); HSM-backed and OCT keys refuse it (400). Restoring a
+            backup always yields a non-exportable item.
         name:
           type: string
         jwk:
@@ -6444,6 +6462,13 @@ components:
         - created_at
         - enabled
       properties:
+        exportable:
+          type: boolean
+          description: Whether the item can be exported. Immutable.
+        key_algorithm:
+          type: string
+          description: The key's algorithm and size, such as RSA-2048 or EC-P256.
+          example: "RSA-2048"
         id:
           type: string
           format: uuid
@@ -6826,6 +6851,14 @@ components:
         - key_id
         - validity_days
       properties:
+        exportable:
+          type: boolean
+          default: false
+          description: |
+            Opt in to export. Set only at creation and never changed after.
+            An exportable certificate requires a key created exportable (409
+            otherwise); HSM-backed and OCT keys refuse it (400). Restoring a
+            backup always yields a non-exportable item.
         name:
           type: string
           description: Certificate common name
@@ -6899,6 +6932,13 @@ components:
         - enabled
         - version
       properties:
+        exportable:
+          type: boolean
+          description: Whether the item can be exported. Immutable.
+        key_algorithm:
+          type: string
+          description: The key's algorithm and size, such as RSA-2048 or EC-P256.
+          example: "RSA-2048"
         id:
           type: string
           format: uuid
