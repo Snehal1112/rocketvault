@@ -65,6 +65,7 @@ func TestCheckAndRenewCertificates_CASignedKeepsIssuer(t *testing.T) {
 	vaultScope := model.NewVaultScope(vaultID, userID)
 	certRepo.On("ListAll", mock.Anything).Return([]model.Certificate{*original}, nil)
 	certRepo.On("Read", mock.Anything, certID, vaultScope).Return(original, nil)
+	linkUsableCAKey(keyRepo, caCert, vaultScope)
 	certRepo.On("Read", mock.Anything, caCertID, vaultScope).Return(caCert, nil)
 	keyRepo.On("Read", mock.Anything, keyID, vaultScope).
 		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity, Enabled: true}, nil)

@@ -5550,12 +5550,17 @@ object; that is what backup plus restore means (the caller held
 `keys/backup` in the source vault) and is accepted.
 
 **CA decision**: a CA certificate restored into a vault where its key does not
-resolve loses its `key_id`. That alone does not stop it signing: at this fix,
-issuance and renewal sign with the CA row's own encrypted `private_key` and
-never read the CA's `key_id`. The CA is refused as a signer once it has no
-key link only after B77 (the CA's own key gate) lands; until then a restored
-CA keeps signing in its new vault with the key copy its blob carried. There
-is no safe way to re-link by name.
+resolve loses its `key_id`. Issuance and renewal sign with the CA row's own
+encrypted `private_key`, so the dropped link alone would not stop it signing.
+B77's CA-key gate (`requireCAKeyUsable` in
+`internal/services/certificates/certificate_service.go`) closes that: before
+signing, `CreateCASignedCertificate` and CA-signed renewal read the CA's own
+`key_id` under the caller's vault scope and refuse a CA with no key link, or
+whose key is revoked, disabled, outside its window or not readable in that
+vault. A restored CA without its key therefore cannot sign again in its new
+vault; re-issue it. There is no safe way to re-link by name. (Between this
+fix and the B77 commit, a restored CA could still sign with the key copy its
+blob carried.)
 
 **Pinned by**: `TestRestoreCertificate_RejectsLegacyUnsealedBlob`,
 `TestRestoreKey_RejectsForgedHSMHandle`, `TestRestore_RejectsTamperedBlob`,

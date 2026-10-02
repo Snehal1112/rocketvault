@@ -516,9 +516,11 @@ func TestCreateCASignedCertificate_SetsPurgeProtectionWhenRequested(t *testing.T
 		ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encryptedKey,
 		Enabled: true,
 	}, nil)
-	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(&model.Certificate{
+	caCert := &model.Certificate{
 		ID: caCertID, UserID: userID, Name: "test-ca", Certificate: caCertPEM, PrivateKey: encryptedCAKey,
-	}, nil)
+	}
+	linkUsableCAKey(keyRepo, caCert, certVaultScope(userID))
+	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(caCert, nil)
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).Return(nil)
 	certRepo.On("SetPurgeProtection", mock.Anything, mock.AnythingOfType("uuid.UUID"), true).Return(nil)
 

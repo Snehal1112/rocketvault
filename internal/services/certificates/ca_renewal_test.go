@@ -28,6 +28,12 @@ type caRenewalFixture struct {
 	caPEM    string
 	original *model.Certificate
 	updated  **model.Certificate
+	// caKey is the CA's own linked key. A test sets Revoked or Enabled on it
+	// to drive the CA-key gate (B77).
+	caKey *model.Key
+	// caCert is the CA row the fixture serves. A test clears its KeyID to
+	// drive the no-link refusal (B77).
+	caCert *model.Certificate
 }
 
 // newCARenewalFixture wires a leaf certificate signed by a CA whose key uses
@@ -41,6 +47,7 @@ func newCARenewalFixture(t *testing.T, caKeyType string) *caRenewalFixture {
 	certID := uuid.New()
 	keyID := uuid.New()
 	caCertID := uuid.New()
+	caKeyID := uuid.New()
 
 	entityKeyPEM, err := crypto.GenerateRSAKeyPEM(2048)
 	require.NoError(t, err)
@@ -89,6 +96,7 @@ func newCARenewalFixture(t *testing.T, caKeyType string) *caRenewalFixture {
 		ID:          caCertID,
 		UserID:      userID,
 		VaultID:     vaultID,
+		KeyID:       caKeyID,
 		Name:        "fixture-ca",
 		Certificate: caPEM,
 		PrivateKey:  encCA,
@@ -102,6 +110,8 @@ func newCARenewalFixture(t *testing.T, caKeyType string) *caRenewalFixture {
 	certRepo.On("Read", mock.Anything, caCertID, scope).Return(caCert, nil)
 	keyRepo.On("Read", mock.Anything, keyID, scope).
 		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity, Enabled: true}, nil)
+	caKey := &model.Key{ID: caKeyID, UserID: userID, VaultID: vaultID, Type: caKeyType, Enabled: true}
+	keyRepo.On("Read", mock.Anything, caKeyID, scope).Return(caKey, nil)
 
 	var updated *model.Certificate
 	certRepo.On("Update", mock.Anything, mock.AnythingOfType("*model.Certificate"), scope).
@@ -118,6 +128,8 @@ func newCARenewalFixture(t *testing.T, caKeyType string) *caRenewalFixture {
 		caPEM:    caPEM,
 		original: original,
 		updated:  &updated,
+		caKey:    caKey,
+		caCert:   caCert,
 	}
 }
 
@@ -456,4 +468,15 @@ func TestRenewCertificate_ResultReportsExportableAndKeyAlgorithm(t *testing.T) {
 	assert.True(t, result.Exportable)
 	assert.Equal(t, crypto.KeyAlgorithmFromCertificatePEM((*f.updated).Certificate), result.KeyAlgorithm)
 	assert.NotEmpty(t, result.KeyAlgorithm)
+}
+
+// The renewal half of the revocation decision (B77): once the CA's own key
+// is revoked, its embedded copy must not re-sign anything.
+func TestRenewCertificate_RevokedCAKeyRefusesRenewal(t *testing.T) {
+	f := newCARenewalFixture(t, "RSA")
+	f.caKey.Revoked = true
+
+	_, err := f.svc.RenewCertificate(context.Background(), f.certID, f.scope, 365)
+	require.ErrorIs(t, err, ErrSigningKeyUnusable)
+	f.certRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
 }

@@ -322,6 +322,13 @@ func (s *certificateService) CreateSelfSignedCertificate(ctx context.Context, re
 		s.logger.LogAuditError(req.UserID.String(), "create_self_signed_cert", "failed", "failed to read key", err)
 		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
+	// ValidateKeyOwnership checked an earlier read. The key could have been
+	// revoked or disabled since, so the key actually used to sign is checked
+	// again (B77).
+	if err := requireUsableKey(key); err != nil {
+		s.logger.LogAuditError(req.UserID.String(), "create_self_signed_cert", "failed", "signing key is unusable", nil)
+		return nil, err
+	}
 	if err := s.requireExportableKey(req, key, "create_self_signed_cert"); err != nil {
 		return nil, err
 	}
@@ -482,6 +489,12 @@ func (s *certificateService) CreateCASignedCertificate(ctx context.Context, req 
 		s.logger.LogAuditError(req.UserID.String(), "create_ca_signed_cert", "failed", "failed to read key", err)
 		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
+	// See CreateSelfSignedCertificate: the key actually used to sign is
+	// checked again (B77).
+	if err := requireUsableKey(key); err != nil {
+		s.logger.LogAuditError(req.UserID.String(), "create_ca_signed_cert", "failed", "signing key is unusable", nil)
+		return nil, err
+	}
 	if err := s.requireExportableKey(req, key, "create_ca_signed_cert"); err != nil {
 		return nil, err
 	}
@@ -515,6 +528,13 @@ func (s *certificateService) CreateCASignedCertificate(ctx context.Context, req 
 	if caStatus != caStatusCA {
 		s.logger.LogAuditError(req.UserID.String(), "create_ca_signed_cert", "failed", "CA certificate cannot sign certificates", nil)
 		return nil, fmt.Errorf("signing CA %s cannot sign certificates (asserts CA without keyCertSign, or is not a CA); reissue it with --is-ca", *req.CACertID)
+	}
+
+	// The CA signs with its row's embedded copy of its key, so that key's
+	// lifecycle decides whether it may still sign (B77).
+	if err := s.requireCAKeyUsable(ctx, caCert, certScope); err != nil {
+		s.logger.LogAuditError(req.UserID.String(), "create_ca_signed_cert", "failed", "CA signing key is unusable", err)
+		return nil, fmt.Errorf("cannot issue a CA-signed certificate: %w", err)
 	}
 
 	// Decrypt CA private key
@@ -911,6 +931,12 @@ func (s *certificateService) renewCASignedBody(ctx context.Context, original *mo
 	if caStatus != caStatusCA {
 		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "signing CA certificate cannot sign certificates", nil)
 		return "", fmt.Errorf("signing CA %s cannot sign certificates (asserts CA without keyCertSign, or is not a CA); reissue it with --is-ca", caCertID)
+	}
+
+	// See CreateCASignedCertificate: the CA's own key must still be usable.
+	if err := s.requireCAKeyUsable(ctx, caCert, scope); err != nil {
+		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "signing CA key is unusable", err)
+		return "", fmt.Errorf("cannot renew CA-signed certificate: %w", err)
 	}
 
 	caKeyPEM, err := common.DecryptSecret(caCert.PrivateKey)
@@ -1325,6 +1351,24 @@ func (s *certificateService) ValidateKeyOwnership(ctx context.Context, keyID uui
 	}
 
 	return nil
+}
+
+// requireCAKeyUsable refuses to sign through a CA certificate whose own
+// linked key is revoked, disabled, outside its validity window, or no longer
+// readable in scope. The CA row stores a copy of that key's private PEM, so
+// without this check revoking the key would not stop the CA from issuing
+// (B77). A CA row with no key link is refused too: every CA that passes
+// inspectCertificateCA was issued after key_id existed, so a missing link
+// means it was dropped at restore (B76) and the key cannot be checked.
+func (s *certificateService) requireCAKeyUsable(ctx context.Context, caCert *model.Certificate, scope model.Scope) error {
+	if caCert.KeyID == uuid.Nil {
+		return fmt.Errorf("%w: CA certificate %s records no signing key", ErrSigningKeyUnusable, caCert.ID)
+	}
+	key, err := s.keyRepo.Read(ctx, caCert.KeyID, scope)
+	if err != nil {
+		return fmt.Errorf("%w: CA signing key %s is not readable: %w", ErrSigningKeyUnusable, caCert.KeyID, err)
+	}
+	return requireUsableKey(key)
 }
 
 // requireUsableKey refuses a key that is revoked, disabled, or outside its

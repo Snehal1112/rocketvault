@@ -1340,6 +1340,7 @@ func TestCreateCASignedCertificate_FullSuccess(t *testing.T) {
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(entityKey, nil)
 	// ValidateCertificateAccess calls certRepo.Read for the CA cert
+	linkUsableCAKey(keyRepo, caCert, certVaultScope(userID))
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(caCert, nil)
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).Return(nil)
 
@@ -1387,11 +1388,12 @@ func TestCreateCASignedCertificate_StoresCACertID(t *testing.T) {
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).
 		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity, Enabled: true}, nil)
-	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).
-		Return(&model.Certificate{
-			ID: caCertID, UserID: userID, Name: "test-ca",
-			Certificate: caCertPEM, PrivateKey: encCA, Enabled: true,
-		}, nil)
+	caCert := &model.Certificate{
+		ID: caCertID, UserID: userID, Name: "test-ca",
+		Certificate: caCertPEM, PrivateKey: encCA, Enabled: true,
+	}
+	linkUsableCAKey(keyRepo, caCert, certVaultScope(userID))
+	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(caCert, nil)
 
 	var created *model.Certificate
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).
@@ -1438,11 +1440,12 @@ func TestCreateCASignedCertificate_ECDSACA(t *testing.T) {
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).
 		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity, Enabled: true}, nil)
-	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).
-		Return(&model.Certificate{
-			ID: caCertID, UserID: userID, Name: "ecdsa-ca",
-			Certificate: caCertPEM, PrivateKey: encCA, Enabled: true,
-		}, nil)
+	caCert := &model.Certificate{
+		ID: caCertID, UserID: userID, Name: "ecdsa-ca",
+		Certificate: caCertPEM, PrivateKey: encCA, Enabled: true,
+	}
+	linkUsableCAKey(keyRepo, caCert, certVaultScope(userID))
+	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(caCert, nil)
 
 	var created *model.Certificate
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).
@@ -1496,6 +1499,7 @@ func TestCreateCASignedCertificate_RepoCreateFails(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(entityKey, nil)
+	linkUsableCAKey(keyRepo, caCert, certVaultScope(userID))
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(caCert, nil)
 	certRepo.On("Create", mock.Anything, mock.AnythingOfType("*model.Certificate")).
 		Return(errors.New("db write error"))
@@ -1539,6 +1543,7 @@ func TestCreateCASignedCertificate_WithExplicitEnabledFalse(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 
 	keyRepo.On("Read", mock.Anything, keyID, certVaultScope(userID)).Return(entityKey, nil)
+	linkUsableCAKey(keyRepo, caCert, certVaultScope(userID))
 	certRepo.On("Read", mock.Anything, caCertID, certVaultScope(userID)).Return(caCert, nil)
 
 	var createdCert *model.Certificate
