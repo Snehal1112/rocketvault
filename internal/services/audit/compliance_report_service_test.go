@@ -127,10 +127,10 @@ func TestComplianceReportService_QueryLogs_IntegrityCheck(t *testing.T) {
 func TestComplianceReportService_PurgeExpiredLogs(t *testing.T) {
 	db := openTestDB(t)
 	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
-	require.NoError(t, repo.SetAuditConfig(context.Background(), "retention_days", "1"))
+	require.NoError(t, repo.SetAuditConfig(context.Background(), "retention_days", "90"))
 
 	// Insert one old and one recent log.
-	old := time.Now().UTC().Add(-48 * time.Hour)
+	old := time.Now().UTC().AddDate(0, 0, -92)
 	recent := time.Now().UTC()
 	require.NoError(t, repo.InsertAuditLog(context.Background(), repositories.AuditLog{ID: uuid.New().String(), Action: "old", Timestamp: old}))
 	require.NoError(t, repo.InsertAuditLog(context.Background(), repositories.AuditLog{ID: uuid.New().String(), Action: "recent", Timestamp: recent}))
@@ -139,4 +139,36 @@ func TestComplianceReportService_PurgeExpiredLogs(t *testing.T) {
 	deleted, err := svc.PurgeExpiredLogs(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), deleted)
+}
+
+// TestComplianceReportService_StoredRetentionBelowFloorIsClamped pins that a
+// value of 1 saved before the floor existed cannot purge recent rows (B81).
+func TestComplianceReportService_StoredRetentionBelowFloorIsClamped(t *testing.T) {
+	db := openTestDB(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	require.NoError(t, repo.SetAuditConfig(context.Background(), "retention_days", "1"))
+
+	twoDaysOld := time.Now().UTC().Add(-48 * time.Hour)
+	require.NoError(t, repo.InsertAuditLog(context.Background(), repositories.AuditLog{ID: uuid.New().String(), Action: "recent-ish", Timestamp: twoDaysOld}))
+
+	svc := auditSvc.NewComplianceReportService(repo)
+	days, err := svc.GetRetentionDays(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, auditSvc.MinRetentionDays, days)
+
+	deleted, err := svc.PurgeExpiredLogs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), deleted)
+}
+
+// TestComplianceReportService_SetRetentionBelowFloorIsRefused pins the floor
+// on the write path shared by HTTP and the CLI.
+func TestComplianceReportService_SetRetentionBelowFloorIsRefused(t *testing.T) {
+	db := openTestDB(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	svc := auditSvc.NewComplianceReportService(repo)
+
+	err := svc.SetRetentionDays(context.Background(), 89)
+	require.ErrorIs(t, err, auditSvc.ErrRetentionBelowFloor)
+	require.NoError(t, svc.SetRetentionDays(context.Background(), 90))
 }

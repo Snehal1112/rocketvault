@@ -978,7 +978,7 @@ paths:
           $ref: "#/components/responses/InternalError"
     patch:
       summary: Update the audit retention configuration
-      description: Sets the number of days audit entries are retained. Admin role required.
+      description: Sets the number of days audit entries are retained (minimum 90; a lower value is refused with 400). Admin role required.
       operationId: patchAuditConfig
       tags:
         - Audit
@@ -5947,7 +5947,7 @@ components:
       properties:
         retention_days:
           type: integer
-          minimum: 1
+          minimum: 90
           example: 365
 
     # ─── Access policies ─────────────────────────────────────────────────────

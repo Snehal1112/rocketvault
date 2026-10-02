@@ -290,10 +290,10 @@ func TestPatchAuditConfig_ServiceError_Returns500(t *testing.T) {
 	mockCRS := &testutils.MockComplianceReportService{}
 	mc := &testutils.MockServiceContainer{}
 	mc.On("GetComplianceReportService").Return(mockCRS)
-	mockCRS.On("SetRetentionDays", mock.Anything, 30).Return(errors.New("db error"))
+	mockCRS.On("SetRetentionDays", mock.Anything, 120).Return(errors.New("db error"))
 
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPatch, "/audit/config", strings.NewReader(`{"retention_days":30}`))
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/audit/config", strings.NewReader(`{"retention_days":120}`))
 	c := auditAdminCtx(mc)
 
 	patchAuditConfig(c, w, r)
@@ -1215,3 +1215,20 @@ func TestGetGDPRReport_NonAdmin_Returns403(t *testing.T) {
 // ============================================================
 
 var _ = crypto.SignatureAlgorithm("")
+
+// TestPatchAuditConfig_BelowFloor_Returns400 pins the 90-day floor (B81).
+func TestPatchAuditConfig_BelowFloor_Returns400(t *testing.T) {
+	mc := &testutils.MockServiceContainer{}
+	mc.On("GetComplianceReportService").Return(&testutils.MockComplianceReportService{})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/audit/config", strings.NewReader(`{"retention_days":1}`))
+	c := auditAdminCtx(mc)
+
+	patchAuditConfig(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -207,7 +208,17 @@ func (s *ComplianceReportService) PurgeExpiredLogs(ctx context.Context) (int64, 
 	return deleted, nil
 }
 
+// MinRetentionDays is the shortest audit retention the service accepts. It
+// keeps the three months of immediately available history PCI DSS 10.5.1
+// asks for, and stops an admin credential from shrinking retention to erase
+// its own trail at the next purge.
+const MinRetentionDays = 90
+
+// ErrRetentionBelowFloor is returned when retention_days is below MinRetentionDays.
+var ErrRetentionBelowFloor = errors.New("retention_days below the minimum")
+
 // GetRetentionDays reads retention_days from audit_config (default 365).
+// A stored value below MinRetentionDays is clamped up to the floor.
 func (s *ComplianceReportService) GetRetentionDays(ctx context.Context) (int, error) {
 	val, err := s.repo.GetAuditConfig(ctx, "retention_days")
 	if err != nil {
@@ -220,13 +231,18 @@ func (s *ComplianceReportService) GetRetentionDays(ctx context.Context) (int, er
 	if err != nil {
 		return 365, fmt.Errorf("invalid retention_days value %q: %w", val, err)
 	}
+	// A value stored before the floor existed is clamped, so it cannot
+	// purge recent rows.
+	if days < MinRetentionDays {
+		return MinRetentionDays, nil
+	}
 	return days, nil
 }
 
-// SetRetentionDays persists a new retention_days value.
+// SetRetentionDays persists a new retention_days value of at least MinRetentionDays.
 func (s *ComplianceReportService) SetRetentionDays(ctx context.Context, days int) error {
-	if days < 1 {
-		return fmt.Errorf("retention_days must be >= 1")
+	if days < MinRetentionDays {
+		return fmt.Errorf("%w: %d (minimum %d)", ErrRetentionBelowFloor, days, MinRetentionDays)
 	}
 	return s.repo.SetAuditConfig(ctx, "retention_days", strconv.Itoa(days))
 }

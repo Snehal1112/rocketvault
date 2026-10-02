@@ -464,12 +464,12 @@ func TestConfigCmd_GetRetentionDays_Error(t *testing.T) {
 func TestConfigCmd_SetRetentionDays_Success(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	mockSvc := &MockComplianceReportService{}
-	mockSvc.On("SetRetentionDays", mock.Anything, 60).Return(nil)
+	mockSvc.On("SetRetentionDays", mock.Anything, 120).Return(nil)
 	tc.MockContainer.On("GetComplianceReportService").Return(mockSvc)
 
 	cmd, buf := newConfigCmd()
 	cmd.SetContext(tc.Ctx)
-	cmd.SetArgs([]string{"--retention-days=60"})
+	cmd.SetArgs([]string{"--retention-days=120"})
 	err := cmd.Execute()
 	assert.NoError(t, err)
 	assert.Contains(t, buf.String(), "updated")
@@ -479,14 +479,29 @@ func TestConfigCmd_SetRetentionDays_Success(t *testing.T) {
 func TestConfigCmd_SetRetentionDays_Error(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	mockSvc := &MockComplianceReportService{}
-	mockSvc.On("SetRetentionDays", mock.Anything, 30).Return(fmt.Errorf("write error"))
+	mockSvc.On("SetRetentionDays", mock.Anything, 100).Return(fmt.Errorf("write error"))
+	tc.MockContainer.On("GetComplianceReportService").Return(mockSvc)
+
+	cmd, _ := newConfigCmd()
+	cmd.SetContext(tc.Ctx)
+	cmd.SetArgs([]string{"--retention-days=100"})
+	err := cmd.Execute()
+	assert.ErrorContains(t, err, "failed to update retention policy")
+}
+
+// TestConfigCmd_SetRetentionDays_BelowFloor pins the 90-day floor on the CLI
+// before the service is reached (B81).
+func TestConfigCmd_SetRetentionDays_BelowFloor(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+	mockSvc := &MockComplianceReportService{}
 	tc.MockContainer.On("GetComplianceReportService").Return(mockSvc)
 
 	cmd, _ := newConfigCmd()
 	cmd.SetContext(tc.Ctx)
 	cmd.SetArgs([]string{"--retention-days=30"})
 	err := cmd.Execute()
-	assert.ErrorContains(t, err, "failed to update retention policy")
+	assert.ErrorContains(t, err, "at least 90")
+	mockSvc.AssertNotCalled(t, "SetRetentionDays", mock.Anything, mock.Anything)
 }
 
 // TestConfigCmd_NonAdmin_Forbidden proves a non-admin caller is rejected

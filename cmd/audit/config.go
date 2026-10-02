@@ -7,6 +7,7 @@ import (
 
 	"rocketvault/common"
 	"rocketvault/internal/container"
+	auditSvc "rocketvault/internal/services/audit"
 )
 
 // configCmd manages audit log configuration settings.
@@ -16,7 +17,7 @@ var configCmd = &cobra.Command{
 	Long: `Show or update the audit log retention policy: how many days audit log
 entries are kept before a daily background job purges older entries.
 
-Pass --retention-days to set a new value; omit it, or pass 0, to print the
+Pass --retention-days (minimum 90) to set a new value; omit it, or pass 0, to print the
 current value instead.
 
 Requires the global admin role. Audit data spans every vault, so there is
@@ -40,6 +41,9 @@ no --vault scoping.`,
 		}
 
 		retentionDays, _ := cmd.Flags().GetInt("retention-days")
+		if retentionDays > 0 && retentionDays < auditSvc.MinRetentionDays {
+			return fmt.Errorf("--retention-days must be at least %d", auditSvc.MinRetentionDays)
+		}
 		svc := sc.GetComplianceReportService()
 
 		if retentionDays > 0 {

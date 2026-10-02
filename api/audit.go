@@ -232,8 +232,8 @@ func patchAuditConfig(c *Context, w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if body.RetentionDays <= 0 {
-		c.SetInvalidParam("retention_days: must be a positive integer")
+	if body.RetentionDays < auditSvc.MinRetentionDays {
+		c.SetInvalidParam("retention_days: must be at least " + strconv.Itoa(auditSvc.MinRetentionDays))
 		return
 	}
 
