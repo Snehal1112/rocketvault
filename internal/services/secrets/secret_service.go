@@ -25,6 +25,9 @@ import (
 // within the requested scope (vault or user ownership).
 var ErrSecretNotFound = errors.New("secret not found")
 
+// ErrInvalidContentType is returned when a content type is not in the allowlist.
+var ErrInvalidContentType = errors.New("unsupported content type")
+
 // ErrSecretLifecycleDenied is returned when a secret exists but is disabled or
 // outside its valid time window (not_before / expires_at).
 var ErrSecretLifecycleDenied = errors.New("secret is disabled or outside its valid time window")
@@ -83,7 +86,7 @@ var validContentTypes = map[string]struct{}{
 // validateContentType returns an error when ct is not in the allowlist.
 func validateContentType(ct string) error {
 	if _, ok := validContentTypes[ct]; !ok {
-		return fmt.Errorf("unsupported content type: %q", ct)
+		return fmt.Errorf("%w: %q", ErrInvalidContentType, ct)
 	}
 	return nil
 }

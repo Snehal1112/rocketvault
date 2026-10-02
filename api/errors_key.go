@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"rocketvault/internal/crypto"
+	"rocketvault/internal/repositories"
 	keyservices "rocketvault/internal/services/keys"
 	"rocketvault/model"
 )
@@ -59,6 +60,8 @@ func writeKeyError(c *Context, err error) {
 		c.SetNotFound("key version")
 	case errors.Is(err, model.ErrExportableNotSupported):
 		c.SetInvalidParam("exportable: HSM-backed and OCT keys can never be exportable")
+	case errors.Is(err, repositories.ErrNameTaken):
+		c.SetConflict("a resource with this name already exists in this vault")
 	default:
 		c.SetInternalError(err)
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"rocketvault/internal/backup"
+	"rocketvault/internal/repositories"
 )
 
 // InitBackupItem registers per-item backup and restore routes onto the
@@ -138,6 +139,8 @@ func restoreSecretHandler(c *Context, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, backup.ErrInvalidBlob):
 			c.SetInvalidParam("blob")
+		case errors.Is(err, repositories.ErrNameTaken):
+			c.SetConflict("a resource with this name already exists in this vault")
 		default:
 			c.SetInternalError(err)
 		}
@@ -210,6 +213,8 @@ func restoreKeyHandler(c *Context, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, backup.ErrInvalidBlob):
 			c.SetInvalidParam("blob")
+		case errors.Is(err, repositories.ErrNameTaken):
+			c.SetConflict("a resource with this name already exists in this vault")
 		default:
 			c.SetInternalError(err)
 		}
@@ -282,6 +287,8 @@ func restoreCertificateHandler(c *Context, w http.ResponseWriter, r *http.Reques
 		switch {
 		case errors.Is(err, backup.ErrInvalidBlob):
 			c.SetInvalidParam("blob")
+		case errors.Is(err, repositories.ErrNameTaken):
+			c.SetConflict("a resource with this name already exists in this vault")
 		default:
 			c.SetInternalError(err)
 		}

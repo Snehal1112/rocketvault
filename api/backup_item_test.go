@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -1281,4 +1282,71 @@ func TestInitBackupItem_LegacyFlatRoutesStillMatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+// nameTakenCreateErr mimics the repository's wrapped unique-constraint error.
+func nameTakenCreateErr() error {
+	return fmt.Errorf("resource %q: %w: %w", "dup", repositories.ErrNameTaken,
+		errors.New("UNIQUE constraint failed: x.vault_id, x.name"))
+}
+
+// assertRestoreConflict checks a restore answered 409 with no driver text.
+func assertRestoreConflict(t *testing.T, c *Context, w *httptest.ResponseRecorder) {
+	t.Helper()
+	if c.Err != nil {
+		writeError(w, c)
+	}
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.NotContains(t, w.Body.String(), "UNIQUE constraint")
+}
+
+// TestRestoreSecretHandler_NameTaken_Returns409 covers B86 for secrets.
+func TestRestoreSecretHandler_NameTaken_Returns409(t *testing.T) {
+	userID := uuid.MustParse(secretHTestUserID)
+	blob := buildValidSecretBlob(t, uuid.New(), userID)
+	secretRepo := &mockSecretRepo{
+		readFn: func(_ context.Context, id uuid.UUID) (*model.Secret, error) {
+			return &model.Secret{ID: id, Name: "s", Value: "v", UserID: userID}, nil
+		},
+		createFn: func(_ context.Context, _ *model.Secret) error { return nameTakenCreateErr() },
+	}
+	c := newBackupCtxWithSecret(secretRepo)
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"blob": blob})
+	restoreSecretHandler(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/secrets/restore", bytes.NewReader(body)))
+	assertRestoreConflict(t, c, w)
+}
+
+// TestRestoreKeyHandler_NameTaken_Returns409 covers B86 for keys.
+func TestRestoreKeyHandler_NameTaken_Returns409(t *testing.T) {
+	userID := uuid.MustParse(secretHTestUserID)
+	blob := buildValidKeyBlob(t, uuid.New(), userID)
+	keyRepo := &mockKeyRepo{
+		readFn: func(_ context.Context, id uuid.UUID) (*model.Key, error) {
+			return &model.Key{ID: id, Name: "k", Type: "RSA", UserID: userID}, nil
+		},
+		createFn: func(_ context.Context, _ *model.Key) error { return nameTakenCreateErr() },
+	}
+	c := newBackupCtxWithKey(keyRepo)
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"blob": blob})
+	restoreKeyHandler(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/keys/restore", bytes.NewReader(body)))
+	assertRestoreConflict(t, c, w)
+}
+
+// TestRestoreCertificateHandler_NameTaken_Returns409 covers B86 for certificates.
+func TestRestoreCertificateHandler_NameTaken_Returns409(t *testing.T) {
+	userID := uuid.MustParse(secretHTestUserID)
+	blob := buildValidCertBlob(t, uuid.New(), userID)
+	certRepo := &mockCertRepo{
+		readFn: func(_ context.Context, id uuid.UUID) (*model.Certificate, error) {
+			return &model.Certificate{ID: id, Name: "c", UserID: userID}, nil
+		},
+		createFn: func(_ context.Context, _ *model.Certificate) error { return nameTakenCreateErr() },
+	}
+	c := newBackupCtxWithCert(certRepo)
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"blob": blob})
+	restoreCertificateHandler(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/certificates/restore", bytes.NewReader(body)))
+	assertRestoreConflict(t, c, w)
 }

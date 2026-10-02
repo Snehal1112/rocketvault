@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"rocketvault/common"
+	"rocketvault/internal/repositories"
 	"rocketvault/internal/services/secrets"
 	"rocketvault/model"
 )
@@ -29,6 +30,10 @@ func writeSecretError(c *Context, err error) {
 		c.SetInvalidParam("passphrase: required to import an encrypted export")
 	case errors.Is(err, common.ErrWrongPassphrase):
 		c.SetInvalidParam("passphrase: incorrect, or the uploaded file is not a valid encrypted export")
+	case errors.Is(err, repositories.ErrNameTaken):
+		c.SetConflict("a resource with this name already exists in this vault")
+	case errors.Is(err, secrets.ErrInvalidContentType):
+		c.SetInvalidParam("content_type")
 	default:
 		c.SetInternalError(err)
 	}

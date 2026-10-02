@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 
+	"rocketvault/internal/repositories"
 	certServices "rocketvault/internal/services/certificates"
 	"rocketvault/model"
 )
@@ -31,6 +32,8 @@ func writeCertificateError(c *Context, err error) {
 		c.SetInvalidParam("version attributes: at least one of enabled, expires_at or not_before is required, and not_before must not be after expires_at")
 	case errors.Is(err, model.ErrCertificateVersionConflict):
 		c.SetConflict("certificate was renewed or updated concurrently; re-read it and retry")
+	case errors.Is(err, repositories.ErrNameTaken):
+		c.SetConflict("a resource with this name already exists in this vault")
 	default:
 		c.SetInternalError(err)
 	}
