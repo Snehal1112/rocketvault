@@ -2361,29 +2361,39 @@ func runWrapPolicyCase(t *testing.T, unwrap bool, decisions map[model.PolicyOper
 func TestWrapUnwrapCmd_PolicyOperationsAreIndependent(t *testing.T) {
 	denied, allowed := authzServices.AccessDenied, authzServices.AccessAllowed
 
-	crypto, err := runWrapPolicyCase(t, false, map[model.PolicyOperation]authzServices.AccessDecision{
-		model.OpWrap: denied, model.OpUnwrap: allowed, model.OpCreate: allowed})
-	assert.ErrorContains(t, err, "forbidden")
-	crypto.AssertNotCalled(t, "WrapKey", mock.Anything, mock.Anything)
-
-	crypto, err = runWrapPolicyCase(t, true, map[model.PolicyOperation]authzServices.AccessDecision{
-		model.OpWrap: denied, model.OpUnwrap: allowed, model.OpCreate: allowed})
-	assert.NoError(t, err)
-	crypto.AssertCalled(t, "UnwrapKey", mock.Anything, mock.Anything)
-
-	crypto, err = runWrapPolicyCase(t, true, map[model.PolicyOperation]authzServices.AccessDecision{
-		model.OpWrap: allowed, model.OpUnwrap: denied, model.OpCreate: allowed})
-	assert.ErrorContains(t, err, "forbidden")
-	crypto.AssertNotCalled(t, "UnwrapKey", mock.Anything, mock.Anything)
-
-	crypto, err = runWrapPolicyCase(t, false, map[model.PolicyOperation]authzServices.AccessDecision{
-		model.OpWrap: allowed, model.OpUnwrap: denied, model.OpCreate: allowed})
-	assert.NoError(t, err)
-	crypto.AssertCalled(t, "WrapKey", mock.Anything, mock.Anything)
-
-	for _, unwrap := range []bool{false, true} {
-		_, err = runWrapPolicyCase(t, unwrap, map[model.PolicyOperation]authzServices.AccessDecision{
-			model.OpWrap: allowed, model.OpUnwrap: allowed, model.OpCreate: denied})
-		assert.NoError(t, err, "a deny on create must not block wrap or unwrap")
+	tests := []struct {
+		name      string
+		unwrap    bool
+		decisions map[model.PolicyOperation]authzServices.AccessDecision
+		wantErr   bool
+	}{
+		{"wrap deny blocks wrap", false, map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpWrap: denied, model.OpUnwrap: allowed, model.OpCreate: allowed}, true},
+		{"wrap deny does not block unwrap", true, map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpWrap: denied, model.OpUnwrap: allowed, model.OpCreate: allowed}, false},
+		{"unwrap deny blocks unwrap", true, map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpWrap: allowed, model.OpUnwrap: denied, model.OpCreate: allowed}, true},
+		{"unwrap deny does not block wrap", false, map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpWrap: allowed, model.OpUnwrap: denied, model.OpCreate: allowed}, false},
+		{"create deny does not block wrap", false, map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpWrap: allowed, model.OpUnwrap: allowed, model.OpCreate: denied}, false},
+		{"create deny does not block unwrap", true, map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpWrap: allowed, model.OpUnwrap: allowed, model.OpCreate: denied}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			crypto, err := runWrapPolicyCase(t, tt.unwrap, tt.decisions)
+			method := "WrapKey"
+			if tt.unwrap {
+				method = "UnwrapKey"
+			}
+			if tt.wantErr {
+				assert.ErrorContains(t, err, "forbidden")
+				crypto.AssertNotCalled(t, method, mock.Anything, mock.Anything)
+				return
+			}
+			assert.NoError(t, err)
+			crypto.AssertCalled(t, method, mock.Anything, mock.Anything)
+		})
 	}
 }

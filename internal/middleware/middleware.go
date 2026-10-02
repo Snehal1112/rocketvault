@@ -552,11 +552,11 @@ func resolvePolicy(method, path string) (model.PolicyResourceType, model.PolicyO
 		op = model.OpRenew
 	// B33 and B79: every key crypto route and item backup resolves to its own
 	// operation, so an explicit-deny policy naming one is evaluated over HTTP.
-	// Sign and verify match the operations the CLI checks. Encrypt, decrypt and
-	// item backup have no CLI command. The CLI wrap and unwrap commands still
-	// check OpCreate until they move to OpWrap and OpUnwrap. Export is
+	// Sign, verify, wrap and unwrap match the operations the CLI checks.
+	// Encrypt, decrypt and item backup have no CLI command. Export is
 	// deliberately absent and stays the fail-closed create below, as does any
-	// other unknown POST sub-resource.
+	// other unknown POST sub-resource. The api package walks the real router
+	// to prove each named route resolves as intended.
 	case last == "sign" && method == http.MethodPost:
 		op = model.OpSign
 	case last == "verify" && method == http.MethodPost:
@@ -584,6 +584,12 @@ func resolvePolicy(method, path string) (model.PolicyResourceType, model.PolicyO
 	}
 
 	return resourceType, op
+}
+
+// ResolvePolicy exposes resolvePolicy so a router walk in another package can
+// prove every registered route resolves to the operation the CLI passes.
+func ResolvePolicy(method, path string) (model.PolicyResourceType, model.PolicyOperation) {
+	return resolvePolicy(method, path)
 }
 
 // PolicyMiddleware authorizes every request against the vault resolved by

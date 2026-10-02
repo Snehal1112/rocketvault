@@ -5145,6 +5145,91 @@ middleware, unlike the Config and OAuth2 routers.
 
 ---
 
+### B79 — Explicit-deny policies for key encrypt, decrypt, wrap, unwrap and backup were not evaluated over HTTP
+
+**Status**: Fixed 2026-10-02 (GitHub #42). Fix: `resolvePolicy` gives each
+key crypto route and item backup its own operation, and the CLI `keys wrap`
+and `keys unwrap` commands pass the same operations. Tests:
+`TestResolvePolicy_KeyCryptoAndBackupResolveToTheirOwnOperations`,
+`TestPolicyMiddleware_WrapAndUnwrapDeniesDoNotCross`,
+`TestPolicyMiddleware_CreateDenyStillBlocksExport`,
+`TestWrapUnwrapCmd_PolicyOperationsAreIndependent`, and the router walk
+`TestKeyCryptoRoutesResolveToTheirOwnPolicyOperation`
+(`api/route_policy_operation_test.go`).
+**Severity**: Medium — an explicit deny, the one mechanism that overrides a
+role grant, silently did nothing for five operations over HTTP, and a deny on
+`create` blocked all five as collateral damage.
+**Files**: `internal/middleware/middleware.go` (`resolvePolicy`,
+`ResolvePolicy`), `model/access_policy.go` (`OpWrap`, `OpUnwrap`),
+`cmd/keys/wrap.go`, `cmd/keys/unwrap.go`
+
+**Symptom**: B33 gave `/sign` and `/verify` their own policy operations. The
+remaining POST routes `/encrypt`, `/decrypt`, `/wrap`, `/unwrap` and
+`/{id}/backup` fell to the plain POST arm and resolved to `OpCreate`, so a
+deny naming `encrypt`, `decrypt` or `backup` was never looked up, and a deny
+on `create` refused every one of them.
+
+**Root cause**: `resolvePolicy` special-cased only the verbs B33 needed. The
+code comment that justified leaving wrap and unwrap on `OpCreate` described
+the CLI's then-current value, not a design decision. Encrypt, decrypt and item
+backup have no CLI command at all, so nothing forced a choice.
+
+**What was fixed**: `resolvePolicy` compares the whole last path segment, so
+`/unwrap` cannot match as `/wrap` and a vault name or ID ending in an
+operation word cannot change the result. It maps `/encrypt` to `OpEncrypt`,
+`/decrypt` to `OpDecrypt`, `/wrap` to the new `OpWrap`, `/unwrap` to the new
+`OpUnwrap`, and item `/backup` (keys, secrets and certificates) to `OpBackup`.
+The CLI `keys wrap` and `keys unwrap` commands pass `OpWrap` and `OpUnwrap`,
+so both entry points evaluate the same triple. Wrap and unwrap got their own
+operations rather than reusing encrypt and decrypt, matching Azure's separate
+`wrapKey`/`unwrapKey` permissions and avoiding the same collateral blocking
+one level down. The router walk builds the real router through `api.Init`
+and requires every POST data-plane route that ends in a literal word to
+appear in its table on both route shapes, so a new named route fails the
+test until someone decides its operation.
+
+**Accepted behavior change (loosening)**: a deny on `(keys, create)` no
+longer blocks encrypt, decrypt, wrap, unwrap or key backup, and a deny on
+`(secrets, create)` or `(certificates, create)` no longer blocks item backup.
+Before deploying, operators must audit every access policy with
+`operation: create` and add denies that name the specific operations they
+meant to block (`encrypt`, `decrypt`, `wrap`, `unwrap`, `backup`). The same
+change tightens the newly named operations: a deny on `encrypt`, `decrypt`,
+`wrap`, `unwrap` or `backup` now takes effect over HTTP, where it was
+ignored before. See the v4.10.0 authorization release note.
+
+**Export stays on `create` on purpose**: `POST .../keys/{id}/export`,
+`POST .../certificates/{id}/export` and the bulk `POST .../secrets/export`
+resolve to `OpCreate` on both route shapes, which fails closed: a deny on
+create still blocks export. There is no `export` policy operation. As a
+consequence, a legacy access-policy deny on `get` does not block export,
+because export is classed as create. The role check still requires
+`ActionKeysExport`, `ActionCertificatesExportItem` or `ActionSecretsGet`.
+Whether a deny on `get` should also block export is an open policy question
+for the owner.
+
+**Known unresolved gap**: `POST /{resource}/restore` (restore from a backup
+blob) still resolves to `OpRecover`, because the last segment is the same as
+the soft-delete `/deleted/{resource}/{id}/restore` route. A deny on `restore`
+(`OpRestore`, a valid operation) is therefore never evaluated over HTTP. The
+CLI has no item restore or recover command, so restore is the one named
+operation the two entry points do not share; any future CLI command must
+pick its operation with this in mind. The router walk pins the current
+`OpRecover` result so a fix must update the test on purpose.
+
+**Not compared in this fix (follow-up)**: the other CLI commands that pass
+`OpCreate` were not aligned against HTTP by this plan. A spot check on
+2026-10-02 found: key create, certificate create and secret create pass
+`OpCreate`, matching their POST collection routes; `secrets export` passes
+`OpCreate` (with `ActionSecretsGet`), matching `POST .../secrets/export`;
+`cmd/rotation.go`'s secret rotation-policy create passes `OpCreate`. Two
+mismatches were seen and not fixed: `keys import` passes `OpCreate` while
+`POST .../keys/import` resolves to `OpImport`, and `cmd/version.go`'s version
+list passes `OpList` while HTTP GET routes never resolve to `OpList`. A deny
+on `import` or `list` therefore behaves differently on the CLI and over HTTP.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and
