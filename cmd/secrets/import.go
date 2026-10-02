@@ -26,6 +26,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -193,10 +194,10 @@ Imported, skipped, and failed counts are all printed when the run finishes.`,
 }
 
 // runSecretsImportRemote is "secrets import"'s remote-mode path. format and
-// data were already resolved by the caller. Unlike local mode, the server's
-// ImportResponse only reports imported/total counts, not per-record
-// skip/fail details -- api/secrets.go's importSecrets handler doesn't
-// return them, so they can't be surfaced here either.
+// data were already resolved by the caller. The server's ImportResponse carries
+// the same imported, skipped, failed and per-record error details as local
+// mode, and this path exits non-zero on any failed record exactly like local
+// mode.
 func runSecretsImportRemote(cmd *cobra.Command, ctx context.Context, target *cliclient.Target, format string) error {
 	httpClient, ok := ctx.Value(common.RemoteHTTPClientKey).(*http.Client)
 	if !ok || httpClient == nil {
@@ -246,8 +247,27 @@ func runSecretsImportRemote(cmd *cobra.Command, ctx context.Context, target *cli
 		return fmt.Errorf("failed to import secrets: %w", err)
 	}
 
-	fmt.Printf("Secrets imported successfully\nImported: %d\nTotal: %d\n", result.ImportedCount, result.TotalCount)
-	return nil
+	return reportRemoteImport(os.Stdout, result)
+}
+
+// reportRemoteImport prints the server's import result and returns an error
+// when any record failed, matching the local import command's exit behavior.
+func reportRemoteImport(w io.Writer, result *model.ImportResponse) error {
+	if result.FailedCount == 0 {
+		fmt.Fprintf(w, "Secrets imported successfully\nImported: %d\nSkipped: %d\nFailed: %d\nTotal: %d\n", //nolint:errcheck,gosec
+			result.ImportedCount, result.SkippedCount, result.FailedCount, result.TotalCount)
+		return nil
+	}
+
+	fmt.Fprintf(w, "Import finished with errors\nImported: %d\nSkipped: %d\nFailed: %d\nTotal: %d\n", //nolint:errcheck,gosec
+		result.ImportedCount, result.SkippedCount, result.FailedCount, result.TotalCount)
+	if len(result.Errors) > 0 {
+		fmt.Fprintf(w, "Errors:\n") //nolint:errcheck,gosec
+		for _, e := range result.Errors {
+			fmt.Fprintf(w, "  - %s\n", e) //nolint:errcheck,gosec
+		}
+	}
+	return fmt.Errorf("%d record(s) failed to import; see errors above", result.FailedCount)
 }
 
 // InitSecretsImport initializes the secrets import command.

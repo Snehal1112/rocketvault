@@ -169,13 +169,20 @@ func importSecrets(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prepare response using model type.
+	message := fmt.Sprintf("Successfully imported %d/%d secrets", result.ImportedCount, result.TotalCount)
+	if result.FailedCount > 0 {
+		message = fmt.Sprintf("Imported %d/%d secrets, %d failed", result.ImportedCount, result.TotalCount, result.FailedCount)
+	}
 	response := model.ImportResponse{
-		Success:       true,
-		Message:       fmt.Sprintf("Successfully imported %d/%d secrets", result.ImportedCount, result.TotalCount),
+		Success:       result.FailedCount == 0,
+		Message:       message,
 		ImportedCount: result.ImportedCount,
+		SkippedCount:  result.SkippedCount,
+		FailedCount:   result.FailedCount,
 		TotalCount:    result.TotalCount,
 		Format:        format,
 		ImportedAt:    time.Now().Format(time.RFC3339),
+		Errors:        result.Errors,
 	}
 
 	// Send response.

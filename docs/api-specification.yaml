@@ -6563,16 +6563,22 @@ components:
         - success
         - message
         - imported_count
+        - failed_count
         - total_count
         - format
         - imported_at
       properties:
         success:
           type: boolean
+          description: False when any record failed to import.
         message:
           type: string
           example: "Successfully imported 5/5 secrets"
         imported_count:
+          type: integer
+        skipped_count:
+          type: integer
+        failed_count:
           type: integer
         total_count:
           type: integer
@@ -6581,6 +6587,11 @@ components:
         imported_at:
           type: string
           format: date-time
+        errors:
+          type: array
+          description: Per-record failure reasons.
+          items:
+            type: string
 
     # ─── Keys ────────────────────────────────────────────────────────────────
     CreateKeyRequest:
