@@ -16,9 +16,41 @@ import (
 // Cost 12 is strong enough for production while remaining performant.
 const bcryptCost = 12
 
-// CheckPassword compares a plaintext password with a hashed password.
+// CheckPassword compares a plaintext password with a hashed password. A stored
+// hash that is not a usable bcrypt hash, such as the empty hash of an
+// OIDC-only account or the system account's marker, is rejected only after a
+// dummy compare. Otherwise bcrypt would refuse it at once and the fast answer
+// would reveal that such an account exists.
 func CheckPassword(password, hash string) error {
-	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	if err != nil && !IsUsableBcryptHash(hash) {
+		burnPasswordCompare(password)
+	}
+	return err
+}
+
+// bcryptHashLen is the length of every well-formed bcrypt hash.
+const bcryptHashLen = 60
+
+// bcryptSaltLen is the length of the encoded salt inside a bcrypt hash.
+const bcryptSaltLen = 22
+
+// bcryptEncoding is the base64 alphabet bcrypt uses for its salt and digest.
+var bcryptEncoding = base64.NewEncoding("./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789").WithPadding(base64.NoPadding)
+
+// IsUsableBcryptHash reports whether hash is a well-formed bcrypt hash that a
+// compare would do the full key-derivation work against. Empty strings and
+// marker values such as "!system-account-no-login!" are not.
+func IsUsableBcryptHash(hash string) bool {
+	if len(hash) != bcryptHashLen {
+		return false
+	}
+	if _, err := bcrypt.Cost([]byte(hash)); err != nil {
+		return false
+	}
+	// The salt follows the "$2a$12$" prefix, so it starts seven bytes in.
+	_, err := bcryptEncoding.DecodeString(hash[7 : 7+bcryptSaltLen])
+	return err == nil
 }
 
 // HashString hashes a string using bcrypt.
@@ -35,17 +67,33 @@ var (
 	dummyHash     []byte
 )
 
+// burnPasswordCompare is the dummy compare CheckPassword runs. Tests replace
+// it with a spy.
+var burnPasswordCompare = BurnPasswordCompare
+
 // loadDummyHash returns the dummy bcrypt hash, building it on first use. It is
 // the hash of random bytes nobody knows, at the production cost, so it guards
 // nothing and no password can match it.
 func loadDummyHash() []byte {
 	dummyHashOnce.Do(func() {
-		random := make([]byte, 32)
-		_, _ = rand.Read(random)
-		// A failure here only makes the burn cheaper, never wrong.
-		dummyHash, _ = bcrypt.GenerateFromPassword(random, bcryptCost)
+		dummyHash = buildDummyHash(bcrypt.GenerateFromPassword)
 	})
 	return dummyHash
+}
+
+// buildDummyHash hashes 32 random bytes with generate at the production cost.
+// It panics on failure, because a missing hash would make every later burn
+// instant and silently reopen the timing oracle. It runs once, at startup.
+func buildDummyHash(generate func(password []byte, cost int) ([]byte, error)) []byte {
+	random := make([]byte, 32)
+	if _, err := rand.Read(random); err != nil {
+		panic(fmt.Sprintf("dummy password hash: %v", err))
+	}
+	hash, err := generate(random, bcryptCost)
+	if err != nil {
+		panic(fmt.Sprintf("dummy password hash: %v", err))
+	}
+	return hash
 }
 
 // PrimeBurnPasswordCompare builds the dummy hash ahead of the first request,

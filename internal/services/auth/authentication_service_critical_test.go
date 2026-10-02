@@ -154,6 +154,39 @@ func TestAuthenticateUser_UserNotFound_CostsAsMuchAsWrongPassword(t *testing.T) 
 	assert.Greater(t, elapsed, 20*time.Millisecond, "an unknown user must still pay for a bcrypt compare")
 }
 
+// Accounts whose stored hash bcrypt rejects at once, an OIDC-only user (empty
+// hash) or the system user (a marker), must cost a full compare and fail
+// exactly like a wrong password. The real password service burns once; the
+// not-found burn must not run on top of it.
+func TestAuthenticateUser_UnusableStoredHashCostsAsMuchAsWrongPassword(t *testing.T) {
+	t.Parallel()
+	common.PrimeBurnPasswordCompare()
+	for name, hash := range map[string]string{"oidc": "", "system": "!system-account-no-login!"} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			userRepo := &MockUserRepository{}
+			userRepo.On("ReadByUsername", ctx, name).Return(model.User{ID: uuid.New(), Username: name, PasswordHash: hash, TOTPSecret: "secret"}, nil)
+			svc := NewAuthenticationService(AuthenticationConfig{
+				UserRepository: userRepo, SessionRepository: &MockSessionRepository{},
+				PasswordService: NewPasswordService(), TOTPService: &MockTOTPService{},
+				JWTService: &MockJWTService{}, Logger: logging.InitLogger(),
+			})
+			spy := &burnSpy{}
+			spy.install(svc)
+
+			start := time.Now()
+			_, err := svc.AuthenticateUser(ctx, name, "guess", "123456")
+			elapsed := time.Since(start)
+
+			require.Error(t, err)
+			assert.Equal(t, "invalid credentials", err.Error())
+			assert.True(t, retry.IsClientError(err))
+			assert.Empty(t, spy.calls(), "the password service already burned; a second burn would make this slower than a wrong password")
+			assert.Greater(t, elapsed, 20*time.Millisecond, "an unusable stored hash must still pay for a bcrypt compare")
+		})
+	}
+}
+
 // --- ValidateSession ---
 
 func TestValidateSession_InvalidToken(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 
 	"rocketvault/common"
 	"rocketvault/internal/repositories"
+	authsvc "rocketvault/internal/services/auth"
 	oauth2svc "rocketvault/internal/services/oauth2"
 	"rocketvault/model"
 )
@@ -301,4 +302,26 @@ func TestOAuth2Service_IssueToken_UnknownClientPaysBcryptCost(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Greater(t, time.Since(start), 20*time.Millisecond, "an unknown client must still pay for a bcrypt compare")
+}
+
+// A client whose stored secret hash bcrypt rejects at once must still pay a
+// full compare, or the fast rejection reveals that the client exists.
+func TestOAuth2Service_IssueToken_UnusableSecretHashPaysBcryptCost(t *testing.T) {
+	common.PrimeBurnPasswordCompare()
+	repo := &mockOAuth2ClientRepo{}
+	client := &model.OAuth2Client{ID: uuid.New(), Name: "broken", ClientSecret: "", Enabled: true}
+	repo.On("FindByName", mock.Anything, "broken").Return(client, nil)
+	svc := oauth2svc.NewOAuth2Service(oauth2svc.OAuth2Config{
+		ClientRepo: repo, PasswordService: authsvc.NewPasswordService(), JWTService: &mockJWTService{},
+	})
+	rec := &burnRecorder{}
+	oauth2svc.SetBurnCompareForTest(svc, rec.burn)
+
+	start := time.Now()
+	_, err := svc.IssueToken(context.Background(), "broken", "secret")
+
+	require.Error(t, err)
+	assert.Equal(t, "invalid client credentials", err.Error())
+	assert.Empty(t, rec.calls(), "the password service already burned")
+	assert.Greater(t, time.Since(start), 20*time.Millisecond)
 }

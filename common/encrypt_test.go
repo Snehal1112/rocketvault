@@ -181,3 +181,79 @@ func TestBurnPasswordCompare_CostsAsMuchAsARealCompare(t *testing.T) {
 		t.Fatalf("dummy compare took %v, real compare %v", burned, realCompare)
 	}
 }
+
+func TestIsUsableBcryptHash(t *testing.T) {
+	usable, err := HashString("pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]bool{
+		usable:                      true,
+		"":                          false,
+		"!system-account-no-login!": false,
+		"hashed":                    false,
+		// Right length and prefix, but the salt holds characters bcrypt's
+		// alphabet lacks, so a compare would fail before the expensive part.
+		"$2a$12$" + "!!!!!!!!!!!!!!!!!!!!!!" + usable[29:]: false,
+	}
+	for hash, want := range cases {
+		if got := IsUsableBcryptHash(hash); got != want {
+			t.Errorf("IsUsableBcryptHash(%q) = %v, want %v", hash, got, want)
+		}
+	}
+}
+
+// withBurnSpy replaces CheckPassword's dummy compare for one test and returns
+// a pointer to the number of burns.
+func withBurnSpy(t *testing.T) *int {
+	t.Helper()
+	burns := 0
+	orig := burnPasswordCompare
+	burnPasswordCompare = func(string) { burns++ }
+	t.Cleanup(func() { burnPasswordCompare = orig })
+	return &burns
+}
+
+// An account whose stored hash bcrypt rejects at once, an OIDC-only user or
+// the system user, must still cost one compare, or the fast rejection
+// reveals that it exists.
+func TestCheckPassword_UnusableHashBurnsOnce(t *testing.T) {
+	for _, hash := range []string{"", "!system-account-no-login!"} {
+		burns := withBurnSpy(t)
+		if err := CheckPassword("guess", hash); err == nil {
+			t.Fatalf("CheckPassword accepted unusable hash %q", hash)
+		}
+		if *burns != 1 {
+			t.Fatalf("hash %q: %d burns, want 1", hash, *burns)
+		}
+	}
+}
+
+// A real hash already pays the full compare, so neither a wrong nor a right
+// password may burn a second one.
+func TestCheckPassword_UsableHashDoesNotBurn(t *testing.T) {
+	hash, err := HashString("right")
+	if err != nil {
+		t.Fatal(err)
+	}
+	burns := withBurnSpy(t)
+	if err := CheckPassword("wrong", hash); err == nil {
+		t.Fatal("wrong password accepted")
+	}
+	if err := CheckPassword("right", hash); err != nil {
+		t.Fatalf("right password rejected: %v", err)
+	}
+	if *burns != 0 {
+		t.Fatalf("%d burns, want 0", *burns)
+	}
+}
+
+// A failed dummy hash must stop startup rather than leave every burn instant.
+func TestBuildDummyHash_PanicsOnFailure(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("buildDummyHash must panic when hashing fails")
+		}
+	}()
+	buildDummyHash(func([]byte, int) ([]byte, error) { return nil, bcrypt.ErrPasswordTooLong })
+}
