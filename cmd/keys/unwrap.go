@@ -64,7 +64,8 @@ or outside its not-before/expiry window is refused.`,
     --version 1`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := vaultcli.Caller(cmd, vaultcli.Op{
-			Audit: "unwrap_key", Action: model.ActionKeysUnwrap, Policy: model.OpCreate,
+			// Policy matches the operation HTTP passes for the unwrap route.
+			Audit: "unwrap_key", Action: model.ActionKeysUnwrap, Policy: model.OpUnwrap,
 			Roles: []string{model.RoleAdmin, model.RoleCryptoManager},
 		})
 		if err != nil {

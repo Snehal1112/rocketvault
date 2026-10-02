@@ -64,7 +64,8 @@ refused.`,
     --version 1`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := vaultcli.Caller(cmd, vaultcli.Op{
-			Audit: "wrap_key", Action: model.ActionKeysWrap, Policy: model.OpCreate,
+			// Policy matches the operation HTTP passes for the wrap route.
+			Audit: "wrap_key", Action: model.ActionKeysWrap, Policy: model.OpWrap,
 			Roles: []string{model.RoleAdmin, model.RoleCryptoManager},
 		})
 		if err != nil {

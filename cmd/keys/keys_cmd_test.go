@@ -1475,7 +1475,7 @@ func TestWrapCmd_Authorized(t *testing.T) {
 	roles.On("HasDataAction", mock.Anything, userID, vaultID, model.ActionKeysWrap).
 		Return(true, nil).Once()
 	policies := &testutils.MockAccessPolicyService{}
-	policies.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, model.OpCreate, vaultID).
+	policies.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, model.OpWrap, vaultID).
 		Return(authzServices.AccessAllowed, nil).Once()
 	sc.RoleAssignmentService = roles
 	sc.AccessPolicyService = policies
@@ -1647,7 +1647,7 @@ func TestUnwrapCmd_Authorized(t *testing.T) {
 	roles.On("HasDataAction", mock.Anything, userID, vaultID, model.ActionKeysUnwrap).
 		Return(true, nil).Once()
 	policies := &testutils.MockAccessPolicyService{}
-	policies.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, model.OpCreate, vaultID).
+	policies.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, model.OpUnwrap, vaultID).
 		Return(authzServices.AccessAllowed, nil).Once()
 	sc.RoleAssignmentService = roles
 	sc.AccessPolicyService = policies
@@ -2306,4 +2306,84 @@ func TestUnwrapCmd_PassesVersionToService(t *testing.T) {
 	cmd.SetContext(ctx)
 	assert.NoError(t, cmd.Execute())
 	cryptoSvc.AssertExpectations(t)
+}
+
+// runWrapPolicyCase runs keys wrap or unwrap with the given per-operation
+// policy decisions and returns the command error.
+func runWrapPolicyCase(t *testing.T, unwrap bool, decisions map[model.PolicyOperation]authzServices.AccessDecision) (*keyCmdCryptoService, error) {
+	t.Helper()
+	cryptoSvc := &keyCmdCryptoService{}
+	userID := uuid.New()
+	keyID := uuid.New()
+	sc, vaultID := newAllowedContainer(nil, cryptoSvc)
+
+	action := model.ActionKeysWrap
+	if unwrap {
+		action = model.ActionKeysUnwrap
+	}
+	roles := &testutils.MockRoleAssignmentService{}
+	roles.On("HasDataAction", mock.Anything, userID, vaultID, action).Return(true, nil).Maybe()
+	policies := &testutils.MockAccessPolicyService{}
+	for op, d := range decisions {
+		policies.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, op, vaultID).
+			Return(d, nil).Maybe()
+	}
+	sc.RoleAssignmentService = roles
+	sc.AccessPolicyService = policies
+
+	cryptoSvc.On("WrapKey", mock.Anything, mock.Anything).
+		Return(&keyServices.WrapKeyResult{WrappedKey: []byte("w")}, nil).Maybe()
+	cryptoSvc.On("UnwrapKey", mock.Anything, mock.Anything).
+		Return(&keyServices.UnwrapKeyResult{PlaintextKey: []byte("p")}, nil).Maybe()
+
+	claims := &model.Claims{UserID: userID, Roles: []string{model.RoleAdmin}}
+	ctx := context.WithValue(context.Background(), common.ClaimsKey, claims)
+	ctx = context.WithValue(ctx, common.LogKey, newLogger())
+	ctx = context.WithValue(ctx, common.ServiceContainerKey, sc)
+
+	var cmd *cobra.Command
+	if unwrap {
+		cmd, _ = newTestCmd(unwrapCmd.RunE, nil)
+		setFlags(cmd, map[string]any{"key-id": keyID.String(),
+			"wrapped-key": base64.StdEncoding.EncodeToString([]byte("wrapped"))})
+	} else {
+		cmd, _ = newTestCmd(wrapCmd.RunE, nil)
+		setFlags(cmd, map[string]any{"key-id": keyID.String(),
+			"key-material": base64.StdEncoding.EncodeToString([]byte("material"))})
+	}
+	cmd.SetContext(ctx)
+	return cryptoSvc, cmd.Execute()
+}
+
+// TestWrapUnwrapCmd_PolicyOperationsAreIndependent is the CLI half of B79:
+// a deny on wrap blocks only wrap, a deny on unwrap blocks only unwrap, and
+// a deny on create blocks neither (the accepted loosening).
+func TestWrapUnwrapCmd_PolicyOperationsAreIndependent(t *testing.T) {
+	denied, allowed := authzServices.AccessDenied, authzServices.AccessAllowed
+
+	crypto, err := runWrapPolicyCase(t, false, map[model.PolicyOperation]authzServices.AccessDecision{
+		model.OpWrap: denied, model.OpUnwrap: allowed, model.OpCreate: allowed})
+	assert.ErrorContains(t, err, "forbidden")
+	crypto.AssertNotCalled(t, "WrapKey", mock.Anything, mock.Anything)
+
+	crypto, err = runWrapPolicyCase(t, true, map[model.PolicyOperation]authzServices.AccessDecision{
+		model.OpWrap: denied, model.OpUnwrap: allowed, model.OpCreate: allowed})
+	assert.NoError(t, err)
+	crypto.AssertCalled(t, "UnwrapKey", mock.Anything, mock.Anything)
+
+	crypto, err = runWrapPolicyCase(t, true, map[model.PolicyOperation]authzServices.AccessDecision{
+		model.OpWrap: allowed, model.OpUnwrap: denied, model.OpCreate: allowed})
+	assert.ErrorContains(t, err, "forbidden")
+	crypto.AssertNotCalled(t, "UnwrapKey", mock.Anything, mock.Anything)
+
+	crypto, err = runWrapPolicyCase(t, false, map[model.PolicyOperation]authzServices.AccessDecision{
+		model.OpWrap: allowed, model.OpUnwrap: denied, model.OpCreate: allowed})
+	assert.NoError(t, err)
+	crypto.AssertCalled(t, "WrapKey", mock.Anything, mock.Anything)
+
+	for _, unwrap := range []bool{false, true} {
+		_, err = runWrapPolicyCase(t, unwrap, map[model.PolicyOperation]authzServices.AccessDecision{
+			model.OpWrap: allowed, model.OpUnwrap: allowed, model.OpCreate: denied})
+		assert.NoError(t, err, "a deny on create must not block wrap or unwrap")
+	}
 }
