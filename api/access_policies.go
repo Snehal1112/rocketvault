@@ -67,6 +67,12 @@ func createAccessPolicy(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, actorID, callerOK := callerIdentity(c)
+	if !callerOK {
+		c.SetInternalError(nil)
+		return
+	}
+
 	req, ok := decodeBody[model.CreateAccessPolicyRequest](c, r)
 	if !ok {
 		return
@@ -119,7 +125,7 @@ func createAccessPolicy(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	svc := c.App.ServiceContainer.GetAccessPolicyService()
-	if err := svc.CreatePolicy(r.Context(), policy); err != nil {
+	if err := svc.CreatePolicy(r.Context(), policy, actorID); err != nil {
 		c.SetInternalError(err)
 		return
 	}
@@ -156,6 +162,12 @@ func updateAccessPolicy(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, actorID, callerOK := callerIdentity(c)
+	if !callerOK {
+		c.SetInternalError(nil)
+		return
+	}
+
 	id, ok := resourceID(c, c.Params.PolicyID, "policy_id")
 	if !ok {
 		return
@@ -184,7 +196,7 @@ func updateAccessPolicy(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	policy.Effect = model.PolicyEffect(req.Effect)
-	if err := svc.UpdatePolicy(r.Context(), policy); err != nil {
+	if err := svc.UpdatePolicy(r.Context(), policy, actorID); err != nil {
 		c.SetInternalError(err)
 		return
 	}
@@ -199,13 +211,19 @@ func deleteAccessPolicy(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, actorID, callerOK := callerIdentity(c)
+	if !callerOK {
+		c.SetInternalError(nil)
+		return
+	}
+
 	id, ok := resourceID(c, c.Params.PolicyID, "policy_id")
 	if !ok {
 		return
 	}
 
 	svc := c.App.ServiceContainer.GetAccessPolicyService()
-	if err := svc.DeletePolicy(r.Context(), id); err != nil {
+	if err := svc.DeletePolicy(r.Context(), id, actorID); err != nil {
 		c.SetInternalError(err)
 		return
 	}

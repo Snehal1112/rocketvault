@@ -57,8 +57,8 @@ func (m *mockAccessPolicyService) CheckVaultScopedAccess(ctx context.Context, pr
 	return args.Get(0).(authzServices.AccessDecision), args.Error(1)
 }
 
-func (m *mockAccessPolicyService) CreatePolicy(ctx context.Context, policy *model.AccessPolicy) error {
-	args := m.Called(ctx, policy)
+func (m *mockAccessPolicyService) CreatePolicy(ctx context.Context, policy *model.AccessPolicy, actorID uuid.UUID) error {
+	args := m.Called(ctx, policy, actorID)
 	return args.Error(0)
 }
 
@@ -86,13 +86,13 @@ func (m *mockAccessPolicyService) ListByPrincipal(ctx context.Context, principal
 	return args.Get(0).([]*model.AccessPolicy), args.Error(1)
 }
 
-func (m *mockAccessPolicyService) UpdatePolicy(ctx context.Context, policy *model.AccessPolicy) error {
-	args := m.Called(ctx, policy)
+func (m *mockAccessPolicyService) UpdatePolicy(ctx context.Context, policy *model.AccessPolicy, actorID uuid.UUID) error {
+	args := m.Called(ctx, policy, actorID)
 	return args.Error(0)
 }
 
-func (m *mockAccessPolicyService) DeletePolicy(ctx context.Context, id uuid.UUID) error {
-	args := m.Called(ctx, id)
+func (m *mockAccessPolicyService) DeletePolicy(ctx context.Context, id, actorID uuid.UUID) error {
+	args := m.Called(ctx, id, actorID)
 	return args.Error(0)
 }
 
@@ -256,7 +256,10 @@ func newPolicyCtx(svc authzServices.AccessPolicyService) *Context {
 	return &Context{
 		App:    a,
 		Params: &ApiParams{PerPage: 60},
-		Claims: RequestClaims{Roles: []string{"secrets_manager", string(model.RoleAdmin)}},
+		Claims: RequestClaims{
+			UserID: "00000000-0000-0000-0000-0000000000ad",
+			Roles:  []string{"secrets_manager", string(model.RoleAdmin)},
+		},
 	}
 }
 
@@ -386,7 +389,7 @@ func TestCreateAccessPolicy_MissingRequiredFields_Returns400(t *testing.T) {
 
 func TestCreateAccessPolicy_ServiceError_Returns500(t *testing.T) {
 	svc := &mockAccessPolicyService{}
-	svc.On("CreatePolicy", mock.Anything, mock.Anything).Return(errors.New("db error"))
+	svc.On("CreatePolicy", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("db error"))
 
 	c := newPolicyCtx(svc)
 	w := httptest.NewRecorder()
@@ -410,7 +413,7 @@ func TestCreateAccessPolicy_ServiceError_Returns500(t *testing.T) {
 
 func TestCreateAccessPolicy_Success_Returns201(t *testing.T) {
 	svc := &mockAccessPolicyService{}
-	svc.On("CreatePolicy", mock.Anything, mock.Anything).Return(nil)
+	svc.On("CreatePolicy", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	c := newPolicyCtx(svc)
 	w := httptest.NewRecorder()
@@ -550,7 +553,7 @@ func TestUpdateAccessPolicy_ServiceError_Returns500(t *testing.T) {
 	svc.On("GetPolicy", mock.Anything, policyID).Return(&model.AccessPolicy{
 		ID: policyID, Effect: model.PolicyEffectAllow,
 	}, nil)
-	svc.On("UpdatePolicy", mock.Anything, mock.Anything).Return(errors.New("db error"))
+	svc.On("UpdatePolicy", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("db error"))
 
 	c := newPolicyCtx(svc)
 	c.Params = &ApiParams{PolicyID: policyID.String(), PerPage: 60}
@@ -572,7 +575,7 @@ func TestUpdateAccessPolicy_Success_Returns200(t *testing.T) {
 	svc.On("GetPolicy", mock.Anything, policyID).Return(&model.AccessPolicy{
 		ID: policyID, Effect: model.PolicyEffectAllow,
 	}, nil)
-	svc.On("UpdatePolicy", mock.Anything, mock.Anything).Return(nil)
+	svc.On("UpdatePolicy", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	c := newPolicyCtx(svc)
 	c.Params = &ApiParams{PolicyID: policyID.String(), PerPage: 60}
@@ -609,7 +612,7 @@ func TestDeleteAccessPolicy_InvalidPolicyID_Returns400(t *testing.T) {
 func TestDeleteAccessPolicy_ServiceError_Returns500(t *testing.T) {
 	svc := &mockAccessPolicyService{}
 	policyID := uuid.New()
-	svc.On("DeletePolicy", mock.Anything, policyID).Return(errors.New("db error"))
+	svc.On("DeletePolicy", mock.Anything, policyID, uuid.MustParse("00000000-0000-0000-0000-0000000000ad")).Return(errors.New("db error"))
 
 	c := newPolicyCtx(svc)
 	c.Params = &ApiParams{PolicyID: policyID.String(), PerPage: 60}
@@ -628,7 +631,7 @@ func TestDeleteAccessPolicy_ServiceError_Returns500(t *testing.T) {
 func TestDeleteAccessPolicy_Success_Returns200(t *testing.T) {
 	svc := &mockAccessPolicyService{}
 	policyID := uuid.New()
-	svc.On("DeletePolicy", mock.Anything, policyID).Return(nil)
+	svc.On("DeletePolicy", mock.Anything, policyID, uuid.MustParse("00000000-0000-0000-0000-0000000000ad")).Return(nil)
 
 	c := newPolicyCtx(svc)
 	c.Params = &ApiParams{PolicyID: policyID.String(), PerPage: 60}

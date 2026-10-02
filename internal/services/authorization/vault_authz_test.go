@@ -35,7 +35,7 @@ func (f *fakeAccessPolicyService) CheckVaultScopedAccess(context.Context, uuid.U
 	}
 	return f.decision, f.err
 }
-func (f *fakeAccessPolicyService) CreatePolicy(context.Context, *model.AccessPolicy) error {
+func (f *fakeAccessPolicyService) CreatePolicy(context.Context, *model.AccessPolicy, uuid.UUID) error {
 	return nil
 }
 func (f *fakeAccessPolicyService) GetPolicy(context.Context, uuid.UUID) (*model.AccessPolicy, error) {
@@ -47,10 +47,12 @@ func (f *fakeAccessPolicyService) ListPolicies(context.Context) ([]*model.Access
 func (f *fakeAccessPolicyService) ListByPrincipal(context.Context, uuid.UUID) ([]*model.AccessPolicy, error) {
 	return nil, nil
 }
-func (f *fakeAccessPolicyService) UpdatePolicy(context.Context, *model.AccessPolicy) error {
+func (f *fakeAccessPolicyService) UpdatePolicy(context.Context, *model.AccessPolicy, uuid.UUID) error {
 	return nil
 }
-func (f *fakeAccessPolicyService) DeletePolicy(context.Context, uuid.UUID) error { return nil }
+func (f *fakeAccessPolicyService) DeletePolicy(context.Context, uuid.UUID, uuid.UUID) error {
+	return nil
+}
 
 func TestCanManageVault_AdminAlwaysAllowed(t *testing.T) {
 	// Even a policy service that would deny must not be consulted for admin.

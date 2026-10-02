@@ -184,7 +184,7 @@ func (m *mockAccessPolicyService) CheckAccess(context.Context, uuid.UUID, model.
 func (m *mockAccessPolicyService) CheckVaultScopedAccess(context.Context, uuid.UUID, model.PolicyResourceType, model.PolicyOperation, uuid.UUID) (authzServices.AccessDecision, error) {
 	return m.decision, nil
 }
-func (m *mockAccessPolicyService) CreatePolicy(context.Context, *model.AccessPolicy) error {
+func (m *mockAccessPolicyService) CreatePolicy(context.Context, *model.AccessPolicy, uuid.UUID) error {
 	return nil
 }
 func (m *mockAccessPolicyService) GetPolicy(context.Context, uuid.UUID) (*model.AccessPolicy, error) {
@@ -196,10 +196,12 @@ func (m *mockAccessPolicyService) ListPolicies(context.Context) ([]*model.Access
 func (m *mockAccessPolicyService) ListByPrincipal(context.Context, uuid.UUID) ([]*model.AccessPolicy, error) {
 	return nil, nil
 }
-func (m *mockAccessPolicyService) UpdatePolicy(context.Context, *model.AccessPolicy) error {
+func (m *mockAccessPolicyService) UpdatePolicy(context.Context, *model.AccessPolicy, uuid.UUID) error {
 	return nil
 }
-func (m *mockAccessPolicyService) DeletePolicy(context.Context, uuid.UUID) error { return nil }
+func (m *mockAccessPolicyService) DeletePolicy(context.Context, uuid.UUID, uuid.UUID) error {
+	return nil
+}
 
 // TestVaultsCreate_ForbiddenWithoutGlobalGrant proves a non-admin with no
 // global vaults:manage policy cannot create a vault via the CLI.

@@ -756,8 +756,8 @@ func (m *MockAccessPolicyService) CheckVaultScopedAccess(ctx context.Context, pr
 	return args.Get(0).(authzServices.AccessDecision), args.Error(1)
 }
 
-func (m *MockAccessPolicyService) CreatePolicy(ctx context.Context, policy *model.AccessPolicy) error {
-	args := m.Called(ctx, policy)
+func (m *MockAccessPolicyService) CreatePolicy(ctx context.Context, policy *model.AccessPolicy, actorID uuid.UUID) error {
+	args := m.Called(ctx, policy, actorID)
 	return args.Error(0)
 }
 
@@ -785,13 +785,13 @@ func (m *MockAccessPolicyService) ListByPrincipal(ctx context.Context, principal
 	return args.Get(0).([]*model.AccessPolicy), args.Error(1)
 }
 
-func (m *MockAccessPolicyService) UpdatePolicy(ctx context.Context, policy *model.AccessPolicy) error {
-	args := m.Called(ctx, policy)
+func (m *MockAccessPolicyService) UpdatePolicy(ctx context.Context, policy *model.AccessPolicy, actorID uuid.UUID) error {
+	args := m.Called(ctx, policy, actorID)
 	return args.Error(0)
 }
 
-func (m *MockAccessPolicyService) DeletePolicy(ctx context.Context, id uuid.UUID) error {
-	args := m.Called(ctx, id)
+func (m *MockAccessPolicyService) DeletePolicy(ctx context.Context, id, actorID uuid.UUID) error {
+	args := m.Called(ctx, id, actorID)
 	return args.Error(0)
 }
 

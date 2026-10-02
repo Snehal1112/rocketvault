@@ -25,7 +25,9 @@ func (f *fakePolicySvc) CheckAccess(context.Context, uuid.UUID, model.PolicyReso
 func (f *fakePolicySvc) CheckVaultScopedAccess(context.Context, uuid.UUID, model.PolicyResourceType, model.PolicyOperation, uuid.UUID) (authzServices.AccessDecision, error) {
 	return f.decision, nil
 }
-func (f *fakePolicySvc) CreatePolicy(context.Context, *model.AccessPolicy) error { return nil }
+func (f *fakePolicySvc) CreatePolicy(context.Context, *model.AccessPolicy, uuid.UUID) error {
+	return nil
+}
 func (f *fakePolicySvc) GetPolicy(context.Context, uuid.UUID) (*model.AccessPolicy, error) {
 	return nil, nil
 }
@@ -35,8 +37,10 @@ func (f *fakePolicySvc) ListPolicies(context.Context) ([]*model.AccessPolicy, er
 func (f *fakePolicySvc) ListByPrincipal(context.Context, uuid.UUID) ([]*model.AccessPolicy, error) {
 	return nil, nil
 }
-func (f *fakePolicySvc) UpdatePolicy(context.Context, *model.AccessPolicy) error { return nil }
-func (f *fakePolicySvc) DeletePolicy(context.Context, uuid.UUID) error           { return nil }
+func (f *fakePolicySvc) UpdatePolicy(context.Context, *model.AccessPolicy, uuid.UUID) error {
+	return nil
+}
+func (f *fakePolicySvc) DeletePolicy(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
 // nonAdminCtx returns the test context with the caller downgraded to a plain
 // user holding the given access-policy service.

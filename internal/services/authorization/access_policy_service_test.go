@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	rvdb "rocketvault/internal/db"
+	"rocketvault/internal/logging/logtest"
 	"rocketvault/internal/repositories"
 	"rocketvault/internal/services/authorization"
 	"rocketvault/model"
@@ -69,7 +70,7 @@ func (m *mockPolicyRepo) ListVaultIDsForPrincipal(ctx context.Context, principal
 
 func TestCheckAccess_AllowWhenPolicyExists(t *testing.T) {
 	repo := &mockPolicyRepo{}
-	svc := authorization.NewAccessPolicyService(repo)
+	svc := authorization.NewAccessPolicyService(repo, nil)
 	ctx := context.Background()
 	pid := uuid.New()
 	vaultID := uuid.New()
@@ -85,7 +86,7 @@ func TestCheckAccess_AllowWhenPolicyExists(t *testing.T) {
 
 func TestCheckAccess_DenyWinsOverAllow(t *testing.T) {
 	repo := &mockPolicyRepo{}
-	svc := authorization.NewAccessPolicyService(repo)
+	svc := authorization.NewAccessPolicyService(repo, nil)
 	ctx := context.Background()
 	pid := uuid.New()
 	vaultID := uuid.New()
@@ -104,7 +105,7 @@ func TestCheckAccess_DenyWinsOverAllow(t *testing.T) {
 
 func TestCheckAccess_VaultDenyOverridesGlobalAllow(t *testing.T) {
 	repo := &mockPolicyRepo{}
-	svc := authorization.NewAccessPolicyService(repo)
+	svc := authorization.NewAccessPolicyService(repo, nil)
 	ctx := context.Background()
 	pid := uuid.New()
 	vaultID := uuid.New()
@@ -125,7 +126,7 @@ func TestCheckAccess_VaultDenyOverridesGlobalAllow(t *testing.T) {
 
 func TestCheckAccess_FallbackWhenNoPolicies(t *testing.T) {
 	repo := &mockPolicyRepo{}
-	svc := authorization.NewAccessPolicyService(repo)
+	svc := authorization.NewAccessPolicyService(repo, nil)
 	ctx := context.Background()
 	pid := uuid.New()
 	vaultID := uuid.New()
@@ -141,7 +142,7 @@ func TestCheckAccess_FallbackWhenNoPolicies(t *testing.T) {
 
 func TestCheckAccess_ReturnsErrorOnRepoFailure(t *testing.T) {
 	repo := &mockPolicyRepo{}
-	svc := authorization.NewAccessPolicyService(repo)
+	svc := authorization.NewAccessPolicyService(repo, nil)
 	ctx := context.Background()
 	pid := uuid.New()
 	vaultID := uuid.New()
@@ -186,7 +187,7 @@ func TestCheckVaultScopedAccess(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &mockPolicyRepo{}
-			svc := authorization.NewAccessPolicyService(repo)
+			svc := authorization.NewAccessPolicyService(repo, nil)
 			ctx := context.Background()
 			pid := uuid.New()
 			repo.On("FindEffects", ctx, pid, model.PolicyResourceVaults, model.OpManage, vaultID).
@@ -203,7 +204,7 @@ func TestCheckVaultScopedAccess(t *testing.T) {
 // never reported as an allow.
 func TestCheckVaultScopedAccess_RepoErrorFailsClosed(t *testing.T) {
 	repo := &mockPolicyRepo{}
-	svc := authorization.NewAccessPolicyService(repo)
+	svc := authorization.NewAccessPolicyService(repo, nil)
 	ctx := context.Background()
 	pid := uuid.New()
 	vaultID := uuid.New()
@@ -248,7 +249,7 @@ func TestCheckAccess_GlobalDenyBlocksDataPlaneInEveryVault(t *testing.T) {
 	require.NoError(t, err)
 
 	repo := repositories.NewAccessPolicyRepository(rvdb.NewConn(sqlDB, rvdb.SQLite))
-	svc := authorization.NewAccessPolicyService(repo)
+	svc := authorization.NewAccessPolicyService(repo, nil)
 	principalID := uuid.New()
 
 	// A single global deny row: no vault_id, so it belongs to no vault.
@@ -269,7 +270,7 @@ func TestCheckAccess_GlobalDenyBlocksDataPlaneInEveryVault(t *testing.T) {
 
 func TestCreatePolicy_AssignsIDAndTimestamp(t *testing.T) {
 	repo := &mockPolicyRepo{}
-	svc := authorization.NewAccessPolicyService(repo)
+	svc := authorization.NewAccessPolicyService(repo, nil)
 	ctx := context.Background()
 
 	policy := &model.AccessPolicy{
@@ -284,7 +285,89 @@ func TestCreatePolicy_AssignsIDAndTimestamp(t *testing.T) {
 		return p.ID != uuid.Nil && !p.CreatedAt.IsZero()
 	})).Return(nil)
 
-	require.NoError(t, svc.CreatePolicy(ctx, policy))
+	require.NoError(t, svc.CreatePolicy(ctx, policy, uuid.New()))
 	assert.NotEqual(t, uuid.Nil, policy.ID)
 	repo.AssertExpectations(t)
+}
+
+// TestAccessPolicyMutations_AreAudited is the B81 regression: explicit-deny
+// overrides could change with no trail. Each mutation now records the actor
+// and what the policy did.
+func TestAccessPolicyMutations_AreAudited(t *testing.T) {
+	repo := &mockPolicyRepo{}
+	logger, rec := logtest.NewLogger()
+	svc := authorization.NewAccessPolicyService(repo, logger)
+	ctx := context.Background()
+	actor := uuid.New()
+
+	policy := &model.AccessPolicy{
+		ID:            uuid.New(),
+		PrincipalID:   uuid.New(),
+		PrincipalType: model.PrincipalTypeUser,
+		ResourceType:  model.PolicyResourceKeys,
+		Operation:     model.OpDecrypt,
+		Effect:        model.PolicyEffectDeny,
+	}
+	stored := *policy
+	repo.On("Create", ctx, policy).Return(nil)
+	repo.On("GetByID", ctx, policy.ID).Return(&stored, nil)
+	repo.On("Update", ctx, policy).Return(nil)
+	repo.On("Delete", ctx, policy.ID).Return(nil)
+
+	require.NoError(t, svc.CreatePolicy(ctx, policy, actor))
+	policy.Effect = model.PolicyEffectAllow
+	require.NoError(t, svc.UpdatePolicy(ctx, policy, actor))
+	require.NoError(t, svc.DeletePolicy(ctx, policy.ID, actor))
+
+	created, ok := rec.Find("create_access_policy", "success")
+	require.True(t, ok)
+	assert.Equal(t, actor.String(), created.UserID)
+	assert.Contains(t, created.Details, "operation=decrypt effect=deny scope=global")
+
+	updated, ok := rec.Find("update_access_policy", "success")
+	require.True(t, ok)
+	assert.Equal(t, actor.String(), updated.UserID)
+	assert.Contains(t, updated.Details, "effect deny -> allow")
+
+	deleted, ok := rec.Find("delete_access_policy", "success")
+	require.True(t, ok)
+	assert.Equal(t, actor.String(), deleted.UserID)
+}
+
+// A failed pre-read must not block or change the mutation.
+func TestAccessPolicyMutations_UnreadableRowStillMutates(t *testing.T) {
+	repo := &mockPolicyRepo{}
+	logger, rec := logtest.NewLogger()
+	svc := authorization.NewAccessPolicyService(repo, logger)
+	ctx := context.Background()
+	actor := uuid.New()
+	policy := &model.AccessPolicy{ID: uuid.New(), Effect: model.PolicyEffectDeny}
+
+	repo.On("GetByID", ctx, policy.ID).Return(nil, errors.New("read failed"))
+	repo.On("Update", ctx, policy).Return(nil)
+	repo.On("Delete", ctx, policy.ID).Return(nil)
+
+	require.NoError(t, svc.UpdatePolicy(ctx, policy, actor))
+	require.NoError(t, svc.DeletePolicy(ctx, policy.ID, actor))
+	repo.AssertCalled(t, "Update", ctx, policy)
+	repo.AssertCalled(t, "Delete", ctx, policy.ID)
+
+	updated, ok := rec.Find("update_access_policy", "success")
+	require.True(t, ok)
+	assert.Contains(t, updated.Details, "effect unknown ->")
+}
+
+// A failed mutation must not leave an audit row.
+func TestAccessPolicyMutations_FailureIsNotAudited(t *testing.T) {
+	repo := &mockPolicyRepo{}
+	logger, rec := logtest.NewLogger()
+	svc := authorization.NewAccessPolicyService(repo, logger)
+	ctx := context.Background()
+	id := uuid.New()
+	repo.On("GetByID", ctx, id).Return(nil, errors.New("gone"))
+	repo.On("Delete", ctx, id).Return(errors.New("db error"))
+
+	require.Error(t, svc.DeletePolicy(ctx, id, uuid.New()))
+	_, ok := rec.Find("delete_access_policy", "success")
+	assert.False(t, ok)
 }

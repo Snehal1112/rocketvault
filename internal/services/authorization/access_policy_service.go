@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
 	"rocketvault/model"
 )
@@ -42,21 +43,26 @@ type AccessPolicyService interface {
 	// collection-level (uuid.Nil) decision.
 	CheckVaultScopedAccess(ctx context.Context, principalID uuid.UUID, resourceType model.PolicyResourceType, operation model.PolicyOperation, vaultID uuid.UUID) (AccessDecision, error)
 
-	CreatePolicy(ctx context.Context, policy *model.AccessPolicy) error
+	// CreatePolicy, UpdatePolicy and DeletePolicy write an audit row naming
+	// actorID and the policy's principal, resource, operation, effect and
+	// scope, because an explicit deny overrides every role grant.
+	CreatePolicy(ctx context.Context, policy *model.AccessPolicy, actorID uuid.UUID) error
 	GetPolicy(ctx context.Context, id uuid.UUID) (*model.AccessPolicy, error)
 	ListPolicies(ctx context.Context) ([]*model.AccessPolicy, error)
 	ListByPrincipal(ctx context.Context, principalID uuid.UUID) ([]*model.AccessPolicy, error)
-	UpdatePolicy(ctx context.Context, policy *model.AccessPolicy) error
-	DeletePolicy(ctx context.Context, id uuid.UUID) error
+	UpdatePolicy(ctx context.Context, policy *model.AccessPolicy, actorID uuid.UUID) error
+	DeletePolicy(ctx context.Context, id, actorID uuid.UUID) error
 }
 
 type accessPolicyService struct {
 	repo repositories.AccessPolicyRepositoryInterface
+	log  *logging.Logger
 }
 
-// NewAccessPolicyService creates a new AccessPolicyService backed by repo.
-func NewAccessPolicyService(repo repositories.AccessPolicyRepositoryInterface) AccessPolicyService {
-	return &accessPolicyService{repo: repo}
+// NewAccessPolicyService creates a new AccessPolicyService backed by repo. The
+// logger may be nil, in which case mutations are not audited.
+func NewAccessPolicyService(repo repositories.AccessPolicyRepositoryInterface, log *logging.Logger) AccessPolicyService {
+	return &accessPolicyService{repo: repo, log: log}
 }
 
 // CheckAccess evaluates access policies for the triple (principalID, resourceType, operation).
@@ -110,14 +116,19 @@ func (s *accessPolicyService) CheckVaultScopedAccess(ctx context.Context, princi
 	return AccessFallback, nil
 }
 
-func (s *accessPolicyService) CreatePolicy(ctx context.Context, policy *model.AccessPolicy) error {
+func (s *accessPolicyService) CreatePolicy(ctx context.Context, policy *model.AccessPolicy, actorID uuid.UUID) error {
 	if policy.ID == uuid.Nil {
 		policy.ID = uuid.New()
 	}
 	if policy.CreatedAt.IsZero() {
 		policy.CreatedAt = time.Now()
 	}
-	return s.repo.Create(ctx, policy)
+	if err := s.repo.Create(ctx, policy); err != nil {
+		return err
+	}
+	s.audit(actorID, "create_access_policy",
+		fmt.Sprintf("Access policy %s created: %s", policy.ID, describePolicy(policy)))
+	return nil
 }
 
 func (s *accessPolicyService) GetPolicy(ctx context.Context, id uuid.UUID) (*model.AccessPolicy, error) {
@@ -132,10 +143,47 @@ func (s *accessPolicyService) ListByPrincipal(ctx context.Context, principalID u
 	return s.repo.ListByPrincipal(ctx, principalID)
 }
 
-func (s *accessPolicyService) UpdatePolicy(ctx context.Context, policy *model.AccessPolicy) error {
-	return s.repo.Update(ctx, policy)
+func (s *accessPolicyService) UpdatePolicy(ctx context.Context, policy *model.AccessPolicy, actorID uuid.UUID) error {
+	// Read the stored row first so the audit row records the old effect. A
+	// failed read loses only the old value; it never blocks the update.
+	previous := "unknown"
+	if old, err := s.repo.GetByID(ctx, policy.ID); err == nil && old != nil {
+		previous = string(old.Effect)
+	}
+	if err := s.repo.Update(ctx, policy); err != nil {
+		return err
+	}
+	s.audit(actorID, "update_access_policy",
+		fmt.Sprintf("Access policy %s updated: effect %s -> %s (%s)", policy.ID, previous, policy.Effect, describePolicy(policy)))
+	return nil
 }
 
-func (s *accessPolicyService) DeletePolicy(ctx context.Context, id uuid.UUID) error {
-	return s.repo.Delete(ctx, id)
+func (s *accessPolicyService) DeletePolicy(ctx context.Context, id, actorID uuid.UUID) error {
+	// Read the row first so the audit row says what the deleted policy did.
+	detail := "policy row not readable before delete"
+	if old, err := s.repo.GetByID(ctx, id); err == nil && old != nil {
+		detail = describePolicy(old)
+	}
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.audit(actorID, "delete_access_policy", fmt.Sprintf("Access policy %s deleted: %s", id, detail))
+	return nil
+}
+
+// describePolicy renders the fields an auditor needs to see what a policy did.
+func describePolicy(p *model.AccessPolicy) string {
+	scope := "global"
+	if p.VaultID != nil {
+		scope = "vault " + p.VaultID.String()
+	}
+	return fmt.Sprintf("principal=%s (%s) resource=%s operation=%s effect=%s scope=%s",
+		p.PrincipalID, p.PrincipalType, p.ResourceType, p.Operation, p.Effect, scope)
+}
+
+// audit writes one success row when a logger is configured.
+func (s *accessPolicyService) audit(actorID uuid.UUID, operation, message string) {
+	if s.log != nil {
+		s.log.LogAuditInfo(actorID.String(), operation, "success", message)
+	}
 }
