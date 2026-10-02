@@ -4419,7 +4419,9 @@ saved.
 ### B84 — Secret import skipped create validation and CSV export emitted spreadsheet formulas
 
 **Status**: Fixed 2026-10-02 (GitHub #48), plan
-`docs/superpowers/plans/2026-09-30-secrets-and-error-responses.md`
+`docs/superpowers/plans/2026-09-30-secrets-and-error-responses.md`. Commits:
+`c1da7bc8` (per-item validation), `79cdf624` (HTTP and remote CLI surfacing),
+`2ce87344` (CSV formula guard).
 **Severity**: Medium — import stored names, values and tag sets that create
 refuses, and a secret value could execute as a formula when its CSV export
 was opened in a spreadsheet
@@ -4434,19 +4436,115 @@ were evaluated as formulas by spreadsheet software.
 the export wrote raw cells.
 
 **Fix**: `ImportSecrets` runs `ValidateSecretCreate` on each item and reports
-`Invalid '<name>': ...` errors and `FailedCount`. Export wraps each CSV cell
+`Invalid '<name>': ...` errors and `FailedCount`. The HTTP import response
+now carries `failed_count`, `skipped_count` and `errors` (with `success`
+false when any item failed), and the remote CLI prints the per-item errors and
+exits non-zero. Storage failures are reported as fixed classes (`name already
+exists` or `internal error`), never as driver text. Export wraps each CSV cell
 in `csvFormulaGuard` (a leading `=`, `+`, `-`, `@`, tab or `'` gets one `'`
 prefix) and import reverses it with `csvFormulaUnguard`. Both plain and
 sealed CSV exports use the same guard. Tests:
+`internal/services/secrets/import_validation_test.go`,
+`api/secrets_import_failures_test.go`,
 `internal/services/secrets/csv_formula_guard_test.go` and
 `csv_formula_roundtrip_test.go`.
 
 **Accepted behavior change**: CSV exports now carry a leading `'` on guarded
-cells. Importing a CSV written by an older version whose cell begins with `'`
-loses that one quote. JSON exports are unchanged.
+cells. Importing any CSV not produced by this version (an older export, a
+hand-written file or another tool's output) whose cell begins with `'` loses
+that one quote. JSON exports are unchanged.
 
 **Deferred**: `UpdateSecret` is still not atomic across the version, secret
 and tag writes. It is recorded here and not fixed in this plan.
+
+---
+
+### B87 — Vault create and update return database driver text as a 400
+
+**Status**: Open (GitHub issue #52; found 2026-10-02 during the final review
+of the secrets-and-error-responses plan).
+**Severity**: Low-Medium — a server-side failure is reported as a client
+error, and the response body carries the driver's raw error text (same class
+as B82)
+**Files**: `api/vault.go` (`createVault`'s `default` arm after
+`CreateVaultProvisioned`, `updateVault`'s fallback after `UpdateVault`),
+`internal/services/vaults/vault_service.go`,
+`internal/repositories/vault_repository.go`
+
+**Symptom**: when vault create or update fails for any reason other than the
+mapped sentinels (quota, purge protection, not found), the handler answers
+**400** `Invalid or missing parameter: <err.Error()>`. A database failure
+such as `failed to insert vault: database is locked` therefore reaches the
+client as a 400 with driver text. Wiring failures (`vault creation cannot be
+completed: transaction support is not wired`) are also reported as 400.
+
+**Root cause**: both handlers treat every non-sentinel error as a validation
+error and call `c.SetInvalidParam(err.Error())`. The service wraps repository
+errors with `%w` (`create vault: %w`, `update vault: %w`) and the repository
+wraps the driver error (`failed to insert vault: %w`), so the raw text
+survives to the body.
+
+**Fix recipe**: give the vault service a validation sentinel (or match the
+ozzo validation error type) and map only that, plus a name-taken sentinel
+(409 via `SetConflict`), to client errors. Send every other error to
+`c.SetInternalError(err)`. Add handler tests where the service returns a
+wrapped driver error and assert a 500 with no driver text.
+
+---
+
+### B88 — Secret restore skips create validation on an unauthenticated blob
+
+**Status**: Open (GitHub issue #53; found 2026-10-02 during the final review
+of the secrets-and-error-responses plan).
+**Severity**: Low — not an escalation today, because only Key Vault
+Administrator and Key Vault Secrets Officer hold `secrets/restore/action`, and
+both also hold `secrets/setSecret`; it is a validation and integrity gap
+**Files**: `internal/backup/item_backup.go` (`RestoreSecret`,
+`restoreSecretWith`, `decodeBlob`), `api/backup_item.go` (secret restore
+handler)
+
+**Symptom**: secret restore stores whatever secret the blob describes without
+running `ValidateSecretCreate`. A crafted blob can store a name that create
+and import refuse, more than 15 tags or over-long tags, and arbitrary
+`enabled`, `expires_at` and `not_before` values.
+
+**Root cause**: the blob is unauthenticated base64url JSON (`decodeBlob` only
+decodes and unmarshals; there is no MAC or signature), and `RestoreSecret`
+only overrides `ID`, `UserID` and `VaultID` before inserting. Neither the
+handler nor the service validates the decoded secret.
+
+**Fix recipe**: run `ValidateSecretCreate` (name, tags, lifecycle timestamps)
+on the decoded secret in `RestoreSecret` before any write, and return a
+sentinel the handler maps to 400. Optionally authenticate the blob (an HMAC
+under a key derived from the master key) so restore only accepts blobs this
+deployment produced. Review key and certificate restore the same way.
+
+---
+
+### B89 — A rejected content_type update still archives a secret version
+
+**Status**: Open (GitHub issue #54; found 2026-10-02 during the final review
+of the secrets-and-error-responses plan).
+**Severity**: Low — no data loss and no security impact; a rejected update
+leaves a spurious version row and inflates the version history
+**Files**: `internal/services/secrets/secret_service.go` (`UpdateSecret`),
+`internal/services/secrets/secret_update.go` (`applySecretUpdate`)
+
+**Symptom**: an update with an unsupported `content_type` correctly answers
+400, but a `secret_versions` row archiving the current value has already been
+written. Each rejected request adds another archived copy of the current
+version.
+
+**Root cause**: `UpdateSecret` calls `versionService.CreateVersion` before
+`applySecretUpdate`, and `applySecretUpdate` is where `validateContentType`
+runs. The handler's `ValidateSecretUpdate` does not check `content_type`, and
+the writes are not in one transaction, so nothing rolls the version back.
+
+**Fix recipe**: validate before archiving, for example by calling
+`applySecretUpdate` first and running `CreateVersion` only after it succeeds,
+or by moving the content-type check into `ValidateSecretUpdate`. Add a test
+that a 400 on `content_type` leaves the version count unchanged. Making
+`UpdateSecret` atomic (deferred under B84) would also cover this.
 
 ---
 
