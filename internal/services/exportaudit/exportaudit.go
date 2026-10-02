@@ -104,9 +104,10 @@ func AuditableFormat(format string) string {
 	return "invalid"
 }
 
-// Attempt is one export attempt as the audit trail records it. It holds no
-// material and no password by construction. Reason is a fixed phrase from a
-// Failure, never raw error text.
+// Attempt is one export attempt as the audit trail records it. It has no
+// field for key material or a password. The caller must pass a validated
+// ResourceID and a fixed-phrase Reason from a Failure, never raw error text.
+// Only Details is JSON-escaped; the other event fields are copied as given.
 type Attempt struct {
 	UserID       string
 	ResourceType string // "certificate" or "key".

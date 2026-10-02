@@ -67,6 +67,20 @@ func TestClassify_MapsEveryServiceErrorToAFixedReason(t *testing.T) {
 	assert.Equal(t, "RSA-2048", refusal.KeyAlgorithm)
 }
 
+func TestClassify_PrecedenceFollowsTheSwitchOrder(t *testing.T) {
+	notFound := exportaudit.Classify(errors.Join(certServices.ErrCertificateChainUnavailable, certServices.ErrCertNotFound), "certificate")
+	assert.Equal(t, exportaudit.KindNotFound, notFound.Kind)
+
+	lifecycle := exportaudit.Classify(errors.Join(certServices.ErrCertificateChainUnavailable, certServices.ErrCertLifecycleDenied), "certificate")
+	assert.Equal(t, exportaudit.KindDisabled, lifecycle.Kind)
+	assert.Equal(t, "certificate_disabled", lifecycle.Code)
+
+	// Invalid-request is checked before not-found in api.exportFailureFor.
+	invalid := exportaudit.Classify(errors.Join(model.ErrInvalidExportRequest, certServices.ErrCertNotFound), "certificate")
+	assert.Equal(t, exportaudit.KindBadRequest, invalid.Kind)
+	assert.Equal(t, "invalid export request", invalid.Reason)
+}
+
 func TestConstructors(t *testing.T) {
 	assert.Equal(t, exportaudit.Failure{Kind: exportaudit.KindBadRequest, Code: "bad_request", Message: "m", Reason: "m"}, exportaudit.BadRequest("m"))
 	assert.Equal(t, exportaudit.Failure{Kind: exportaudit.KindInternal, Code: "internal_error", Message: "internal server error", Reason: "r"}, exportaudit.Internal("r"))
@@ -109,12 +123,18 @@ func (r *recorder) RecordEvent(_ context.Context, e auditServices.AuditEvent) er
 
 func (r *recorder) PersistAudit(string, string, string) error { return nil }
 
-func TestRecord_WritesOneEventAndToleratesANilService(t *testing.T) {
-	exportaudit.Record(context.Background(), nil, exportaudit.Attempt{ResourceType: "key"})
+func TestRecord_WritesTheExactEventAndToleratesANilService(t *testing.T) {
+	assert.NotPanics(t, func() {
+		exportaudit.Record(context.Background(), nil, exportaudit.Attempt{ResourceType: "key"})
+	})
 
+	a := exportaudit.Attempt{
+		UserID: "u1", ResourceType: "key", ResourceID: "k1", VaultID: "v1", Name: "signing", Version: 3,
+		Format: "pem", Outcome: "success", IPAddress: "10.0.0.2", Source: "cli",
+	}
 	rec := &recorder{}
-	exportaudit.Record(context.Background(), rec, exportaudit.Attempt{ResourceType: "key", Outcome: "success", Source: "cli"})
+	exportaudit.Record(context.Background(), rec, a)
 	require.Len(t, rec.events, 1)
+	assert.Equal(t, exportaudit.Event(a), rec.events[0])
 	assert.Equal(t, "export_key", rec.events[0].Action)
-	assert.Equal(t, "success", rec.events[0].Outcome)
 }
