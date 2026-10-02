@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -350,33 +351,76 @@ func (m *Middleware) RateLimitMiddleware(next http.Handler) http.Handler {
 
 // isHealthProbe reports whether path is a health probe that carries no vault.
 // VaultResolutionMiddleware skips these, so anything downstream that needs a
-// resolved vault must skip them too. Note this list is deliberately not shared
-// with AuthenticationMiddleware's public-path list, which excludes
-// /health/database.
+// resolved vault must skip them too. Matching is exact, so a vault named
+// "health" is resolved and rate limited like any other vault.
 func isHealthProbe(path string) bool {
-	return strings.HasSuffix(path, "/health") ||
-		strings.HasSuffix(path, "/health/ready") ||
-		strings.HasSuffix(path, "/health/live") ||
-		strings.HasSuffix(path, "/health/database")
+	_, ok := healthProbePaths[path]
+	return ok
+}
+
+// publicHealthProbePaths are the health probes served without a session.
+var publicHealthProbePaths = []string{
+	authzServices.DataPlaneBasePath + "/health",
+	authzServices.DataPlaneBasePath + "/health/ready",
+	authzServices.DataPlaneBasePath + "/health/live",
+}
+
+// healthProbePaths are the health routes that carry no vault. The set adds
+// /health/database to the public probes, and that probe still requires a
+// session.
+var healthProbePaths = pathSet(append([]string{
+	authzServices.DataPlaneBasePath + "/health/database",
+}, publicHealthProbePaths...))
+
+// publicPaths are the only request paths served without a session. Matching
+// is exact: suffix matching once made any vault named login, health, refresh
+// or register skip authentication (B80). The set lists every public route
+// under the base path. The oauth2, oidc and config routes are registered on
+// routers outside the authentication chain and are listed so that the set
+// stays the complete public inventory. The bootstrap guarantees the base path
+// equals DataPlaneBasePath.
+var publicPaths = pathSet(append([]string{
+	authzServices.DataPlaneBasePath + "/users/login",
+	authzServices.DataPlaneBasePath + "/users/refresh",
+	authzServices.DataPlaneBasePath + "/oauth2/token",
+	authzServices.DataPlaneBasePath + "/oidc/login",
+	authzServices.DataPlaneBasePath + "/oidc/callback",
+	authzServices.DataPlaneBasePath + "/oidc/cli/exchange",
+	authzServices.DataPlaneBasePath + "/config",
+}, publicHealthProbePaths...))
+
+// pathSet builds an exact-match lookup set from paths.
+func pathSet(paths []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		set[p] = struct{}{}
+	}
+	return set
+}
+
+// IsPublicPath reports whether path is served without authentication.
+func IsPublicPath(path string) bool {
+	_, ok := publicPaths[path]
+	return ok
+}
+
+// PublicPaths returns every public path in sorted order, so the route
+// authorization check can prove each one is a registered public route.
+func PublicPaths() []string {
+	out := make([]string, 0, len(publicPaths))
+	for p := range publicPaths {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // AuthenticationMiddleware handles JWT token validation and user context.
 // It delegates authentication logic to the AuthenticationService.
 func (m *Middleware) AuthenticationMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip authentication for public endpoints (health checks, auth endpoints, and OAuth2 token endpoint)
-		if strings.HasSuffix(r.URL.Path, "/health") ||
-			strings.HasSuffix(r.URL.Path, "/health/ready") ||
-			strings.HasSuffix(r.URL.Path, "/health/live") ||
-			strings.HasSuffix(r.URL.Path, "/login") ||
-			strings.HasSuffix(r.URL.Path, "/register") ||
-			strings.HasSuffix(r.URL.Path, "/refresh") ||
-			strings.Contains(r.URL.Path, "/auth/login") ||
-			strings.Contains(r.URL.Path, "/auth/register") ||
-			strings.Contains(r.URL.Path, "/auth/refresh") ||
-			strings.HasSuffix(r.URL.Path, "/oauth2/token") ||
-			strings.HasSuffix(r.URL.Path, "/oidc/login") ||
-			strings.HasSuffix(r.URL.Path, "/oidc/callback") {
+		// Skip authentication for the exact public paths only.
+		if IsPublicPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -431,19 +475,8 @@ func (m *Middleware) AuthenticationMiddleware(next http.Handler) http.Handler {
 // It delegates authorization logic to the RBACService.
 func (m *Middleware) AuthorizationMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip authorization for the same public endpoints skipped by AuthenticationMiddleware.
-		if strings.HasSuffix(r.URL.Path, "/health") ||
-			strings.HasSuffix(r.URL.Path, "/health/ready") ||
-			strings.HasSuffix(r.URL.Path, "/health/live") ||
-			strings.HasSuffix(r.URL.Path, "/login") ||
-			strings.HasSuffix(r.URL.Path, "/register") ||
-			strings.HasSuffix(r.URL.Path, "/refresh") ||
-			strings.Contains(r.URL.Path, "/auth/login") ||
-			strings.Contains(r.URL.Path, "/auth/register") ||
-			strings.Contains(r.URL.Path, "/auth/refresh") ||
-			strings.HasSuffix(r.URL.Path, "/oauth2/token") ||
-			strings.HasSuffix(r.URL.Path, "/oidc/login") ||
-			strings.HasSuffix(r.URL.Path, "/oidc/callback") {
+		// Skip authorization for the same exact public paths.
+		if IsPublicPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

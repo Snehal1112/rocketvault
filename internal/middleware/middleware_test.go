@@ -413,7 +413,7 @@ func TestAuthenticationMiddleware(t *testing.T) {
 	}{
 		{
 			name:           "public endpoint - health",
-			path:           "/health",
+			path:           "/api/v1/health",
 			authHeader:     "",
 			setupMock:      func(m *MockAuthenticationService) {},
 			expectedStatus: http.StatusOK,
@@ -421,7 +421,7 @@ func TestAuthenticationMiddleware(t *testing.T) {
 		},
 		{
 			name:           "public endpoint - login",
-			path:           "/login",
+			path:           "/api/v1/users/login",
 			authHeader:     "",
 			setupMock:      func(m *MockAuthenticationService) {},
 			expectedStatus: http.StatusOK,
