@@ -5468,6 +5468,103 @@ counts.
 
 ---
 
+### B76 — A forged or cross-vault certificate restore blob planted key and CA links that auto-renew followed with an admin scope
+
+**Status**: Fixed 2026-10-03 (GitHub #65)
+**Severity**: High — key material from a vault the caller could not reach
+ended up in a row in a vault they could, usable there as a CA signing key
+**Files**: `internal/backup/item_backup.go`, `internal/backup/blob_seal.go`
+(new), `internal/services/certificates/renewal_service.go`,
+`internal/container/service_container.go`
+
+**Symptom**: a caller holding `certificates/restore` in vault B could restore
+a certificate whose `key_id` and `ca_cert_id` named a key and a CA
+certificate in vault A. The auto-renew scheduler then renewed the row with
+`model.NewAdminScope(cert.UserID)`, whose predicate matches every vault, so
+the key read, the CA read and `ArchiveAndRenew`'s update all ignored the
+vault, and the renewal copied the vault-A key's private PEM into the vault-B
+row. When the restored body was a CA, the renewed row was a working CA in
+vault B signed by a vault-A key. The owner comparison those reads keep (B32)
+was the only barrier, and it passes whenever the restorer owns the vault-A
+objects, including after their access to vault A was revoked. The blob was
+unauthenticated base64url JSON, so the links did not need a real backup. The
+same format let a forged key blob bind a new key row to any
+`pkcs11:<label>` HSM handle.
+
+**Root cause**: three layers, each enough to matter. `RestoreCertificate`
+overrode only `ID`, `UserID`, `VaultID` and `Exportable` (B15 and the export
+work), and `key_id`, `ca_cert_id` and each archived version's `key_id` were
+inserted verbatim; no update path rewrites `ca_cert_id`, deliberately (B37).
+The blob carried no integrity protection. The scheduler used an admin scope.
+
+**What was fixed**:
+
+- Blobs are sealed. `BackupSecret`, `BackupKey` and `BackupCertificate` return
+  `rvb2.` followed by `common.EncryptWithKey` output under a key derived from
+  the master key with HKDF-SHA256 (info `rocketvault item-backup blob seal
+  v2`). The seal wraps the version-aware envelope unchanged. Restore refuses
+  a blob with no prefix (`ErrUnsealedBlob`) or one that fails authentication
+  (`ErrBlobAuthentication`), both wrapped in `ErrInvalidBlob` (HTTP 400), and
+  does nothing while no seal key is set (`ErrSealKeyUnset`, HTTP 500).
+- `RestoreCertificate` keeps `key_id`, `ca_cert_id` and each archived
+  version's `key_id` only when it reads under
+  `model.NewVaultScope(targetVault, restorer)` and the row that comes back is
+  in the target vault (`dropForeignReferences`); otherwise it clears it.
+  Cleared, not rejected: cross-vault restore is supported (B15), and every
+  consequence of a cleared link is a later refusal, never a grant. A
+  same-vault restore keeps every link and every version.
+- The scheduler renews with `model.NewVaultScope(cert.VaultID,
+  cert.UserID)` and skips a row with no vault.
+
+**Read-error decision**: any error from the existence check, not only
+not-found (a locked or unreachable database, a missing key repository),
+clears the link and the restore proceeds. Keeping an unverified link is the
+one outcome the check exists to prevent; aborting would be equally safe but
+would turn a transient error into a failed restore for no security gain. A
+same-vault restore that hits such an error loses its links and will not
+auto-renew until the certificate is re-issued or renewed with a key.
+
+**Compatibility decision**: blobs taken before the upgrade are refused, with
+no opt-in. An accepted unsealed blob is indistinguishable from a forged one.
+A blob's values were always master-key ciphertext, so blobs never survived a
+master-key rotation or moved between instances anyway. This ends the
+"pre-change blob restores unchanged" promise of the 2026-10-01 versioning
+and export designs. Operators re-take backups after upgrading.
+
+**HSM-handle decision**: sealing closes the forged-handle case. A genuine
+blob of an HSM key restored into another vault still points at the same HSM
+object; that is what backup plus restore means (the caller held
+`keys/backup` in the source vault) and is accepted.
+
+**CA decision**: a CA certificate restored into a vault where its key does not
+resolve loses its `key_id` and can no longer sign there; re-issue it. There
+is no safe way to re-link by name.
+
+**Pinned by**: `TestRestoreCertificate_RejectsLegacyUnsealedBlob`,
+`TestRestoreKey_RejectsForgedHSMHandle`, `TestRestore_RejectsTamperedBlob`,
+`TestRestore_RejectsBlobSealedUnderAnotherMasterKey`,
+`TestItemBackup_FailsClosedWithoutSealKey`,
+`TestBackupCertificate_SealedBlobKeepsVersionHistory`
+(`internal/backup/item_backup_seal_test.go`);
+`TestRestoreCertificate_DropsCrossVaultReferences`,
+`TestRestoreCertificate_KeepsSameVaultReferences`,
+`TestRestoreCertificate_NoKeyRepoDropsKeyReference`,
+`TestRestoreCertificate_ForgedSealedBlobDropsForeignLinks`,
+`TestRestoreCertificate_ReadErrorDropsLinks`,
+`TestRestoreCertificate_ScopeIgnoringRepoStillDropsForeignKey`,
+`TestRestoreCertificate_CrossVaultKeepsHistoryDropsVersionKeyLinks`,
+`TestRestoreCertificate_ForgedVersionsDropOnlyForeignKeyLinks`
+(`internal/backup/item_backup_cert_refs_test.go`);
+`TestRestoreCertificateHandler_LegacyUnsealedBlob_Returns400`
+(`api/backup_item_seal_test.go`);
+`TestItemBackupService_SealedWhenMasterKeyConfigured`
+(`internal/container/item_backup_seal_test.go`);
+`TestCheckAndRenewCertificates_AutoRenew`,
+`TestCheckAndRenewCertificates_NilVaultSkipped`
+(`internal/services/certificates/renewal_service_test.go`).
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

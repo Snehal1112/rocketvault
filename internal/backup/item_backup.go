@@ -464,6 +464,9 @@ func (s *ItemBackupService) RestoreCertificate(ctx context.Context, blob string,
 	cert.VaultID = vaultID
 	// A restore never grants exportability; see RestoreKey.
 	cert.Exportable = false
+	// Links the target vault cannot resolve are dropped before anything is
+	// written, on the current row and on every archived version (B76).
+	s.dropForeignReferences(ctx, &cert, versions.Certificate, userID, vaultID)
 
 	if txCertRepo, repoOK := s.certRepo.(txCapableCertRepo); repoOK && s.txBeginner != nil {
 		txVersionRepo, versionOK := s.certVersionRepo.(txCapableCertVersionRepo)
@@ -522,6 +525,54 @@ func (s *ItemBackupService) restoreCertificateWith(
 		}
 	}
 	return nil
+}
+
+// dropForeignReferences clears a restored certificate's signing-key and CA
+// links unless each resolves inside vaultID, and clears the key link of every
+// archived version the same way. A backup may be restored into a vault other
+// than the one it came from (B15), and its links then name objects the
+// restoring caller was never authorized for. Renewal follows those links, so
+// a link that does not resolve here is dropped rather than kept (B76).
+//
+// Dropping only ever causes a refusal later: renewal refuses a certificate
+// with no key, and refuses to re-sign one whose CA it no longer records. Any
+// read error counts as "does not resolve", since keeping an unverified link
+// is the one outcome this method exists to prevent.
+func (s *ItemBackupService) dropForeignReferences(ctx context.Context, cert *model.Certificate, versions []model.CertificateVersionRecord, userID, vaultID uuid.UUID) {
+	scope := model.NewVaultScope(vaultID, userID)
+
+	// Each distinct key is read once, however many versions name it.
+	resolved := make(map[uuid.UUID]bool)
+	keyResolves := func(id uuid.UUID) bool {
+		if ok, seen := resolved[id]; seen {
+			return ok
+		}
+		ok := false
+		if s.keyRepo != nil {
+			k, err := s.keyRepo.Read(ctx, id, scope)
+			// The vault comparison repeats the scoped read's predicate, so a
+			// repository that ignored the scope still cannot keep a link.
+			ok = err == nil && k != nil && k.VaultID == vaultID
+		}
+		resolved[id] = ok
+		return ok
+	}
+
+	if cert.KeyID != uuid.Nil && !keyResolves(cert.KeyID) {
+		cert.KeyID = uuid.Nil
+	}
+	for i := range versions {
+		if versions[i].KeyID != uuid.Nil && !keyResolves(versions[i].KeyID) {
+			versions[i].KeyID = uuid.Nil
+		}
+	}
+
+	if cert.CACertID != nil {
+		ca, err := s.certRepo.Read(ctx, *cert.CACertID, scope)
+		if err != nil || ca == nil || ca.VaultID != vaultID {
+			cert.CACertID = nil
+		}
+	}
 }
 
 // encodeBlob marshals data into a JSON envelope and base64url-encodes it.
