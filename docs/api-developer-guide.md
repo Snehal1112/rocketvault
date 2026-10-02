@@ -656,16 +656,21 @@ token buckets, not fixed windows, so capacity returns gradually rather than all 
 `server.trusted_proxies` (IP addresses or CIDR ranges; default empty). A
 deployment behind a proxy must set it, or every client shares the proxy's
 bucket and audit rows show the proxy's address. The proxy must append to or
-overwrite `X-Forwarded-For`.
+overwrite `X-Forwarded-For`. In the docker, Fly and Railway images, set it
+with the `RV_TRUSTED_PROXIES` environment variable (see
+`.rocketvault.docker.yaml.tmpl`).
 
 ### Failed-login backoff
 
 Separately from the IP limits, each account has a failed-login counter. The
-first 5 consecutive failures are free; after that the account answers
-`429 Too Many Requests` with a `Retry-After` header, starting at 2 seconds and
-doubling up to 15 minutes. A successful login resets it, and a counter whose
-last failure is 24 hours old is forgotten. Unknown usernames get the same
-answer as known ones.
+first 5 consecutive failures are free. Every failed attempt, the sixth
+included, still answers `403 Forbidden`; the sixth failure starts a wait of
+2 seconds, and only an attempt made inside that wait answers
+`429 Too Many Requests` with a `Retry-After` header. Each further failure
+doubles the wait, up to 15 minutes. Attempts inside the wait are refused
+without being counted, so they do not extend it. A successful login resets
+the counter, and a counter whose last failure is 24 hours old is forgotten.
+Unknown usernames get the same answers as known ones.
 
 ### The per-vault limit
 

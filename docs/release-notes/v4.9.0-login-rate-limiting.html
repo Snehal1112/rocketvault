@@ -33,8 +33,11 @@ stays partly open.</p>
 <ul>
 <li><strong>One client-IP resolver.</strong> <code>server.trusted_proxies</code> (default empty) lists
 the reverse proxies whose <code>X-Forwarded-For</code> and <code>X-Real-IP</code> headers are
-trusted. Every consumer (rate limits, request logs, audit rows) goes
-through <code>ClientIPResolver</code>. It walks <code>X-Forwarded-For</code> from the right and
+trusted. The rate limiters, the request log and the audit rows written by
+the API handlers and middleware use <code>ClientIPResolver</code>. Two places do not:
+the WebSocket connection log in <code>server/server.go</code> records the raw peer
+address, and the <code>authenticate_user</code> audit events written by
+<code>AuthenticateUser</code> carry no IP at all. The resolver walks <code>X-Forwarded-For</code> from the right and
 returns the first hop that is not a trusted proxy. <code>X-Real-IP</code> is read only
 when the trusted proxy sent no <code>X-Forwarded-For</code>. An unreadable hop falls
 back to the peer address. An invalid <code>trusted_proxies</code> entry is logged and
@@ -45,12 +48,16 @@ the whole list is ignored, so nobody is trusted.</li>
 entries. See the residual risk below.</li>
 <li><strong>Per-account failed-login backoff.</strong> 5 free failures, then a wait of 2s
 that doubles per failure up to 15 minutes; a counter whose last failure is
-24 hours old is forgotten. The key is the exact username (a SHA-256 key for
-names over 64 bytes). Every identity failure exit counts: unknown user,
-wrong password, missing TOTP secret, wrong or malformed code, replayed
-code and claim failure. A successful login resets the counter. A throttled
-login answers HTTP 429 with <code>Retry-After</code>, with the same body for known and
-unknown usernames. If the counter table cannot be read, login proceeds and
+24 hours old is forgotten. The counter key is <code>sha256:</code> plus a hash of the
+exact username (no case folding), so the attempted name, which is
+sometimes a password typed into the wrong field, is never stored. Every
+identity failure exit counts: unknown user, wrong password, missing TOTP
+secret, wrong or malformed code, replayed code and claim failure. A
+successful login resets the counter. Every failed attempt, the sixth
+included, still answers 403; the sixth failure starts the first wait, and
+an attempt made inside a wait answers HTTP 429 with <code>Retry-After</code>, with the
+same body for known and unknown usernames. Attempts inside the wait are
+not counted. If the counter table cannot be read, login proceeds and
 a warning is logged (the per-IP limiter still applies).</li>
 <li><strong>Constant-time rejection.</strong> Unknown users, unknown, disabled or expired
 OAuth2 clients and accounts whose stored hash is not usable bcrypt (OIDC
@@ -78,8 +85,10 @@ proxy, every client now shares the proxy's address until
 <code>client_secret</code> or <code>client_id</code> in the query now gets 401, and one that
 sends <code>grant_type</code> there gets 400. Send them in the form body or HTTP
 Basic.</li>
-<li><strong>A sixth consecutive failed login for one account returns 429</strong> with
-<code>Retry-After</code> for a growing delay.</li>
+<li><strong>Repeated failed logins for one account are delayed.</strong> The first six
+consecutive failures answer 403 as before. The sixth starts a 2-second
+wait, and an attempt made inside the wait answers 429 with <code>Retry-After</code>.
+Each further failure doubles the wait, up to 15 minutes.</li>
 </ol>
 <h2 id="upgrade-procedure">Upgrade procedure</h2>
 <ol>
@@ -93,19 +102,36 @@ required, not optional. Example:</p>
 </pre></div>
 <p>Requirements and pitfalls:</p>
 <ul>
-<li>The trusted proxy must append to or overwrite <code>X-Forwarded-For</code>.
+<li>
+<p>The trusted proxy must append to or overwrite <code>X-Forwarded-For</code>.
 <code>X-Forwarded-For</code> is preferred over <code>X-Real-IP</code>; a proxy that sets only
 <code>X-Real-IP</code> while passing the client's own <code>X-Forwarded-For</code> lets that
-client choose its IP.</li>
-<li>A hop that carries a port (for example <code>1.2.3.4:5678</code>, as some Azure
+client choose its IP.</p>
+</li>
+<li>
+<p>A hop that carries a port (for example <code>1.2.3.4:5678</code>, as some Azure
 gateways send) is unreadable, so the resolver falls back to the peer
-and all clients share one bucket.</li>
-<li>The value must be a YAML list. A single comma-separated string is read
+and all clients share one bucket.</p>
+</li>
+<li>
+<p>The value must be a YAML list. A single comma-separated string is read
 as one invalid entry and the list is ignored without a startup failure
-(an error is logged).</li>
-<li><code>.rocketvault.docker.yaml.tmpl</code>, used by docker, Fly and Railway,
-hardcodes <code>trusted_proxies: []</code> and has no environment variable for it
-yet, so edit the rendered template for those targets.</li>
+(an error is logged).</p>
+</li>
+<li>
+<p>Docker, Fly and Railway (<code>.rocketvault.docker.yaml.tmpl</code>, rendered by
+<code>docker-entrypoint.sh</code>): set the <code>RV_TRUSTED_PROXIES</code> environment
+variable. It is pasted between the brackets of
+<code>trusted_proxies: [...]</code>, so give comma-separated IPs or CIDR ranges,
+each double-quoted:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">RV_TRUSTED_PROXIES='&quot;10.0.0.0/8&quot;,&quot;172.16.0.0/12&quot;'
+</pre></div>
+<p>Unset or empty renders <code>[]</code>, as before. Fly.io and Railway put an edge
+proxy in front of the container: take the address ranges that proxy
+connects from in the platform's own documentation (this note does not
+list them). With docker compose and the <code>proxy</code> profile, use the
+subnet of the compose network Caddy connects from.</p>
+</li>
 </ul>
 </li>
 <li>
@@ -122,9 +148,10 @@ move them to the body or Basic auth.</p>
 </ol>
 <h2 id="schema">Schema</h2>
 <p>New table <code>login_failures</code> (<code>username</code>, <code>failures</code>, <code>last_failure_at</code>, with
-an index on <code>last_failure_at</code>). It is dual-written in
-<code>createOptimizedSchema</code> and <code>migrateSchema</code> and is included in the backup
-table order.</p>
+an index on <code>last_failure_at</code>). The <code>username</code> column holds the hashed key
+(<code>sha256:</code> plus a hash of the exact name), never the raw attempted name. It
+is dual-written in <code>createOptimizedSchema</code> and <code>migrateSchema</code> and is
+included in backups, which therefore contain hashed keys only.</p>
 <h2 id="what-did-not-change">What did not change</h2>
 <p><code>rate_limit.default</code>, <code>rate_limit.auth</code> and <code>rate_limit.per_vault</code> keep their
 values, and the per-vault limiter is untouched. <code>/jwks.json</code> is still not
@@ -150,7 +177,17 @@ flush a victim's counter. Rows older than 24 hours are pruned on each
 recorded failure. Monitor the table size.</li>
 <li><strong>Concurrent burst.</strong> The throttle check and the failure record are
 separate steps, so simultaneous attempts at the end of a window can each
-get a guess (B92; follow-up: atomic reservation).</li>
+get a guess (B92; follow-up: atomic reservation). The per-IP auth limit
+allows 5 attempts per bucket, so an attacker holding K client buckets
+(distinct IPv4 addresses or IPv6 /64 prefixes) gets about K x 5 guesses
+at each window boundary. This is rated Low only because TOTP is
+mandatory, so a guess needs both the password and a current code.</li>
+<li><strong>Breaker and hung databases.</strong> The database breaker no longer counts
+cancelled requests, and there is no server-side request deadline (the
+server sets only read, write and idle timeouts). During a hang-type
+database outage, requests end when clients disconnect, which does not
+count, so the breaker does not open. A request-deadline middleware is the
+follow-up (B90).</li>
 <li><strong>Legacy bcrypt hashes.</strong> Hashes created at cost 10 (before the cost
 increase) verify faster than the dummy compare, which reveals that an
 account has a legacy hash, not whether an account exists.</li>
