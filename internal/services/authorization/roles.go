@@ -17,7 +17,8 @@ type permission struct {
 }
 
 // builtInRoles maps each built-in vault role to its permission bundle.
-// Only operations defined in model/access_policy.go are used (no wrap/unwrap).
+// These legacy bundles are frozen and can no longer be granted, so they omit
+// the wrap and unwrap operations added for B79.
 var builtInRoles = map[string][]permission{
 	"vault-reader": {
 		{model.PolicyResourceSecrets, model.OpGet}, {model.PolicyResourceSecrets, model.OpList},

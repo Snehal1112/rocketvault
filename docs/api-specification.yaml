@@ -5991,6 +5991,8 @@ components:
             - verify
             - encrypt
             - decrypt
+            - wrap
+            - unwrap
             - import
             - renew
             - manage

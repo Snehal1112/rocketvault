@@ -1474,39 +1474,220 @@ func TestResolvePolicy_VaultNamedAfterAResourceTypeDoesNotMisrouteResourceType(t
 	}
 }
 
-// TestResolvePolicy_SignAndVerifyResolveToTheirOwnOperations is the regression
-// for B33. resolvePolicy special-cases /purge, /restore, /rotate, /import and
-// /renew, but had no case for /sign or /verify, so both fell through to the
-// plain POST arm and resolved to OpCreate. The CLI passes OpSign and OpVerify
-// (cmd/keys/sign.go, cmd/keys/verify.go), so an explicit-deny access policy
-// written against (keys, sign) fired on the CLI and did not fire over HTTP --
-// the API was the way around a deny rule the CLI honoured.
-//
-// wrap and unwrap are deliberately absent from this table: their CLI commands
-// pass OpCreate, matching what HTTP already resolves, so the two agree.
-func TestResolvePolicy_SignAndVerifyResolveToTheirOwnOperations(t *testing.T) {
+// TestResolvePolicy_KeyCryptoAndBackupResolveToTheirOwnOperations is the
+// regression for B33 (sign, verify) and B79 (encrypt, decrypt, wrap, unwrap,
+// backup). Each POST route resolves to its own operation, so an explicit-deny
+// policy naming it is evaluated over HTTP exactly as on the CLI, and a deny on
+// create no longer blocks all of them collaterally.
+func TestResolvePolicy_KeyCryptoAndBackupResolveToTheirOwnOperations(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name   string
+		name         string
+		path         string
+		wantResource model.PolicyResourceType
+		wantOp       model.PolicyOperation
+	}{
+		{"sign, flat", "/api/v1/keys/abc/sign", model.PolicyResourceKeys, model.OpSign},
+		{"sign, scoped", "/api/v1/vaults/prod/keys/abc/sign", model.PolicyResourceKeys, model.OpSign},
+		{"verify, flat", "/api/v1/keys/abc/verify", model.PolicyResourceKeys, model.OpVerify},
+		{"verify, scoped", "/api/v1/vaults/prod/keys/abc/verify", model.PolicyResourceKeys, model.OpVerify},
+		{"encrypt, flat", "/api/v1/keys/abc/encrypt", model.PolicyResourceKeys, model.OpEncrypt},
+		{"encrypt, scoped", "/api/v1/vaults/prod/keys/abc/encrypt", model.PolicyResourceKeys, model.OpEncrypt},
+		{"decrypt, flat", "/api/v1/keys/abc/decrypt", model.PolicyResourceKeys, model.OpDecrypt},
+		{"decrypt, scoped", "/api/v1/vaults/prod/keys/abc/decrypt", model.PolicyResourceKeys, model.OpDecrypt},
+		{"wrap, flat", "/api/v1/keys/abc/wrap", model.PolicyResourceKeys, model.OpWrap},
+		{"wrap, scoped", "/api/v1/vaults/prod/keys/abc/wrap", model.PolicyResourceKeys, model.OpWrap},
+		{"unwrap, flat", "/api/v1/keys/abc/unwrap", model.PolicyResourceKeys, model.OpUnwrap},
+		{"unwrap, scoped", "/api/v1/vaults/prod/keys/abc/unwrap", model.PolicyResourceKeys, model.OpUnwrap},
+		{"key backup, flat", "/api/v1/keys/abc/backup", model.PolicyResourceKeys, model.OpBackup},
+		{"key backup, scoped", "/api/v1/vaults/prod/keys/abc/backup", model.PolicyResourceKeys, model.OpBackup},
+		{"secret backup, flat", "/api/v1/secrets/abc/backup", model.PolicyResourceSecrets, model.OpBackup},
+		{"secret backup, scoped", "/api/v1/vaults/prod/secrets/abc/backup", model.PolicyResourceSecrets, model.OpBackup},
+		{"certificate backup, flat", "/api/v1/certificates/abc/backup", model.PolicyResourceCertificates, model.OpBackup},
+		{"certificate backup, scoped", "/api/v1/vaults/prod/certificates/abc/backup", model.PolicyResourceCertificates, model.OpBackup},
+		// Suffix collisions: only the whole last segment selects an operation.
+		{"unwrap is not wrap", "/api/v1/keys/abc/unwrap", model.PolicyResourceKeys, model.OpUnwrap},
+		{"segment ending in wrap is create", "/api/v1/keys/abc/rewrap", model.PolicyResourceKeys, model.OpCreate},
+		{"segment ending in encrypt is create", "/api/v1/keys/abc/reencrypt", model.PolicyResourceKeys, model.OpCreate},
+		{"segment ending in backup is create", "/api/v1/secrets/abc/xbackup", model.PolicyResourceSecrets, model.OpCreate},
+		{"key id named wrap, rotate", "/api/v1/keys/wrap/rotate", model.PolicyResourceKeys, model.OpRotate},
+		{"key id named encrypt, sign", "/api/v1/keys/encrypt/sign", model.PolicyResourceKeys, model.OpSign},
+		{"key id named unwrap, wrap", "/api/v1/keys/unwrap/wrap", model.PolicyResourceKeys, model.OpWrap},
+		{"key id named backup, export", "/api/v1/keys/backup/export", model.PolicyResourceKeys, model.OpCreate},
+		{"trailing slash fails closed to create", "/api/v1/keys/abc/wrap/", model.PolicyResourceKeys, model.OpCreate},
+		// Vaults named after an operation word must not change the operation.
+		{"vault named wrap, key create", "/api/v1/vaults/wrap/keys", model.PolicyResourceKeys, model.OpCreate},
+		{"vault named unwrap, key create", "/api/v1/vaults/unwrap/keys", model.PolicyResourceKeys, model.OpCreate},
+		{"vault named encrypt, key create", "/api/v1/vaults/encrypt/keys", model.PolicyResourceKeys, model.OpCreate},
+		{"vault named backup, secret create", "/api/v1/vaults/backup/secrets", model.PolicyResourceSecrets, model.OpCreate},
+		{"vault named export, certificate create", "/api/v1/vaults/export/certificates", model.PolicyResourceCertificates, model.OpCreate},
+		{"vault named encrypt, wrap", "/api/v1/vaults/encrypt/keys/abc/wrap", model.PolicyResourceKeys, model.OpWrap},
+		{"vault named wrap, decrypt", "/api/v1/vaults/wrap/keys/abc/decrypt", model.PolicyResourceKeys, model.OpDecrypt},
+		{"vault named backup, sign", "/api/v1/vaults/backup/keys/abc/sign", model.PolicyResourceKeys, model.OpSign},
+		{"vault named export, encrypt", "/api/v1/vaults/export/keys/abc/encrypt", model.PolicyResourceKeys, model.OpEncrypt},
+		// Export stays the fail-closed create, on both shapes and whatever the vault name.
+		{"key export, flat", "/api/v1/keys/abc/export", model.PolicyResourceKeys, model.OpCreate},
+		{"key export, scoped", "/api/v1/vaults/prod/keys/abc/export", model.PolicyResourceKeys, model.OpCreate},
+		{"certificate export, flat", "/api/v1/certificates/abc/export", model.PolicyResourceCertificates, model.OpCreate},
+		{"certificate export, scoped", "/api/v1/vaults/prod/certificates/abc/export", model.PolicyResourceCertificates, model.OpCreate},
+		{"key export, vault named encrypt", "/api/v1/vaults/encrypt/keys/abc/export", model.PolicyResourceKeys, model.OpCreate},
+		{"key export, vault named wrap", "/api/v1/vaults/wrap/keys/abc/export", model.PolicyResourceKeys, model.OpCreate},
+		{"certificate export, vault named backup", "/api/v1/vaults/backup/certificates/abc/export", model.PolicyResourceCertificates, model.OpCreate},
+		{"certificate export, vault named export", "/api/v1/vaults/export/certificates/abc/export", model.PolicyResourceCertificates, model.OpCreate},
+		// Unchanged neighbours, to pin that the new cases did not widen.
+		{"rotate keeps its own operation", "/api/v1/keys/abc/rotate", model.PolicyResourceKeys, model.OpRotate},
+		{"key create stays create", "/api/v1/keys", model.PolicyResourceKeys, model.OpCreate},
+		{"key import stays import", "/api/v1/keys/import", model.PolicyResourceKeys, model.OpImport},
+		{"unknown sub-resource stays create", "/api/v1/keys/abc/frobnicate", model.PolicyResourceKeys, model.OpCreate},
+		{"restore stays recover", "/api/v1/keys/abc/restore", model.PolicyResourceKeys, model.OpRecover},
+		{"certificate renew, flat", "/api/v1/certificates/abc/renew", model.PolicyResourceCertificates, model.OpRenew},
+		{"certificate renew, scoped", "/api/v1/vaults/prod/certificates/abc/renew", model.PolicyResourceCertificates, model.OpRenew},
+		{"certificate renew, vault named backup", "/api/v1/vaults/backup/certificates/abc/renew", model.PolicyResourceCertificates, model.OpRenew},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resourceType, op := resolvePolicy(http.MethodPost, c.path)
+			assert.Equal(t, c.wantResource, resourceType, "resolvePolicy(POST, %s) resource", c.path)
+			assert.Equal(t, c.wantOp, op, "resolvePolicy(POST, %s) operation", c.path)
+		})
+	}
+}
+
+// TestResolvePolicy_OperationWordsNeedPost pins that the new operation arms
+// match POST only, and that certificate version routes resolve as before.
+func TestResolvePolicy_OperationWordsNeedPost(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
 		method string
 		path   string
 		wantOp model.PolicyOperation
 	}{
-		{"sign, flat route", http.MethodPost, "/api/v1/keys/abc/sign", model.OpSign},
-		{"sign, vault-scoped route", http.MethodPost, "/api/v1/vaults/prod/keys/abc/sign", model.OpSign},
-		{"verify, flat route", http.MethodPost, "/api/v1/keys/abc/verify", model.OpVerify},
-		{"verify, vault-scoped route", http.MethodPost, "/api/v1/vaults/prod/keys/abc/verify", model.OpVerify},
-		// Unchanged neighbours, to pin that the new cases didn't widen.
-		{"wrap still resolves to create", http.MethodPost, "/api/v1/keys/abc/wrap", model.OpCreate},
-		{"unwrap still resolves to create", http.MethodPost, "/api/v1/keys/abc/unwrap", model.OpCreate},
-		{"rotate keeps its own operation", http.MethodPost, "/api/v1/keys/abc/rotate", model.OpRotate},
+		{http.MethodGet, "/api/v1/keys/abc/wrap", model.OpGet},
+		{http.MethodPut, "/api/v1/keys/abc/unwrap", model.OpSet},
+		{http.MethodDelete, "/api/v1/keys/abc/backup", model.OpDelete},
+		{http.MethodGet, "/api/v1/vaults/encrypt/keys/abc", model.OpGet},
+		{http.MethodGet, "/api/v1/certificates/abc/versions", model.OpGet},
+		{http.MethodGet, "/api/v1/vaults/prod/certificates/abc/versions", model.OpGet},
+		{http.MethodGet, "/api/v1/certificates/abc/versions/2", model.OpGet},
+		{http.MethodGet, "/api/v1/vaults/prod/certificates/abc/versions/2", model.OpGet},
+		{http.MethodPut, "/api/v1/certificates/abc/versions/2", model.OpSet},
+		{http.MethodPut, "/api/v1/vaults/prod/certificates/abc/versions/2", model.OpSet},
 	}
 	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			resourceType, op := resolvePolicy(c.method, c.path)
-			assert.Equal(t, model.PolicyResourceKeys, resourceType, "resolvePolicy(%s, %s) resource", c.method, c.path)
+		t.Run(c.method+" "+c.path, func(t *testing.T) {
+			_, op := resolvePolicy(c.method, c.path)
 			assert.Equal(t, c.wantOp, op, "resolvePolicy(%s, %s) operation", c.method, c.path)
+		})
+	}
+}
+
+// TestPolicyMiddleware_ExplicitDenyEvaluatedPerKeyOperation proves, end to end
+// through PolicyMiddleware, that a deny naming each operation blocks its route
+// before the role-assignment check runs (B79).
+func TestPolicyMiddleware_ExplicitDenyEvaluatedPerKeyOperation(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		path     string
+		resource model.PolicyResourceType
+		op       model.PolicyOperation
+	}{
+		{"/api/v1/keys/abc/encrypt", model.PolicyResourceKeys, model.OpEncrypt},
+		{"/api/v1/vaults/prod/keys/abc/encrypt", model.PolicyResourceKeys, model.OpEncrypt},
+		{"/api/v1/keys/abc/decrypt", model.PolicyResourceKeys, model.OpDecrypt},
+		{"/api/v1/vaults/prod/keys/abc/decrypt", model.PolicyResourceKeys, model.OpDecrypt},
+		{"/api/v1/keys/abc/wrap", model.PolicyResourceKeys, model.OpWrap},
+		{"/api/v1/vaults/prod/keys/abc/wrap", model.PolicyResourceKeys, model.OpWrap},
+		{"/api/v1/keys/abc/unwrap", model.PolicyResourceKeys, model.OpUnwrap},
+		{"/api/v1/vaults/prod/keys/abc/unwrap", model.PolicyResourceKeys, model.OpUnwrap},
+		{"/api/v1/keys/abc/backup", model.PolicyResourceKeys, model.OpBackup},
+		{"/api/v1/vaults/prod/keys/abc/backup", model.PolicyResourceKeys, model.OpBackup},
+		{"/api/v1/secrets/abc/backup", model.PolicyResourceSecrets, model.OpBackup},
+		{"/api/v1/certificates/abc/backup", model.PolicyResourceCertificates, model.OpBackup},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			t.Parallel()
+			mw, policySvc, roleSvc := setupDataPlaneMiddlewareTest(t)
+
+			userID, vaultID := uuid.New(), uuid.New()
+			policySvc.On("CheckAccess", mock.Anything, userID, c.resource, c.op, vaultID).
+				Return(authzServices.AccessDenied, nil)
+
+			nextCalled := false
+			rr := httptest.NewRecorder()
+			mw.PolicyMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextCalled = true
+			})).ServeHTTP(rr, dataPlaneRequest(http.MethodPost, c.path, userID, vaultID))
+
+			assert.False(t, nextCalled, "the explicit deny on %s must block the request", c.op)
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+			policySvc.AssertExpectations(t)
+			roleSvc.AssertNotCalled(t, "HasDataAction", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// TestPolicyMiddleware_CreateDenyNoLongerBlocksKeyCrypto pins the other half of
+// B79: before the fix, a deny on (keys, create) blocked encrypt collaterally.
+func TestPolicyMiddleware_CreateDenyNoLongerBlocksKeyCrypto(t *testing.T) {
+	t.Parallel()
+	mw, policySvc, roleSvc := setupDataPlaneMiddlewareTest(t)
+
+	userID, vaultID := uuid.New(), uuid.New()
+	policySvc.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, model.OpCreate, vaultID).
+		Return(authzServices.AccessDenied, nil).Maybe()
+	policySvc.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, model.OpEncrypt, vaultID).
+		Return(authzServices.AccessFallback, nil)
+	roleSvc.On("HasDataAction", mock.Anything, userID, vaultID, model.ActionKeysEncrypt).
+		Return(true, nil)
+
+	nextCalled := false
+	rr := httptest.NewRecorder()
+	mw.PolicyMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rr, dataPlaneRequest(http.MethodPost, "/api/v1/keys/abc/encrypt", userID, vaultID))
+
+	assert.True(t, nextCalled, "a deny on create must not block encrypt")
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+// TestPolicyMiddleware_CreateDenyStillBlocksExport pins that export stays
+// fail closed: a deny on create blocks both export routes on both shapes.
+func TestPolicyMiddleware_CreateDenyStillBlocksExport(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		path     string
+		resource model.PolicyResourceType
+	}{
+		{"/api/v1/keys/abc/export", model.PolicyResourceKeys},
+		{"/api/v1/vaults/prod/keys/abc/export", model.PolicyResourceKeys},
+		{"/api/v1/certificates/abc/export", model.PolicyResourceCertificates},
+		{"/api/v1/vaults/prod/certificates/abc/export", model.PolicyResourceCertificates},
+	}
+	for _, c := range cases {
+		t.Run(c.path, func(t *testing.T) {
+			t.Parallel()
+			mw, policySvc, roleSvc := setupDataPlaneMiddlewareTest(t)
+
+			userID, vaultID := uuid.New(), uuid.New()
+			policySvc.On("CheckAccess", mock.Anything, userID, c.resource, model.OpCreate, vaultID).
+				Return(authzServices.AccessDenied, nil)
+
+			nextCalled := false
+			rr := httptest.NewRecorder()
+			mw.PolicyMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextCalled = true
+			})).ServeHTTP(rr, dataPlaneRequest(http.MethodPost, c.path, userID, vaultID))
+
+			assert.False(t, nextCalled, "a deny on create must still block export")
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+			policySvc.AssertExpectations(t)
+			roleSvc.AssertNotCalled(t, "HasDataAction", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		})
 	}
 }

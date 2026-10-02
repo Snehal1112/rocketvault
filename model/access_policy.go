@@ -49,6 +49,8 @@ const (
 	OpVerify  PolicyOperation = "verify"
 	OpEncrypt PolicyOperation = "encrypt"
 	OpDecrypt PolicyOperation = "decrypt"
+	OpWrap    PolicyOperation = "wrap"
+	OpUnwrap  PolicyOperation = "unwrap"
 	OpImport  PolicyOperation = "import"
 	OpRenew   PolicyOperation = "renew"
 	OpManage  PolicyOperation = "manage"
@@ -107,7 +109,8 @@ func ValidatePolicyResourceType(s string) error {
 func ValidatePolicyOperation(s string) error {
 	switch PolicyOperation(s) {
 	case OpGet, OpList, OpSet, OpCreate, OpDelete, OpBackup, OpRestore, OpPurge,
-		OpRecover, OpRotate, OpSign, OpVerify, OpEncrypt, OpDecrypt, OpImport, OpRenew, OpManage:
+		OpRecover, OpRotate, OpSign, OpVerify, OpEncrypt, OpDecrypt, OpWrap, OpUnwrap,
+		OpImport, OpRenew, OpManage:
 		return nil
 	}
 	return fmt.Errorf("invalid operation %q", s)

@@ -501,6 +501,12 @@ func stripVaultNameSegment(path string) string {
 	return path[:idx+len(marker)-1] + rest[slash:]
 }
 
+// lastPathSegment returns the text after the final "/" in path. A path that
+// ends in "/" yields "", which matches no named sub-resource.
+func lastPathSegment(path string) string {
+	return path[strings.LastIndex(path, "/")+1:]
+}
+
 // resolvePolicy maps an HTTP request's method and URL path to the
 // PolicyResourceType and PolicyOperation used for access-policy evaluation.
 // Returns ("", "") when the route does not correspond to a managed resource.
@@ -527,28 +533,41 @@ func resolvePolicy(method, path string) (model.PolicyResourceType, model.PolicyO
 		return "", ""
 	}
 
-	// Map HTTP method (and special sub-paths) to an operation.
+	// Map HTTP method (and special sub-paths) to an operation. Sub-paths are
+	// matched against the whole last path segment, never a suffix of it, so
+	// "/unwrap" cannot resolve as "/wrap" and a vault name or ID that merely
+	// ends in an operation word cannot change the operation.
+	last := lastPathSegment(path)
 	var op model.PolicyOperation
 	switch {
-	case strings.HasSuffix(path, "/purge") && method == http.MethodDelete:
+	case last == "purge" && method == http.MethodDelete:
 		op = model.OpPurge
-	case strings.HasSuffix(path, "/restore") && method == http.MethodPost:
+	case last == "restore" && method == http.MethodPost:
 		op = model.OpRecover
-	case strings.HasSuffix(path, "/rotate") && method == http.MethodPost:
+	case last == "rotate" && method == http.MethodPost:
 		op = model.OpRotate
-	case strings.HasSuffix(path, "/import") && method == http.MethodPost:
+	case last == "import" && method == http.MethodPost:
 		op = model.OpImport
-	case strings.HasSuffix(path, "/renew") && method == http.MethodPost:
+	case last == "renew" && method == http.MethodPost:
 		op = model.OpRenew
-	// B33: sign and verify need their own operations so an explicit-deny
-	// policy naming them is evaluated the same over HTTP as it is on the CLI,
-	// which passes model.OpSign / model.OpVerify. Wrap and unwrap are
-	// deliberately absent: their CLI commands pass OpCreate, so the plain POST
-	// arm below already agrees with them.
-	case strings.HasSuffix(path, "/sign") && method == http.MethodPost:
+	// B33 and B79: every key crypto route and item backup resolves to its own
+	// operation, so an explicit-deny policy naming one is evaluated over HTTP
+	// exactly as on the CLI. Export is deliberately absent and stays the
+	// fail-closed create below, as does any other unknown POST sub-resource.
+	case last == "sign" && method == http.MethodPost:
 		op = model.OpSign
-	case strings.HasSuffix(path, "/verify") && method == http.MethodPost:
+	case last == "verify" && method == http.MethodPost:
 		op = model.OpVerify
+	case last == "encrypt" && method == http.MethodPost:
+		op = model.OpEncrypt
+	case last == "decrypt" && method == http.MethodPost:
+		op = model.OpDecrypt
+	case last == "wrap" && method == http.MethodPost:
+		op = model.OpWrap
+	case last == "unwrap" && method == http.MethodPost:
+		op = model.OpUnwrap
+	case last == "backup" && method == http.MethodPost:
+		op = model.OpBackup
 	case method == http.MethodGet:
 		op = model.OpGet
 	case method == http.MethodPost:
