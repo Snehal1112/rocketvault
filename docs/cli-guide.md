@@ -895,7 +895,7 @@ go run main.go keys export KEY-ID-HERE --file ./signer.pem.sealed
 
 The file is sealed by default, exactly like `secrets export`: the passphrase comes from `--passphrase-file`, then `ROCKETVAULT_EXPORT_PASSPHRASE`, then a prompt asked twice. Add `--version 2` for an older version, and `--vault <name>` for another vault. An existing file is never replaced unless you add `--force`. Turn the sealed file into the PEM file with `export open` (see "Open a sealed export file" below).
 
-To write the PEM file directly, add `--encrypt=false`; the command prints a warning, because the file then holds the private key in the clear. Every attempt that reaches the export command's own checks, allowed or refused, is recorded in the audit log; a failed login or a missing service container records nothing.
+To write the PEM file directly, add `--encrypt=false`; the command prints a warning, because the file then holds the private key in the clear. Every attempt that reaches the export command's own checks, allowed or refused, is recorded in the audit log; a failed login or a missing service container records nothing. An explicit deny on the create operation blocks export, but a deny on get does not (known issue B95 in `.claude/known-bugs.md`).
 
 For scripts, give the passphrase through `--passphrase-file` or `ROCKETVAULT_EXPORT_PASSPHRASE` so nothing prompts. See "How export files are written" below for the file-writing rules.
 
@@ -1009,6 +1009,8 @@ The output is sealed by default, exactly like `secrets export`; `--encrypt=false
 openssl pkey -in client.pem -out client.key
 sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' client.pem > client.crt
 ```
+
+An explicit deny on the create operation blocks export, but a deny on get does not (known issue B95 in `.claude/known-bugs.md`).
 
 **Running without a terminal.** The export passphrase comes from `--passphrase-file` or `ROCKETVAULT_EXPORT_PASSPHRASE`; for PKCS12 the bundle password comes from `--pkcs12-password-file`, `ROCKETVAULT_PKCS12_PASSWORD` or `--pkcs12-empty-password`. A user at a terminal who sets none of these is asked twice for the passphrase and then, for PKCS12, twice for the PKCS12 password. Without a terminal and without a source, the command fails and writes no file.
 

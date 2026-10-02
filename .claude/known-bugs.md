@@ -5364,7 +5364,8 @@ each remaining command's operation to its HTTP route.
 **Status**: Open; GitHub #61 (pre-existing, kept fail-closed on create on purpose)
 **Severity**: Medium
 **Files**: `internal/middleware/middleware.go` (`resolvePolicy`),
-`cmd/secrets/export.go`, `api/export.go`
+`cmd/secrets/export.go`, `cmd/certificates/export.go`,
+`cmd/keys/export.go`, `api/export.go`
 
 **Symptom**: `POST .../keys/{id}/export`, `POST .../certificates/{id}/export`
 and bulk `POST .../secrets/export` all resolve to `OpCreate`, so a deny on
@@ -5372,7 +5373,9 @@ create blocks them, but an explicit access-policy deny on
 `(keys|certificates|secrets, get)` does not. A principal explicitly denied
 `get` who still holds the export data action through a role can dump secret
 values or export a private key, over HTTP and over the CLI
-(`cmd/secrets/export.go` passes `OpCreate` with `ActionSecretsGet`).
+(`cmd/secrets/export.go` passes `OpCreate` with `ActionSecretsGet`; the
+`certificates export` and `keys export` CLI commands pass `OpCreate` too and
+share the gap).
 
 **Root cause**: export has no policy operation of its own and is classed as
 create.
