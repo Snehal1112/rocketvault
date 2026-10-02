@@ -24,6 +24,7 @@ import (
 	rvdb "rocketvault/internal/db"
 	"rocketvault/internal/keycache"
 	"rocketvault/internal/logging"
+	"rocketvault/internal/retry"
 	authServices "rocketvault/internal/services/auth"
 	userServices "rocketvault/internal/services/users"
 	vaultServices "rocketvault/internal/services/vaults"
@@ -889,10 +890,8 @@ func TestNewServiceContainer_LoginThrottleIsWired(t *testing.T) {
 
 	containerViper := viper.New()
 	containerViper.Set("jwt.key_source", "os_store")
-	// Failed logins count toward the shared database circuit breaker (B90),
-	// which would open after five of them and hide the throttle. Raise the
-	// threshold so this test observes the throttle alone.
-	containerViper.Set("retry.circuit_breaker.failure_threshold", 1000)
+	// The breaker keeps its default threshold of 5: failed logins are client
+	// outcomes and must not open it (B90), or the throttle would be hidden.
 	container, err := NewServiceContainer(Config{
 		Database:    rawDB,
 		Logger:      newTestLogger(),
@@ -930,4 +929,16 @@ func TestNewServiceContainer_LoginThrottleIsWired(t *testing.T) {
 	require.NoError(t, err)
 	_, err = auth.AuthenticateUser(ctx, "throttle-wiring", "Correct-Horse-9", code)
 	require.ErrorIs(t, err, authServices.ErrLoginThrottled)
+
+	// A flood of invalid bearer tokens leaves the breaker closed, so other
+	// database work still runs.
+	for i := 0; i < 20; i++ {
+		_, err = auth.ValidateSession(ctx, "not-a-token")
+		require.Error(t, err)
+		require.NotErrorIs(t, err, retry.ErrCircuitBreakerOpen)
+	}
+	_, err = container.GetUserRepository().ReadByUsername(ctx, "throttle-wiring")
+	require.NoError(t, err)
+	_, err = auth.AuthenticateUser(ctx, "another-user", "wrong-password", "123456")
+	require.NotErrorIs(t, err, retry.ErrCircuitBreakerOpen, "the database breaker must still be closed")
 }

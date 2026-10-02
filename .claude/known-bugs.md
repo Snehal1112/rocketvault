@@ -4833,8 +4833,11 @@ separate finding.
 
 ### B90 — Invalid bearer tokens and failed logins can open the shared database circuit breaker
 
-**Status**: Open (GitHub issue #56; found 2026-10-02 during the final review
-of the identity-sessions-hardening plan; not caused by that work).
+**Status**: Partially fixed 2026-10-02 (GitHub issue #56 stays open; found
+2026-10-02 during the final review of the identity-sessions-hardening plan;
+not caused by that work). The authentication path is fixed: the database
+breaker no longer counts client outcomes (see "Partial fix" below). Business
+errors from the other retry-wrapped services still count.
 **Severity**: Medium-High — an unauthenticated client can deny service to
 every database-backed operation, authenticated requests included, with a
 handful of requests per breaker timeout; no data is exposed or changed
@@ -4848,8 +4851,8 @@ handful of requests per breaker timeout; no data is exposed or changed
 
 **Symptom**: a few requests in a row with any bad bearer token (for example
 `Authorization: Bearer x`), or a few failed logins, open the database
-circuit breaker. While it is open (30s by default, 60s in the production
-preset), `ValidateSession` returns `ErrCircuitBreakerOpen`, so the
+circuit breaker. While it is open (60s with the built-in defaults, 30s with
+the shipped `.rocketvault.yaml.example`), `ValidateSession` returns `ErrCircuitBreakerOpen`, so the
 middleware answers 401 `Unauthorized: invalid token` to every request,
 valid tokens included, and every other retry-wrapped user, secret, key and
 certificate call fails fast with 503. One burst per timeout keeps the
@@ -4860,12 +4863,15 @@ service down.
 `ExecuteDatabaseOperation`). `ValidateSession` and `AuthenticateUser` run
 through it. `executeClosed` calls `recordFailure` for any non-nil error, so
 an invalid-token or wrong-password result counts as a database failure, not
-only a real storage fault. `FailureThreshold` is 3 by default
-(`.rocketvault.yaml.example`, `.rocketvault.docker.yaml.tmpl`,
-`DefaultConfig`) and 5 in `ProductionConfig`, and only a success resets the
-counter. The middleware calls `ValidateSession` for every bearer token before
-any authorization, so the input is unauthenticated, and the per-IP rate limit
-allows far more than three requests per 30 seconds. Ordinary business errors
+only a real storage fault. With no `retry.circuit_breaker` block (for
+example `.rocketvault.docker.yaml.tmpl`, which has none), `DefaultConfig`
+and `SetRetryDefaults` use `DefaultCircuitBreaker`: threshold 5, timeout
+60s; `ProductionConfig` is the same. A threshold of 3 with a 30s timeout
+comes from `DevelopmentConfig` and the shipped `.rocketvault.yaml.example`.
+Only a success resets the counter. The middleware calls `ValidateSession`
+for every bearer token before any authorization, so the input is
+unauthenticated, and the per-IP rate limit allows far more than a handful of
+requests per breaker timeout. Ordinary business errors
 on the other wrapped calls (not found, validation) count the same way.
 
 **Fix recipe**: count only infrastructure failures toward the breaker. For
@@ -4877,6 +4883,45 @@ Alternatively give authentication its own breaker, or validate the token
 signature outside the breaker so only the database reads are wrapped. Add a
 test that several invalid tokens in a row leave the breaker closed and a
 valid token still validates.
+
+**Partial fix (2026-10-02, login-rate-limiting Task 4 fix round)**: found
+again because the new per-account login backoff (#46) was unobservable: the
+breaker opened after five failed logins and answered before the 429.
+- `internal/retry`: new `ClientError(err)` marker (keeps the message,
+  unwraps, `Retryable() == false`, `ClientFault() == true`) and
+  `IsClientError`. New `CircuitBreaker.ExecuteClassified(fn, counts)`; a
+  rejected error neither counts nor resets the failure count, and in a
+  half-open trial it closes the breaker like a success. `Execute` is
+  unchanged (counts every error).
+- `RetryService.ExecuteDatabaseOperation` classifies with
+  `!IsClientError(err)`. The marker sits on the error itself, so it works
+  whether the policy is enabled (error wrapped in `ErrNonRetryable`) or
+  disabled (error returned as is).
+- `AuthenticationService` marks client outcomes: invalid credentials for a
+  missing user or wrong password, missing TOTP secret, malformed, wrong or
+  replayed code, `ThrottledError`, invalid token, malformed jti, revoked
+  session, deleted user, unknown, disabled or expired service account,
+  unknown refresh token, revoked or expired refresh session. Storage faults
+  on the same paths (lookup errors, revocation-check errors, step-claim
+  errors) are not marked and still count.
+- Deliberately not used as the classifier: `errors.Is(err, ErrNonRetryable)`
+  and `Retryable() == false`. Every unmatched plain error (an unknown SQL
+  error included) is wrapped in `ErrNonRetryable`, and `retry.NonRetryable`
+  also marks real storage faults that must not be repeated (session create,
+  session revocation after a user update). Skipping those would hide a
+  database outage.
+- Tests: `internal/retry/client_error_test.go`,
+  `TestRetryService_DatabaseBreaker_IgnoresClientOutcomes` and
+  `_StillOpensOnInfrastructureErrors`,
+  `TestValidateSessionAndRefresh_ClassifyClientOutcomes`, the container test
+  `TestNewServiceContainer_LoginThrottleIsWired` and the real-router test
+  `TestLoginRoute_PerAccountBackoff_Returns429ForKnownAndUnknownUsers`, both
+  at the default threshold.
+
+**Still open**: business errors (not found, validation, conflict) from the
+secret, key, certificate and user retry wrappers still count toward the
+shared database breaker until they are marked as client errors too; the
+other three breakers still use `Execute`.
 
 ---
 

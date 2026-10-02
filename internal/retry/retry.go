@@ -154,14 +154,26 @@ func NewCircuitBreaker(config CircuitBreakerConfig) *CircuitBreaker {
 // failure), and capped at config.HalfOpenRequests concurrent/total trial
 // calls while half-open.
 func (cb *CircuitBreaker) Execute(fn func() error) error {
+	return cb.ExecuteClassified(fn, nil)
+}
+
+// ExecuteClassified is Execute with a classifier that decides whether an
+// error counts as a breaker failure. An error the classifier rejects, such as
+// a client error, shows the backend answered: it neither counts nor resets
+// the failure count, and in a half-open trial it closes the breaker like a
+// success. A nil classifier counts every error.
+func (cb *CircuitBreaker) ExecuteClassified(fn func() error, counts func(error) bool) error {
 	admitted, halfOpen := cb.admit()
 	if !admitted {
 		return ErrCircuitBreakerOpen
 	}
-	if halfOpen {
-		return cb.finishHalfOpen(fn)
+	if counts == nil {
+		counts = func(error) bool { return true }
 	}
-	return cb.executeClosed(fn)
+	if halfOpen {
+		return cb.finishHalfOpen(fn, counts)
+	}
+	return cb.executeClosed(fn, counts)
 }
 
 // admit atomically decides whether to let a call through, performing the
@@ -197,12 +209,13 @@ func (cb *CircuitBreaker) admit() (admitted bool, halfOpen bool) {
 	}
 }
 
-func (cb *CircuitBreaker) executeClosed(fn func() error) error {
+func (cb *CircuitBreaker) executeClosed(fn func() error, counts func(error) bool) error {
 	err := fn()
-	if err != nil {
-		cb.recordFailure()
-	} else {
+	switch {
+	case err == nil:
 		cb.recordSuccess()
+	case counts(err):
+		cb.recordFailure()
 	}
 	return err
 }
@@ -219,9 +232,9 @@ func (cb *CircuitBreaker) executeClosed(fn func() error) error {
 // above FailureThreshold by the time a half-open trial is reached. The
 // trial whose reservation brought halfOpenCount up to
 // config.HalfOpenRequests still closes the breaker on success.
-func (cb *CircuitBreaker) finishHalfOpen(fn func() error) error {
+func (cb *CircuitBreaker) finishHalfOpen(fn func() error, counts func(error) bool) error {
 	err := fn()
-	if err != nil {
+	if err != nil && counts(err) {
 		cb.mu.Lock()
 		cb.failures++
 		cb.lastFailure = time.Now()
@@ -239,7 +252,7 @@ func (cb *CircuitBreaker) finishHalfOpen(fn func() error) error {
 	}
 	cb.mu.Unlock()
 
-	return nil
+	return err
 }
 
 func (cb *CircuitBreaker) recordFailure() {
@@ -457,6 +470,39 @@ func Retryable(err error) error {
 		return nil
 	}
 	return &retryableError{err: err, retryable: true}
+}
+
+// clientError marks a client or domain outcome, such as invalid credentials
+// or an invalid token. It keeps the cause's message and unwraps to it.
+type clientError struct {
+	err error
+}
+
+func (e *clientError) Error() string { return e.err.Error() }
+
+func (e *clientError) Unwrap() error { return e.err }
+
+// Retryable reports false: retrying cannot change a client outcome.
+func (e *clientError) Retryable() bool { return false }
+
+// ClientFault reports true, so circuit breakers do not count the error.
+func (e *clientError) ClientFault() bool { return true }
+
+// ClientError marks err as a client or domain outcome. Such an error is never
+// retried and never counts as a circuit breaker failure. Use it only for
+// results the caller caused, never for storage or network faults.
+func ClientError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &clientError{err: err}
+}
+
+// IsClientError reports whether err, or an error it wraps, is a client
+// outcome: it carries a ClientFault method that returns true.
+func IsClientError(err error) bool {
+	var ce interface{ ClientFault() bool }
+	return errors.As(err, &ce) && ce.ClientFault()
 }
 
 // NonRetryable wraps an error to indicate it should not be retried.

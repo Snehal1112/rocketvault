@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
+	"rocketvault/internal/retry"
 	"rocketvault/model"
 )
 
@@ -51,7 +53,7 @@ func (f *throttleFixture) service(withSteps bool) AuthenticationService {
 		TOTPService:       f.totp,
 		JWTService:        f.jwt,
 		Logger:            logging.InitLogger(),
-		LoginThrottle:     NewLoginThrottle(f.repo, f.clk.now),
+		LoginThrottle:     NewLoginThrottle(f.repo, nil, f.clk.now),
 	}
 	if withSteps {
 		cfg.TOTPStepRepository = f.steps
@@ -115,7 +117,7 @@ func TestAuthenticateUser_SuccessResetsThrottle(t *testing.T) {
 	svc := f.service(true)
 
 	for i := 0; i < 6; i++ {
-		NewLoginThrottle(f.repo, f.clk.now).RecordFailure(ctx, "alice")
+		NewLoginThrottle(f.repo, nil, f.clk.now).RecordFailure(ctx, "alice")
 	}
 	_, err := svc.AuthenticateUser(ctx, "alice", "password123", "123456")
 	require.ErrorIs(t, err, ErrLoginThrottled, "correct credentials inside the window are refused")
@@ -163,11 +165,23 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 		withSteps bool
 		wantMsg   string
 		wantIs    error
+		// wantClient marks a client outcome that must not count toward the
+		// database circuit breaker (B90).
+		wantClient bool
 	}{
 		{
 			name: "unknown user",
 			setup: func(f *throttleFixture) {
-				f.users.On("ReadByUsername", ctx, "alice").Return(model.User{}, errors.New("not found"))
+				f.users.On("ReadByUsername", ctx, "alice").Return(model.User{}, fmt.Errorf("user not found: %w", repositories.ErrNotFound))
+			},
+			withSteps:  true,
+			wantMsg:    "invalid credentials",
+			wantClient: true,
+		},
+		{
+			name: "user lookup database error",
+			setup: func(f *throttleFixture) {
+				f.users.On("ReadByUsername", ctx, "alice").Return(model.User{}, errors.New("database is locked"))
 			},
 			withSteps: true,
 			wantMsg:   "invalid credentials",
@@ -178,8 +192,9 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 				f.enrolledUser(ctx)
 				f.pw.On("ValidatePassword", "pw", "hashed").Return(errors.New("bad"))
 			},
-			withSteps: true,
-			wantMsg:   "invalid credentials",
+			withSteps:  true,
+			wantMsg:    "invalid credentials",
+			wantClient: true,
 		},
 		{
 			name: "empty TOTP secret",
@@ -187,9 +202,10 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 				f.users.On("ReadByUsername", ctx, "alice").Return(model.User{ID: uuid.New(), Username: "alice", PasswordHash: "hashed"}, nil)
 				f.pw.On("ValidatePassword", "pw", "hashed").Return(nil)
 			},
-			withSteps: true,
-			wantMsg:   "invalid TOTP code",
-			wantIs:    ErrMFANotEnrolled,
+			withSteps:  true,
+			wantMsg:    "invalid TOTP code",
+			wantIs:     ErrMFANotEnrolled,
+			wantClient: true,
 		},
 		{
 			name: "malformed TOTP code",
@@ -198,7 +214,8 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 				f.pw.On("ValidatePassword", "pw", "hashed").Return(nil)
 				f.totp.On("ValidateCodeWithStep", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(int64(0), false, errors.New("bad length"))
 			},
-			withSteps: true,
+			withSteps:  true,
+			wantClient: true,
 		},
 		{
 			name: "wrong TOTP code",
@@ -207,8 +224,9 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 				f.pw.On("ValidatePassword", "pw", "hashed").Return(nil)
 				f.totp.On("ValidateCodeWithStep", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(int64(0), false, nil)
 			},
-			withSteps: true,
-			wantMsg:   "invalid TOTP code",
+			withSteps:  true,
+			wantMsg:    "invalid TOTP code",
+			wantClient: true,
 		},
 		{
 			name: "replayed TOTP code",
@@ -218,8 +236,9 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 				f.totp.On("ValidateCodeWithStep", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(int64(100), true, nil)
 				f.steps.On("ClaimTOTPStep", mock.Anything, mock.Anything, int64(100)).Return(false, nil)
 			},
-			withSteps: true,
-			wantMsg:   "invalid TOTP code",
+			withSteps:  true,
+			wantMsg:    "invalid TOTP code",
+			wantClient: true,
 		},
 		{
 			name: "TOTP step claim error",
@@ -247,7 +266,7 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 			tt.setup(f)
 			// A prior failure must survive the attempt, so nothing on this
 			// path may reset the counter.
-			NewLoginThrottle(f.repo, f.clk.now).RecordFailure(ctx, "alice")
+			NewLoginThrottle(f.repo, nil, f.clk.now).RecordFailure(ctx, "alice")
 
 			_, err := f.service(tt.withSteps).AuthenticateUser(ctx, "alice", "pw", "123456")
 
@@ -260,6 +279,7 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 				assert.ErrorIs(t, err, tt.wantIs)
 			}
 			assert.Equal(t, 2, f.failures(t, "alice"), "the failure must be recorded exactly once")
+			assert.Equal(t, tt.wantClient, retry.IsClientError(err), "client outcomes, and only they, skip the breaker")
 		})
 	}
 }
@@ -274,7 +294,7 @@ func TestAuthenticateUser_SessionIssueFailureKeepsCounter(t *testing.T) {
 	f.totp.On("ValidateCodeWithStep", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(int64(100), true, nil)
 	f.steps.On("ClaimTOTPStep", mock.Anything, user.ID, int64(100)).Return(true, nil)
 	f.sessions.On("CreateSession", ctx, mock.AnythingOfType("*model.Session")).Return(errors.New("disk full"))
-	NewLoginThrottle(f.repo, f.clk.now).RecordFailure(ctx, "alice")
+	NewLoginThrottle(f.repo, nil, f.clk.now).RecordFailure(ctx, "alice")
 
 	_, err := f.service(true).AuthenticateUser(ctx, "alice", "pw", "123456")
 
@@ -311,5 +331,141 @@ func TestAuthenticateUser_NilThrottleDisablesBackoff(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		_, err := svc.AuthenticateUser(ctx, "ghost", "x", "123456")
 		require.NotErrorIs(t, err, ErrLoginThrottled)
+	}
+}
+
+// Accounts differ by case, so a successful login of alice must leave the
+// counter of a separate account Alice untouched.
+func TestAuthenticateUser_SuccessDoesNotResetOtherCaseAccount(t *testing.T) {
+	ctx := context.Background()
+	f := newThrottleFixture()
+	user := f.enrolledUser(ctx)
+	f.pw.On("ValidatePassword", "password123", "hashed").Return(nil)
+	f.totp.On("ValidateCodeWithStep", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(int64(100), true, nil)
+	f.steps.On("ClaimTOTPStep", mock.Anything, user.ID, int64(100)).Return(true, nil)
+	f.sessions.On("CreateSession", ctx, mock.AnythingOfType("*model.Session")).Return(nil)
+	f.jwt.On("GenerateToken", user.ID, "alice", user.Roles, mock.AnythingOfType("uuid.UUID")).Return("jwt_token", nil)
+	th := NewLoginThrottle(f.repo, nil, f.clk.now)
+	for i := 0; i < 6; i++ {
+		th.RecordFailure(ctx, "Alice")
+	}
+
+	_, err := f.service(true).AuthenticateUser(ctx, "alice", "password123", "123456")
+
+	require.NoError(t, err, "alice is not throttled by failures against Alice")
+	assert.Equal(t, 6, f.failures(t, "Alice"))
+	assert.ErrorIs(t, th.Check(ctx, "Alice"), ErrLoginThrottled)
+}
+
+// A client that cancels its request after the user lookup still has the
+// failure counted.
+func TestAuthenticateUser_CancelledRequestStillCountsFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	f := newThrottleFixture()
+	f.users.On("ReadByUsername", mock.Anything, "alice").Run(func(mock.Arguments) { cancel() }).
+		Return(model.User{}, errors.New("not found"))
+
+	_, err := f.service(true).AuthenticateUser(ctx, "alice", "pw", "123456")
+
+	require.Error(t, err)
+	assert.Equal(t, 1, f.failures(t, "alice"))
+}
+
+// A throttled login is a client outcome for the breaker as well.
+func TestAuthenticateUser_ThrottledIsClientError(t *testing.T) {
+	ctx := context.Background()
+	f := newThrottleFixture()
+	th := NewLoginThrottle(f.repo, nil, f.clk.now)
+	for i := 0; i < 6; i++ {
+		th.RecordFailure(ctx, "alice")
+	}
+	_, err := f.service(true).AuthenticateUser(ctx, "alice", "pw", "123456")
+	require.ErrorIs(t, err, ErrLoginThrottled)
+	assert.True(t, retry.IsClientError(err))
+}
+
+// Session validation and refresh mark the caller's mistakes as client
+// outcomes and keep storage faults counting toward the breaker (B90).
+func TestValidateSessionAndRefresh_ClassifyClientOutcomes(t *testing.T) {
+	ctx := context.Background()
+	userID := uuid.New()
+	sessionID := uuid.New()
+	claims := &JWTClaims{UserID: userID, Roles: []string{model.RoleUser}}
+	claims.ID = sessionID.String()
+
+	tests := []struct {
+		name       string
+		setup      func(f *throttleFixture)
+		call       func(svc AuthenticationService) error
+		wantClient bool
+	}{
+		{
+			name: "invalid token",
+			setup: func(f *throttleFixture) {
+				f.jwt.On("ValidateToken", "bad").Return(nil, errors.New("token is malformed"))
+			},
+			call:       func(svc AuthenticationService) error { _, err := svc.ValidateSession(ctx, "bad"); return err },
+			wantClient: true,
+		},
+		{
+			name: "revoked session",
+			setup: func(f *throttleFixture) {
+				f.jwt.On("ValidateToken", "tok").Return(claims, nil)
+				f.sessions.On("IsSessionRevoked", ctx, sessionID).Return(true, nil)
+			},
+			call:       func(svc AuthenticationService) error { _, err := svc.ValidateSession(ctx, "tok"); return err },
+			wantClient: true,
+		},
+		{
+			name: "revocation check database error",
+			setup: func(f *throttleFixture) {
+				f.jwt.On("ValidateToken", "tok").Return(claims, nil)
+				f.sessions.On("IsSessionRevoked", ctx, sessionID).Return(false, errors.New("database is locked"))
+			},
+			call: func(svc AuthenticationService) error { _, err := svc.ValidateSession(ctx, "tok"); return err },
+		},
+		{
+			name: "deleted user",
+			setup: func(f *throttleFixture) {
+				f.jwt.On("ValidateToken", "tok").Return(claims, nil)
+				f.sessions.On("IsSessionRevoked", ctx, sessionID).Return(false, nil)
+				f.users.On("Read", ctx, userID).Return(nil, fmt.Errorf("user not found: %w", repositories.ErrNotFound))
+			},
+			call:       func(svc AuthenticationService) error { _, err := svc.ValidateSession(ctx, "tok"); return err },
+			wantClient: true,
+		},
+		{
+			name: "user lookup database error",
+			setup: func(f *throttleFixture) {
+				f.jwt.On("ValidateToken", "tok").Return(claims, nil)
+				f.sessions.On("IsSessionRevoked", ctx, sessionID).Return(false, nil)
+				f.users.On("Read", ctx, userID).Return(nil, errors.New("database is locked"))
+			},
+			call: func(svc AuthenticationService) error { _, err := svc.ValidateSession(ctx, "tok"); return err },
+		},
+		{
+			name: "unknown refresh token",
+			setup: func(f *throttleFixture) {
+				f.sessions.On("GetSessionByRefreshToken", ctx, mock.Anything).Return(nil, fmt.Errorf("session not found or expired: %w", repositories.ErrNotFound))
+			},
+			call:       func(svc AuthenticationService) error { _, err := svc.RefreshAccessToken(ctx, "r"); return err },
+			wantClient: true,
+		},
+		{
+			name: "refresh lookup database error",
+			setup: func(f *throttleFixture) {
+				f.sessions.On("GetSessionByRefreshToken", ctx, mock.Anything).Return(nil, errors.New("database is locked"))
+			},
+			call: func(svc AuthenticationService) error { _, err := svc.RefreshAccessToken(ctx, "r"); return err },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newThrottleFixture()
+			tt.setup(f)
+			err := tt.call(f.service(true))
+			require.Error(t, err)
+			assert.Equal(t, tt.wantClient, retry.IsClientError(err))
+		})
 	}
 }

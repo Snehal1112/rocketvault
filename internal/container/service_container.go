@@ -478,7 +478,7 @@ func (c *ServiceContainer) initializeServices() error {
 
 	// Per-account failed-login backoff. The counter lives in the database, so
 	// it holds across restarts, server instances and the CLI.
-	c.loginThrottle = authServices.NewLoginThrottle(repositories.NewLoginFailureRepository(c.conn), time.Now)
+	c.loginThrottle = authServices.NewLoginThrottle(repositories.NewLoginFailureRepository(c.conn), c.logger, time.Now)
 
 	// Initialize authentication service
 	baseAuthService := authServices.NewAuthenticationService(authServices.AuthenticationConfig{

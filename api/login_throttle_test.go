@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,12 +29,10 @@ func (rr *replayRouter) loginFrom(t *testing.T, ip int, username, password, code
 // alike. The two throttled responses are identical, so they do not reveal
 // whether the account exists.
 func TestLoginRoute_PerAccountBackoff_Returns429ForKnownAndUnknownUsers(t *testing.T) {
-	// Failed logins count toward the shared database circuit breaker (B90),
-	// which would open after five of them and answer 403 first. Raise the
-	// threshold so this test observes the per-account throttle alone.
-	rr := newReplayRouterWith(t, func(v *viper.Viper) {
-		v.Set("retry.circuit_breaker.failure_threshold", 1000)
-	})
+	// The router runs with the default breaker threshold of 5. Failed logins
+	// are client outcomes and must not open it (B90), so the per-account 429
+	// is reached on the seventh attempt.
+	rr := newReplayRouter(t)
 	wrong := wrongCodeFor(t, rr.secret)
 
 	ip := 1

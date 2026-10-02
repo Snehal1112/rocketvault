@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	internalRetry "rocketvault/internal/retry"
+	"rocketvault/internal/services/auth"
 )
 
 // ---------------------------------------------------------------------------
@@ -192,4 +193,58 @@ func TestRetryService_CircuitBreaker_IndependentPerPolicy(t *testing.T) {
 	})
 	assert.NoError(t, execErr)
 	assert.Equal(t, 2, svcCallCount)
+}
+
+// ---------------------------------------------------------------------------
+// B90: client outcomes must not open the shared database breaker.
+// ---------------------------------------------------------------------------
+
+// A flood of invalid credentials, invalid tokens and throttled logins never
+// opens the database breaker, with the policy enabled or disabled, and a
+// following real operation still runs.
+func TestRetryService_DatabaseBreaker_IgnoresClientOutcomes(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		v := newCircuitBreakerTestViper(5, 1, time.Hour)
+		v.Set("retry.database.enabled", enabled)
+		svc, err := NewRetryService(v)
+		assert.NoError(t, err)
+
+		clientErrs := []error{
+			internalRetry.ClientError(errors.New("invalid credentials")),
+			internalRetry.ClientError(errors.New("invalid session: token is malformed")),
+			&auth.ThrottledError{RetryAfter: time.Minute},
+		}
+		for i := 0; i < 30; i++ {
+			execErr := svc.ExecuteDatabaseOperation(ctx, func() error { return clientErrs[i%len(clientErrs)] })
+			assert.True(t, internalRetry.IsClientError(execErr), "enabled=%v: got %v", enabled, execErr)
+		}
+
+		ran := false
+		execErr := svc.ExecuteDatabaseOperation(ctx, func() error { ran = true; return nil })
+		assert.NoError(t, execErr, "enabled=%v", enabled)
+		assert.True(t, ran, "enabled=%v: client outcomes must leave the breaker closed", enabled)
+	}
+}
+
+// Real database errors still open the breaker, retryable or not, with the
+// policy enabled or disabled.
+func TestRetryService_DatabaseBreaker_StillOpensOnInfrastructureErrors(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		for _, infraErr := range []error{
+			errors.New("dial tcp: connection refused"),
+			errors.New("sql: database is closed"),
+			internalRetry.NonRetryable(errors.New("failed to create session: disk I/O error")),
+		} {
+			v := newCircuitBreakerTestViper(5, 1, time.Hour)
+			v.Set("retry.database.enabled", enabled)
+			svc, err := NewRetryService(v)
+			assert.NoError(t, err)
+
+			for i := 0; i < 5; i++ {
+				_ = svc.ExecuteDatabaseOperation(ctx, func() error { return infraErr })
+			}
+			execErr := svc.ExecuteDatabaseOperation(ctx, func() error { return nil })
+			assert.ErrorIs(t, execErr, internalRetry.ErrCircuitBreakerOpen, "enabled=%v err=%v", enabled, infraErr)
+		}
+	}
 }

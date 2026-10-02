@@ -40,7 +40,10 @@ func (f *fakeFailureRepo) Get(_ context.Context, u string) (*model.LoginFailure,
 	return nil, repositories.ErrNotFound
 }
 
-func (f *fakeFailureRepo) RecordFailure(_ context.Context, u string, at, staleBefore time.Time) error {
+func (f *fakeFailureRepo) RecordFailure(ctx context.Context, u string, at, staleBefore time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if r, ok := f.rows[u]; ok {
@@ -56,7 +59,10 @@ func (f *fakeFailureRepo) RecordFailure(_ context.Context, u string, at, staleBe
 	return nil
 }
 
-func (f *fakeFailureRepo) Delete(_ context.Context, u string) error {
+func (f *fakeFailureRepo) Delete(ctx context.Context, u string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.rows, u)
@@ -94,14 +100,14 @@ func TestLoginDelay(t *testing.T) {
 func TestLoginThrottle_FreeAttemptsThenBackoff(t *testing.T) {
 	t.Parallel()
 	clk := &throttleClock{t: time.Unix(1_700_000_000, 0)}
-	th := NewLoginThrottle(newFakeFailureRepo(), clk.now)
+	th := NewLoginThrottle(newFakeFailureRepo(), nil, clk.now)
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		require.NoError(t, th.Check(ctx, "Alice"))
-		th.RecordFailure(ctx, "Alice")
+		require.NoError(t, th.Check(ctx, "alice"))
+		th.RecordFailure(ctx, "alice")
 	}
-	err := th.Check(ctx, "alice") // Case-insensitive key; 5 failures are still free.
+	err := th.Check(ctx, "alice") // 5 failures are still free.
 	require.NoError(t, err)
 
 	th.RecordFailure(ctx, "alice") // Sixth failure: 2s wait.
@@ -119,7 +125,7 @@ func TestLoginThrottle_AttemptsDuringWindowDoNotGrowCounter(t *testing.T) {
 	t.Parallel()
 	clk := &throttleClock{t: time.Unix(1_700_000_000, 0)}
 	repo := newFakeFailureRepo()
-	th := NewLoginThrottle(repo, clk.now)
+	th := NewLoginThrottle(repo, nil, clk.now)
 	ctx := context.Background()
 	for i := 0; i < 6; i++ {
 		th.RecordFailure(ctx, "admin")
@@ -139,7 +145,7 @@ func TestLoginThrottle_StaleCounterIsIgnoredAndResetClears(t *testing.T) {
 	t.Parallel()
 	clk := &throttleClock{t: time.Unix(1_700_000_000, 0)}
 	repo := newFakeFailureRepo()
-	th := NewLoginThrottle(repo, clk.now)
+	th := NewLoginThrottle(repo, nil, clk.now)
 	ctx := context.Background()
 	for i := 0; i < 8; i++ {
 		th.RecordFailure(ctx, "bob")
@@ -162,7 +168,7 @@ func TestLoginThrottle_RecordFailurePrunesStaleRows(t *testing.T) {
 	t.Parallel()
 	clk := &throttleClock{t: time.Unix(1_700_000_000, 0)}
 	repo := newFakeFailureRepo()
-	th := NewLoginThrottle(repo, clk.now)
+	th := NewLoginThrottle(repo, nil, clk.now)
 	ctx := context.Background()
 	th.RecordFailure(ctx, "sprayed-1")
 	th.RecordFailure(ctx, "sprayed-2")
@@ -174,26 +180,74 @@ func TestLoginThrottle_RecordFailurePrunesStaleRows(t *testing.T) {
 	assert.Contains(t, repo.rows, "fresh")
 }
 
-func TestLoginThrottle_KeyIsNormalizedAndCapped(t *testing.T) {
+// Usernames are case and whitespace sensitive, so distinct accounts that
+// differ only in case or spacing must have distinct counters.
+func TestLoginThrottle_KeyIsExactUsername(t *testing.T) {
 	t.Parallel()
+	clk := &throttleClock{t: time.Unix(1_700_000_000, 0)}
 	repo := newFakeFailureRepo()
-	th := NewLoginThrottle(repo, time.Now)
+	th := NewLoginThrottle(repo, nil, clk.now)
 	ctx := context.Background()
-	th.RecordFailure(ctx, strings.Repeat("x", 500))
-	th.RecordFailure(ctx, "  Carol \t")
-	for k := range repo.rows {
-		assert.LessOrEqual(t, len(k), 64)
+	for i := 0; i < 6; i++ {
+		th.RecordFailure(ctx, "Admin")
 	}
-	assert.Contains(t, repo.rows, "carol", "case and surrounding whitespace must not split the counter")
+	require.ErrorIs(t, th.Check(ctx, "Admin"), ErrLoginThrottled)
+	assert.NoError(t, th.Check(ctx, "admin"), "admin is a different account from Admin")
+	assert.NoError(t, th.Check(ctx, " Admin"), "a leading space names a different account")
+
+	th.RecordFailure(ctx, "admin")
+	th.Reset(ctx, "admin")
+	assert.ErrorIs(t, th.Check(ctx, "Admin"), ErrLoginThrottled, "a success on admin must not reset Admin")
+	assert.Equal(t, 6, repo.rows["Admin"].Failures)
 }
 
-// A key cut at 64 bytes must stay valid UTF-8, so a multi-byte name never
-// produces a broken key.
-func TestLoginThrottle_KeyCapKeepsValidUTF8(t *testing.T) {
+// Names longer than the key limit are stored as a fixed-size hash of the
+// whole name, so two long names that share a prefix never collide.
+func TestLoginThrottle_LongNamesAreHashedWithoutCollision(t *testing.T) {
 	t.Parallel()
-	key := throttleKey(strings.Repeat("é", 100))
-	assert.LessOrEqual(t, len(key), 64)
-	assert.True(t, strings.HasPrefix(strings.Repeat("é", 100), key))
+	clk := &throttleClock{t: time.Unix(1_700_000_000, 0)}
+	repo := newFakeFailureRepo()
+	th := NewLoginThrottle(repo, nil, clk.now)
+	ctx := context.Background()
+	prefix := strings.Repeat("x", 64)
+	for i := 0; i < 6; i++ {
+		th.RecordFailure(ctx, prefix+"-one")
+	}
+	require.ErrorIs(t, th.Check(ctx, prefix+"-one"), ErrLoginThrottled)
+	assert.NoError(t, th.Check(ctx, prefix+"-two"), "names sharing a 64-byte prefix must not share a counter")
+
+	th.RecordFailure(ctx, strings.Repeat("y", 500))
+	for k := range repo.rows {
+		assert.LessOrEqual(t, len(k), maxThrottleKeyLen)
+	}
+	assert.Len(t, repo.rows, 2)
+}
+
+// A short name that looks like a hashed key is hashed as well, so it can never
+// share a counter with a long name.
+func TestLoginThrottle_KeyPrefixCannotBeForged(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("z", 100)
+	forged := throttleKey(long)
+	assert.NotEqual(t, forged, throttleKey(forged))
+	assert.Equal(t, "carol", throttleKey("carol"))
+	assert.Equal(t, strings.Repeat("a", 64), throttleKey(strings.Repeat("a", 64)))
+}
+
+// The counter writes outlive a cancelled request, so a client that hangs up
+// after a failed check still has the failure counted.
+func TestLoginThrottle_WritesIgnoreRequestCancellation(t *testing.T) {
+	t.Parallel()
+	repo := newFakeFailureRepo()
+	th := NewLoginThrottle(repo, nil, time.Now)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	th.RecordFailure(ctx, "dave")
+	require.Contains(t, repo.rows, "dave", "a cancelled request must still count its failure")
+
+	th.Reset(ctx, "dave")
+	assert.NotContains(t, repo.rows, "dave", "a cancelled request must still clear the counter")
 }
 
 // A storage error on lookup fails open. The per-IP limiter still applies,
@@ -202,7 +256,7 @@ func TestLoginThrottle_LookupErrorFailsOpen(t *testing.T) {
 	t.Parallel()
 	repo := newFakeFailureRepo()
 	repo.getErr = errors.New("database is locked")
-	th := NewLoginThrottle(repo, time.Now)
+	th := NewLoginThrottle(repo, nil, time.Now)
 	assert.NoError(t, th.Check(context.Background(), "alice"))
 }
 

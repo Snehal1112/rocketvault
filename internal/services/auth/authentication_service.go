@@ -191,7 +191,12 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 		}
 		s.logger.WithField("username", username).Warn("Authentication failed: user not found")
 		s.recordLoginFailure(ctx, username)
-		return nil, fmt.Errorf("invalid credentials")
+		// Only a missing user is a client outcome. A lookup fault answers
+		// the same, but still counts toward the database breaker.
+		if errors.Is(err, repositories.ErrNotFound) {
+			return nil, retry.ClientError(errors.New("invalid credentials"))
+		}
+		return nil, errors.New("invalid credentials")
 	}
 
 	// Validate password
@@ -207,7 +212,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			"user_id":  user.ID.String(),
 		}).Warn("Authentication failed: invalid password")
 		s.recordLoginFailure(ctx, username)
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, retry.ClientError(errors.New("invalid credentials"))
 	}
 
 	// An empty secret makes every TOTP code computable by anyone, so an
@@ -227,7 +232,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			"user_id":  user.ID.String(),
 		}).Warn("Authentication failed: TOTP not enrolled")
 		s.recordLoginFailure(ctx, username)
-		return nil, &concealedTOTPError{cause: ErrMFANotEnrolled}
+		return nil, retry.ClientError(&concealedTOTPError{cause: ErrMFANotEnrolled})
 	}
 
 	// Validate TOTP code and learn which time step it belongs to.
@@ -241,7 +246,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 		}
 		s.logger.WithError(err).Error("TOTP validation error")
 		s.recordLoginFailure(ctx, username)
-		return nil, fmt.Errorf("authentication failed: %w", err)
+		return nil, retry.ClientError(fmt.Errorf("authentication failed: %w", err))
 	}
 
 	if !valid {
@@ -256,7 +261,7 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			"user_id":  user.ID.String(),
 		}).Warn("Authentication failed: invalid TOTP code")
 		s.recordLoginFailure(ctx, username)
-		return nil, errors.New(invalidTOTPCodeMessage)
+		return nil, retry.ClientError(errors.New(invalidTOTPCodeMessage))
 	}
 
 	// A code is single use: claiming its time step fails when this step or a
@@ -331,7 +336,7 @@ func (s *authenticationService) claimTOTPStep(ctx context.Context, user *model.U
 			"username": username,
 			"user_id":  user.ID.String(),
 		}).Warn("Authentication failed: replayed TOTP code")
-		return errors.New(invalidTOTPCodeMessage)
+		return retry.ClientError(errors.New(invalidTOTPCodeMessage))
 	}
 
 	return nil
@@ -418,14 +423,14 @@ func (s *authenticationService) ValidateSession(ctx context.Context, token strin
 	claims, err := s.jwtService.ValidateToken(token)
 	if err != nil {
 		s.logger.LogAuditError("", "validate_session", "failed", "Invalid session token", err)
-		return nil, fmt.Errorf("invalid session: %w", err)
+		return nil, retry.ClientError(fmt.Errorf("invalid session: %w", err))
 	}
 
 	// Check revocation using the session ID embedded in the JWT jti claim.
 	sessionID, err := uuid.Parse(claims.ID)
 	if err != nil {
 		s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "JWT jti is not a valid UUID", err)
-		return nil, fmt.Errorf("invalid session: malformed jti")
+		return nil, retry.ClientError(errors.New("invalid session: malformed jti"))
 	}
 
 	if slices.Contains(claims.Roles, model.RoleServiceAccount) {
@@ -439,15 +444,18 @@ func (s *authenticationService) ValidateSession(ctx context.Context, token strin
 		client, err := s.oauth2ClientRepo.GetByID(ctx, sessionID)
 		if err != nil {
 			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account client not found", err)
-			return nil, fmt.Errorf("service account not found or revoked")
+			if errors.Is(err, repositories.ErrNotFound) {
+				return nil, retry.ClientError(errors.New("service account not found or revoked"))
+			}
+			return nil, errors.New("service account not found or revoked")
 		}
 		if !client.Enabled {
 			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account disabled", nil)
-			return nil, fmt.Errorf("service account disabled")
+			return nil, retry.ClientError(errors.New("service account disabled"))
 		}
 		if client.ExpiresAt != nil && client.ExpiresAt.Before(time.Now()) {
 			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account expired", nil)
-			return nil, fmt.Errorf("service account expired")
+			return nil, retry.ClientError(errors.New("service account expired"))
 		}
 	} else {
 		// For user sessions, check the session revocation table.
@@ -458,7 +466,7 @@ func (s *authenticationService) ValidateSession(ctx context.Context, token strin
 		}
 		if revoked {
 			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Session is revoked", nil)
-			return nil, fmt.Errorf("session revoked")
+			return nil, retry.ClientError(errors.New("session revoked"))
 		}
 
 		// Tokens name a user that must still exist. SQLite keeps session rows
@@ -468,9 +476,9 @@ func (s *authenticationService) ValidateSession(ctx context.Context, token strin
 		if _, err := s.userRepo.Read(ctx, claims.UserID); err != nil {
 			if errors.Is(err, repositories.ErrNotFound) {
 				s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "User no longer exists", nil)
-			} else {
-				s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Could not load session user", err)
+				return nil, retry.ClientError(errors.New("invalid session"))
 			}
+			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Could not load session user", err)
 			return nil, errors.New("invalid session")
 		}
 	}
@@ -502,21 +510,24 @@ func (s *authenticationService) RefreshAccessToken(ctx context.Context, refreshT
 	if err != nil {
 		s.logger.LogAuditError("", "refresh_access_token", "failed", "Invalid or expired refresh token", err)
 		s.logger.WithError(err).Warn("Token refresh failed: invalid refresh token")
-		return nil, fmt.Errorf("invalid refresh token")
+		if errors.Is(err, repositories.ErrNotFound) {
+			return nil, retry.ClientError(errors.New("invalid refresh token"))
+		}
+		return nil, errors.New("invalid refresh token")
 	}
 
 	// Check if session is revoked
 	if session.Revoked {
 		s.logger.LogAuditError(session.UserID.String(), "refresh_access_token", "failed", "Session is revoked", nil)
 		s.logger.WithField("session_id", session.ID.String()).Warn("Token refresh failed: session revoked")
-		return nil, fmt.Errorf("session revoked")
+		return nil, retry.ClientError(errors.New("session revoked"))
 	}
 
 	// Check if session has expired
 	if time.Now().After(session.ExpiresAt) {
 		s.logger.LogAuditError(session.UserID.String(), "refresh_access_token", "failed", "Session expired", nil)
 		s.logger.WithField("session_id", session.ID.String()).Warn("Token refresh failed: session expired")
-		return nil, fmt.Errorf("session expired")
+		return nil, retry.ClientError(errors.New("session expired"))
 	}
 
 	// Get user information
@@ -524,7 +535,10 @@ func (s *authenticationService) RefreshAccessToken(ctx context.Context, refreshT
 	if err != nil {
 		s.logger.LogAuditError(session.UserID.String(), "refresh_access_token", "failed", "User not found", err)
 		s.logger.WithError(err).Error("Token refresh failed: user not found")
-		return nil, fmt.Errorf("user not found")
+		if errors.Is(err, repositories.ErrNotFound) {
+			return nil, retry.ClientError(errors.New("user not found"))
+		}
+		return nil, errors.New("user not found")
 	}
 
 	// Generate new access token with the existing session.ID as jti.

@@ -2,14 +2,16 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/sirupsen/logrus"
 
+	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
 )
 
@@ -23,9 +25,11 @@ const (
 	loginMaxDelay = 15 * time.Minute
 	// loginResetAfter forgets a counter whose last failure is this old.
 	loginResetAfter = 24 * time.Hour
-	// maxThrottleKeyLen bounds stored usernames in bytes, so spraying long
-	// names cannot grow rows without limit.
+	// maxThrottleKeyLen bounds stored keys in bytes, so spraying long names
+	// cannot grow rows without limit.
 	maxThrottleKeyLen = 64
+	// throttleKeyHashPrefix marks a key that is a hash of the username.
+	throttleKeyHashPrefix = "sha256:"
 )
 
 // ErrLoginThrottled is returned when an account is inside its backoff window.
@@ -47,6 +51,10 @@ func (e *ThrottledError) Is(target error) bool { return target == ErrLoginThrott
 // Retryable reports false, so the retry layer never repeats a throttled login.
 func (e *ThrottledError) Retryable() bool { return false }
 
+// ClientFault reports true: a throttled login is a client outcome, so it never
+// counts toward the database circuit breaker.
+func (e *ThrottledError) ClientFault() bool { return true }
+
 // loginDelay returns the wait imposed after the given number of consecutive failures.
 func loginDelay(failures int) time.Duration {
 	over := failures - loginFreeAttempts
@@ -67,30 +75,34 @@ func loginDelay(failures int) time.Duration {
 // LoginThrottle applies exponential backoff to repeated failed logins per
 // account. It is a delay, never a permanent lock.
 type LoginThrottle struct {
-	repo repositories.LoginFailureRepositoryInterface
-	now  func() time.Time
+	repo   repositories.LoginFailureRepositoryInterface
+	logger *logging.Logger
+	now    func() time.Time
 }
 
-// NewLoginThrottle builds a throttle; now is injectable for tests.
-func NewLoginThrottle(repo repositories.LoginFailureRepositoryInterface, now func() time.Time) *LoginThrottle {
+// NewLoginThrottle builds a throttle. A nil logger falls back to the standard
+// logrus logger, and now is injectable for tests.
+func NewLoginThrottle(repo repositories.LoginFailureRepositoryInterface, logger *logging.Logger, now func() time.Time) *LoginThrottle {
+	if logger == nil {
+		logger = logging.WrapLogrus(logrus.StandardLogger())
+	}
 	if now == nil {
 		now = time.Now
 	}
-	return &LoginThrottle{repo: repo, now: now}
+	return &LoginThrottle{repo: repo, logger: logger, now: now}
 }
 
-// throttleKey normalizes a username to its counter key. It is lower-cased,
-// trimmed and cut to maxThrottleKeyLen bytes on a rune boundary.
+// throttleKey maps a username to its counter key. Usernames are case and
+// whitespace sensitive, so the key is the exact name. A name longer than
+// maxThrottleKeyLen, or one that starts with the hash prefix, becomes a
+// fixed-size hash of the whole name. Long names therefore never collide, and
+// a short name can never forge the key of a long one.
 func throttleKey(username string) string {
-	k := strings.ToLower(strings.TrimSpace(username))
-	if len(k) <= maxThrottleKeyLen {
-		return k
+	if len(username) <= maxThrottleKeyLen && !strings.HasPrefix(username, throttleKeyHashPrefix) {
+		return username
 	}
-	cut := maxThrottleKeyLen
-	for cut > 0 && !utf8.RuneStart(k[cut]) {
-		cut--
-	}
-	return k[:cut]
+	sum := sha256.Sum256([]byte(username))
+	return throttleKeyHashPrefix + base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // Check returns a *ThrottledError while the account is inside its window.
@@ -100,7 +112,7 @@ func (t *LoginThrottle) Check(ctx context.Context, username string) error {
 	row, err := t.repo.Get(ctx, throttleKey(username))
 	if err != nil {
 		if !errors.Is(err, repositories.ErrNotFound) {
-			logrus.WithError(err).Warn("login throttle lookup failed")
+			t.logger.WithError(err).Warn("login throttle lookup failed")
 		}
 		return nil
 	}
@@ -117,22 +129,25 @@ func (t *LoginThrottle) Check(ctx context.Context, username string) error {
 
 // RecordFailure counts one failed attempt. The repository restarts a stale
 // counter in the same statement. It also prunes rows past the reset age,
-// which keeps the table bounded under username spraying.
+// which keeps the table bounded under username spraying. The write ignores
+// request cancellation, so a client that hangs up cannot dodge the count.
 func (t *LoginThrottle) RecordFailure(ctx context.Context, username string) {
+	ctx = context.WithoutCancel(ctx)
 	now := t.now()
 	staleBefore := now.Add(-loginResetAfter)
 	if err := t.repo.RecordFailure(ctx, throttleKey(username), now, staleBefore); err != nil {
-		logrus.WithError(err).Warn("recording login failure failed")
+		t.logger.WithError(err).Warn("recording login failure failed")
 		return
 	}
 	if _, err := t.repo.DeleteOlderThan(ctx, staleBefore); err != nil {
-		logrus.WithError(err).Warn("pruning stale login failures failed")
+		t.logger.WithError(err).Warn("pruning stale login failures failed")
 	}
 }
 
-// Reset clears the counter after a successful login.
+// Reset clears the counter after a successful login. Like RecordFailure, it
+// ignores request cancellation.
 func (t *LoginThrottle) Reset(ctx context.Context, username string) {
-	if err := t.repo.Delete(ctx, throttleKey(username)); err != nil {
-		logrus.WithError(err).Warn("clearing login failures failed")
+	if err := t.repo.Delete(context.WithoutCancel(ctx), throttleKey(username)); err != nil {
+		t.logger.WithError(err).Warn("clearing login failures failed")
 	}
 }
