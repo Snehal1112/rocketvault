@@ -165,10 +165,9 @@ func (c *ConfigurationValidator) ValidateMasterKey(encoded string) error {
 // authorization for the entire deployment with no error and nothing in the
 // logs pointing at the cause.
 //
-// Until the authorization layer accepts the base path as a runtime parameter
-// instead of a hardcoded constant (tracked as later work in this plan), a
-// mismatch here must be a loud boot failure rather than a silent
-// authorization bypass.
+// api.VerifyRouteAuthorization repeats this assertion for every caller of
+// api.Init, and additionally refuses any route whose authorization is not
+// classified. Both stay: this one fails before the database is touched.
 func validateAuthorizationBasePath(basePath string) error {
 	if basePath != authzServices.DataPlaneBasePath {
 		return fmt.Errorf(
@@ -442,6 +441,12 @@ func (b *bootstrap) initializeAPI(cfg *Config, app *app.App) error {
 		api.WithLogger(b.cfg.Logger),
 		api.WithMetricsEnabled(b.monitoringCfg.EnableMetrics),
 	)
+
+	// Refuse to serve a route whose authorization nobody classified. See
+	// api.VerifyRouteAuthorization and B80 in .claude/known-bugs.md.
+	if err := api.VerifyRouteAuthorization(app.GetRouter(), cfg.BasePath); err != nil {
+		return fmt.Errorf("refusing to start: %w", err)
+	}
 
 	logrus.Info("API layer initialized successfully")
 	return nil

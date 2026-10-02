@@ -281,6 +281,40 @@ func TestVerifyRouteAuthorization_PublicEntriesMatchPublicRouteTable(t *testing.
 	}
 }
 
+// TestVerifyRouteAuthorization_RejectsPublicPathWithoutEntry exercises the
+// standalone public path branch. With no routes and an empty allow-list, no
+// other check fires, so every middleware public path must be reported on its
+// own, even though no route serves it.
+func TestVerifyRouteAuthorization_RejectsPublicPathWithoutEntry(t *testing.T) {
+	withAllowList(t, nil)
+
+	err := VerifyRouteAuthorization(mux.NewRouter(), "/api/v1")
+	require.Error(t, err)
+	public := middleware.PublicPaths()
+	require.NotEmpty(t, public)
+	lines := strings.Split(err.Error(), "\n")
+	require.Len(t, lines, len(public)+1, err.Error())
+	for _, p := range public {
+		assert.Contains(t, err.Error(), "public path "+p+" has no public entry in nonDataPlaneRoutes")
+	}
+}
+
+// TestVerifyRouteAuthorization_RejectsPublicPathWithGatedEntryOnly proves a
+// public path is reported when its only allow-list entry is not public. The
+// route is not registered, so the walk raises nothing for it.
+func TestVerifyRouteAuthorization_RejectsPublicPathWithGatedEntryOnly(t *testing.T) {
+	path := "/api/v1/users/login"
+	require.Contains(t, middleware.PublicPaths(), path)
+	withAllowList(t, []routeEntry{
+		{Route: RouteInfo{Method: http.MethodPost, Path: path}, Access: RouteAccessAdmin, Gate: "test", Optional: true},
+	})
+
+	err := VerifyRouteAuthorization(mux.NewRouter(), "/api/v1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "public path "+path+" has no public entry in nonDataPlaneRoutes")
+	assert.NotContains(t, err.Error(), "POST "+path)
+}
+
 // TestVerifyRouteAuthorization_OnlyMetricsIsOptional pins that the only route
 // allowed to be absent is the configuration-gated metrics endpoint.
 func TestVerifyRouteAuthorization_OnlyMetricsIsOptional(t *testing.T) {

@@ -24,9 +24,9 @@ const (
 
 // DataPlaneBasePath is the API version prefix stripped from request paths
 // before route-to-data-action mapping. It must match the base path the API
-// is actually served under (api.WithBasePath), or every data-plane route
-// silently falls through to RouteUnmanaged, bypassing the deny-by-default
-// gate this package drives.
+// is served under, or every data-plane route would fall through to
+// RouteUnmanaged. Startup refuses a mismatch twice: in
+// bootstrap.validateAuthorizationBasePath and in api.VerifyRouteAuthorization.
 const DataPlaneBasePath = "/api/v1"
 
 // MapRouteToDataAction maps an HTTP method and path to the single Azure data

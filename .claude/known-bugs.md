@@ -5224,6 +5224,50 @@ pick its operation with this in mind. The router walk pins the current
 
 ---
 
+### B80 — Non-data-plane routes failed open, and a vault named login, health, refresh or register was unmanageable
+
+**Status**: Fixed 2026-10-02 (GitHub #50)
+**Severity**: Medium (design; no exploitable instance was found). Coverage of
+admin-only routes depended on every handler remembering its own check.
+**Files**: `internal/middleware/middleware.go` (`IsPublicPath`,
+`isHealthProbe`, both skip lists), `api/route_authorization.go` (new),
+`bootstrap/bootstrap.go` (`initializeAPI`), `model/vault.go`
+(`ValidateNewVaultName`), `internal/services/vaults/vault_service.go`
+
+**Symptom**: `ValidateEndpointAccess` allowed unrecognized paths,
+`resolvePolicy` returned an empty pair for them and `PolicyMiddleware`
+passed them through, so `/audit`, `/access-policies`, `/service-accounts`,
+`/vault-provisioning-grants` and `/jwks/rotate` were protected only by an
+admin check inside each handler. A new route that forgot the check would have
+been open to any authenticated user. Separately, the public-path bypass used
+`HasSuffix`/`Contains`, so `DELETE /api/v1/vaults/login` skipped
+authentication and then failed closed with 401 in `ApiSessionRequired`: a
+vault with one of those names could not be managed over HTTP.
+
+**What was fixed**: `api.VerifyRouteAuthorization` walks the real router and
+requires every route to be either a vault data-plane route with a mapped data
+action or an entry in `nonDataPlaneRoutes`, which names its gate. It also
+refuses method-less leaf routes, stale entries, a wrong base path, and any
+disagreement with the middleware's public set. It runs in a unit test and in
+`bootstrap.initializeAPI`, which refuses to start on an error. Public paths
+and health probes match exactly. New vaults may not be named `login`,
+`health`, `refresh` or `register`; existing ones keep working.
+
+**Design note**: the middleware is not made default-deny. Admin, self-service
+and vault-management decisions stay in the handlers, which already make them
+correctly; the allow-list makes forgetting to classify a route a test and
+boot failure instead of a silent hole. The check reads only the router: it
+cannot see whether a route was registered on a router that carries the
+authentication chain. That residual risk is covered by
+`TestPublicRoutes_ExactMatchingKeepsEveryRouteClassification`
+(`api/public_paths_test.go`), which records for every route whether it sits
+behind the authentication chain and checks that against the public route
+table, so the check's signature was not widened. Building the allow-list surfaced two follow-ups, tracked as B96
+(self-service user routes are admin-only) and B97 (`/health/database` leaks
+driver error text).
+
+---
+
 ### B94 — CLI and HTTP evaluate different policy operations for some commands
 
 **Status**: Partially fixed 2026-10-02 (part a); parts b and c open; GitHub #60
@@ -5276,6 +5320,60 @@ create.
 **Fix recipe**: evaluate both create and get (or add a dedicated export
 operation) for these routes. Owner decision, since either choice changes which
 existing denies take effect.
+
+---
+
+### B96 — Non-admin users cannot list or revoke their own sessions or read or update their own profile
+
+**Status**: Open; GitHub #62
+**Severity**: Medium — fails closed, so nothing is exposed, but a non-admin
+cannot revoke a stolen session or change its own password over HTTP.
+**Files**: `internal/services/authorization/rbac_service.go`
+(`mapEndpointToPermission`, `getDefaultRolePermissions`),
+`internal/middleware/middleware.go` (`AuthorizationMiddleware`),
+`api/context.go` (`ApiSessionRequired`), `api/users.go`
+
+**Symptom**: `GET` and `DELETE /api/v1/users/sessions`,
+`DELETE /api/v1/users/sessions/{session_id}`, and `GET` and
+`PUT /api/v1/users/{user_id}` return 403 for every non-admin, including a
+caller acting on its own sessions or its own profile. The handlers are written
+for self-service: `listUserSessions`, `revokeAllSessions` and `revokeSession`
+scope to the caller, and `getUser` and `updateUser` allow the profile owner.
+The RBAC gate refuses before any of them runs.
+
+**Root cause**: `mapEndpointToPermission` maps every `/users` path by method
+to `users:read`, `users:update` or `users:delete`, and only the admin role
+holds those permissions. `AuthorizationMiddleware` and `ApiSessionRequired`
+both call `ValidateEndpointAccess` before the handler. Relates to B72, whose
+ownership fix is what makes a carve-out safe, and to the B73 note that a
+non-admin cannot self-recover on a remote deployment.
+
+**Fix recipe**: add a self-service carve-out in the RBAC mapping for these
+five routes, keep the ownership check in each handler as the gate, and change
+their `nonDataPlaneRoutes` entries to `RouteAccessAnySession` with the handler
+named as the gate. Test own and foreign records for every route.
+
+---
+
+### B97 — `/health/database` returns raw driver error text to any authenticated caller
+
+**Status**: Open; GitHub #63
+**Severity**: Low — needs a session; information disclosure only
+**Files**: `internal/health/health.go` (`CheckDatabaseHealth`),
+`api/health.go` (`DatabaseCheck`)
+
+**Symptom**: `GET /api/v1/health/database` needs only a session and has no
+handler check. When the database ping fails, the response carries
+`ping_error` set to `err.Error()`, the raw driver or network error, which can
+include host names, addresses, ports or driver internals. The response also
+carries connection pool statistics.
+
+**Root cause**: `CheckDatabaseHealth` copies `err.Error()` into the result
+map, and `DatabaseCheck` writes that map to the client unchanged.
+
+**Fix recipe**: admin-gate the route, or drop the error text from the response
+and log it server-side. Update the route's `nonDataPlaneRoutes` entry to
+match.
 
 ---
 

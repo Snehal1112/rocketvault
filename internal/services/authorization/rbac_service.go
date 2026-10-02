@@ -187,6 +187,12 @@ func (s *rbacService) GetRolePermissions(role string) []Permission {
 // Returns:
 //
 //	An error if access is denied, nil if access is granted.
+//
+// An unrecognized path is allowed here on purpose: this is the global-role
+// gate, and every route it does not recognize is either a vault data-plane
+// route (PolicyMiddleware) or a handler-authorized route listed in
+// api.nonDataPlaneRoutes, which api.VerifyRouteAuthorization enforces at
+// startup.
 func (s *rbacService) ValidateEndpointAccess(roles []string, method, path string) error {
 	permission := s.mapEndpointToPermission(method, path)
 	if permission == "" {

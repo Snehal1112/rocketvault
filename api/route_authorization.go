@@ -87,7 +87,8 @@ var nonDataPlaneRoutes = []routeEntry{
 	// Frontend configuration is public and rate limited per client IP.
 	{Route: RouteInfo{http.MethodGet, "/api/v1/config"}, Access: RouteAccessPublic, Gate: "Config router, no authentication chain"},
 
-	// Health probes are public; the database probe needs a session.
+	// Health probes are public; the database probe needs a session. B97
+	// tracks the driver error text the database probe returns.
 	{Route: RouteInfo{http.MethodGet, "/api/v1/health"}, Access: RouteAccessPublic, Gate: "middleware.IsPublicPath"},
 	{Route: RouteInfo{http.MethodGet, "/api/v1/health/live"}, Access: RouteAccessPublic, Gate: "middleware.IsPublicPath"},
 	{Route: RouteInfo{http.MethodGet, "/api/v1/health/ready"}, Access: RouteAccessPublic, Gate: "middleware.IsPublicPath"},
@@ -114,7 +115,8 @@ var nonDataPlaneRoutes = []routeEntry{
 	// Login and refresh are public. Every other /users route needs a users:*
 	// RBAC permission, which only the admin role holds. The session and
 	// profile handlers also confine a caller to its own records, but the
-	// RBAC gate runs first and refuses every non-admin.
+	// RBAC gate runs first and refuses every non-admin. B96 tracks opening
+	// those routes to their owners.
 	{Route: RouteInfo{http.MethodPost, "/api/v1/users/login"}, Access: RouteAccessPublic, Gate: "middleware.IsPublicPath"},
 	{Route: RouteInfo{http.MethodPost, "/api/v1/users/refresh"}, Access: RouteAccessPublic, Gate: "middleware.IsPublicPath"},
 	{Route: RouteInfo{http.MethodGet, "/api/v1/users"}, Access: RouteAccessAdmin, Gate: "listUsers admin check and " + usersRBACGate},
