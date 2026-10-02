@@ -4407,6 +4407,40 @@ saved.
 
 ---
 
+### B84 — Secret import skipped create validation and CSV export emitted spreadsheet formulas
+
+**Status**: Fixed 2026-10-02 (GitHub #48), plan
+`docs/superpowers/plans/2026-09-30-secrets-and-error-responses.md`
+**Severity**: Medium — import stored names, values and tag sets that create
+refuses, and a secret value could execute as a formula when its CSV export
+was opened in a spreadsheet
+**Files**: `internal/services/secrets/secret_service.go` (`ImportSecrets`,
+`ExportSecrets`, `csvFormulaGuard`, `csvFormulaUnguard`)
+
+**Symptom**: import accepted names, values and tag counts that
+`CreateSecret` rejects. CSV export cells starting with `=`, `+`, `-` or `@`
+were evaluated as formulas by spreadsheet software.
+
+**Root cause**: `ImportSecrets` only checked for an empty name or value, and
+the export wrote raw cells.
+
+**Fix**: `ImportSecrets` runs `ValidateSecretCreate` on each item and reports
+`Invalid '<name>': ...` errors and `FailedCount`. Export wraps each CSV cell
+in `csvFormulaGuard` (a leading `=`, `+`, `-`, `@`, tab or `'` gets one `'`
+prefix) and import reverses it with `csvFormulaUnguard`. Both plain and
+sealed CSV exports use the same guard. Tests:
+`internal/services/secrets/csv_formula_guard_test.go` and
+`csv_formula_roundtrip_test.go`.
+
+**Accepted behavior change**: CSV exports now carry a leading `'` on guarded
+cells. Importing a CSV written by an older version whose cell begins with `'`
+loses that one quote. JSON exports are unchanged.
+
+**Deferred**: `UpdateSecret` is still not atomic across the version, secret
+and tag writes. It is recorded here and not fixed in this plan.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

@@ -684,14 +684,14 @@ func (s *secretService) ExportSecrets(ctx context.Context, req ExportSecretsRequ
 		}
 
 		for _, secret := range secretsList {
-			row := []string{escapeCR(secret.Name), escapeCR(secret.Value)}
+			row := []string{csvFormulaGuard(escapeCR(secret.Name)), csvFormulaGuard(escapeCR(secret.Value))}
 			if req.IncludeTags {
 				tagsField, tagErr := csvEncodeTags(secret.Tags)
 				if tagErr != nil {
 					s.logger.LogAuditError(req.Scope.ActorID().String(), "export_secrets", "failed", "Failed to encode tags", tagErr)
 					return nil, fmt.Errorf("failed to encode tags for %q: %w", secret.Name, tagErr)
 				}
-				row = append(row, tagsField)
+				row = append(row, csvFormulaGuard(tagsField))
 			}
 			if err := writer.Write(row); err != nil {
 				s.logger.LogAuditError(req.Scope.ActorID().String(), "export_secrets", "failed", "Failed to write CSV row", err)
@@ -828,11 +828,11 @@ func (s *secretService) ImportSecrets(ctx context.Context, req ImportSecretsRequ
 			}
 
 			secret := importSecret{
-				Name:  unescapeCR(record[0]),
-				Value: unescapeCR(record[1]),
+				Name:  unescapeCR(csvFormulaUnguard(record[0])),
+				Value: unescapeCR(csvFormulaUnguard(record[1])),
 			}
 			if hasTags && len(record) > 2 && record[2] != "" {
-				tags, tagErr := csvDecodeTags(record[2])
+				tags, tagErr := csvDecodeTags(csvFormulaUnguard(record[2]))
 				if tagErr != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("Line %d: invalid tags: %v", lineNum, tagErr))
 					continue
@@ -1012,6 +1012,28 @@ func (s *secretService) PurgeSecret(ctx context.Context, secretID uuid.UUID, sco
 	s.logger.LogAuditInfo(scope.ActorID().String(), "purge_secret", "success",
 		fmt.Sprintf("Secret purged: %s", secretID))
 	return nil
+}
+
+// csvFormulaGuard prefixes a single quote to a cell a spreadsheet would
+// evaluate as a formula. A cell already starting with a quote is prefixed too,
+// so csvFormulaUnguard can strip exactly one quote and restore every input.
+func csvFormulaGuard(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\'':
+		return "'" + s
+	}
+	return s
+}
+
+// csvFormulaUnguard reverses csvFormulaGuard by stripping one leading quote.
+func csvFormulaUnguard(s string) string {
+	if strings.HasPrefix(s, "'") {
+		return s[1:]
+	}
+	return s
 }
 
 // crEscape is the sentinel byte escapeCR/unescapeCR use to hide a literal CR
