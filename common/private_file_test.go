@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -76,7 +77,7 @@ func TestWritePrivateFile_NeverFollowsASymlink(t *testing.T) {
 	assert.Equal(t, "keep", string(got))
 }
 
-func TestWritePrivateFile_FailureLeavesNothingBehind(t *testing.T) {
+func TestWritePrivateFile_TempCreateFailureLeavesNothingBehind(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
@@ -141,4 +142,22 @@ func TestWritePrivateFile_ErrorsCarryNoContent(t *testing.T) {
 	err := WritePrivateFile(path, []byte("SECRET-KEY-MATERIAL"), true)
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "SECRET-KEY-MATERIAL")
+}
+
+func TestIsHardLinkUnsupported(t *testing.T) {
+	for _, errno := range []syscall.Errno{syscall.EPERM, syscall.ENOTSUP, syscall.EOPNOTSUPP} {
+		err := &os.LinkError{Op: "link", Old: "a", New: "b", Err: errno}
+		assert.True(t, isHardLinkUnsupported(err), errno.Error())
+	}
+	for _, errno := range []syscall.Errno{syscall.EEXIST, syscall.EACCES, syscall.ENOENT, syscall.EXDEV} {
+		err := &os.LinkError{Op: "link", Old: "a", New: "b", Err: errno}
+		assert.False(t, isHardLinkUnsupported(err), errno.Error())
+	}
+	assert.False(t, isHardLinkUnsupported(nil))
+}
+
+func TestErrHardLinksUnsupported_IsAFixedMessage(t *testing.T) {
+	assert.Equal(t,
+		"the output filesystem does not support hard links; choose another location or use --force",
+		ErrHardLinksUnsupported.Error())
 }
