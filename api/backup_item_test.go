@@ -500,7 +500,7 @@ func TestRestoreSecretHandler_InvalidBlob_Returns400(t *testing.T) {
 	secretRepo := &mockSecretRepo{}
 	c := newBackupCtxWithSecret(secretRepo)
 	w := httptest.NewRecorder()
-	// Base64 string that decodes to invalid JSON.
+	// An unsealed blob, so the seal refuses it before any decoding.
 	badBlob := "dGhpcyBpcyBub3QgYW4gZW52ZWxvcGU=" // "this is not an envelope"
 	body, _ := json.Marshal(map[string]string{"blob": badBlob})
 	r := httptest.NewRequest(http.MethodPost, "/secrets/restore", bytes.NewReader(body))
@@ -934,6 +934,7 @@ func TestRestoreKeyHandler_InvalidBlob_Returns400(t *testing.T) {
 	keyRepo := &mockKeyRepo{}
 	c := newBackupCtxWithKey(keyRepo)
 	w := httptest.NewRecorder()
+	// An unsealed blob, so the seal refuses it before any decoding.
 	badBlob := "dGhpcyBpcyBub3QgYW4gZW52ZWxvcGU=" // "this is not an envelope"
 	body, _ := json.Marshal(map[string]string{"blob": badBlob})
 	r := httptest.NewRequest(http.MethodPost, "/keys/restore", bytes.NewReader(body))
@@ -1130,6 +1131,7 @@ func TestRestoreCertificateHandler_InvalidBlob_Returns400(t *testing.T) {
 	certRepo := &mockCertRepo{}
 	c := newBackupCtxWithCert(certRepo)
 	w := httptest.NewRecorder()
+	// An unsealed blob, so the seal refuses it before any decoding.
 	badBlob := "dGhpcyBpcyBub3QgYW4gZW52ZWxvcGU="
 	body, _ := json.Marshal(map[string]string{"blob": badBlob})
 	r := httptest.NewRequest(http.MethodPost, "/certificates/restore", bytes.NewReader(body))

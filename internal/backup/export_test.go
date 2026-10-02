@@ -24,3 +24,9 @@ func (s *ItemBackupService) ExportedSealBlob(inner string) (string, error) {
 func (s *ItemBackupService) ExportedOpenBlob(blob string) (string, error) {
 	return s.openBlob(blob)
 }
+
+// ExportedSealKey returns the derived seal key, so a test can pin the
+// derivation against a fixed reference value.
+func (s *ItemBackupService) ExportedSealKey() []byte {
+	return s.sealKey
+}

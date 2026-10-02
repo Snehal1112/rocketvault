@@ -104,6 +104,11 @@ func backupSecretHandler(c *Context, w http.ResponseWriter, r *http.Request) {
 	// scoped secret route uses for an out-of-scope ID.
 	blob, err := svc.BackupSecret(r.Context(), secretID, userID, vaultID)
 	if err != nil {
+		// An unconfigured seal key is a server fault, not a missing item.
+		if errors.Is(err, backup.ErrSealKeyUnset) {
+			c.SetInternalError(err)
+			return
+		}
 		c.SetNotFound("secret")
 		return
 	}
@@ -178,6 +183,11 @@ func backupKeyHandler(c *Context, w http.ResponseWriter, r *http.Request) {
 	// route uses for an out-of-scope ID.
 	blob, err := svc.BackupKey(r.Context(), keyID, userID, vaultID)
 	if err != nil {
+		// An unconfigured seal key is a server fault, not a missing item.
+		if errors.Is(err, backup.ErrSealKeyUnset) {
+			c.SetInternalError(err)
+			return
+		}
 		c.SetNotFound("key")
 		return
 	}
@@ -252,6 +262,11 @@ func backupCertificateHandler(c *Context, w http.ResponseWriter, r *http.Request
 	// scoped certificate route uses for an out-of-scope ID.
 	blob, err := svc.BackupCertificate(r.Context(), certID, userID, vaultID)
 	if err != nil {
+		// An unconfigured seal key is a server fault, not a missing item.
+		if errors.Is(err, backup.ErrSealKeyUnset) {
+			c.SetInternalError(err)
+			return
+		}
 		c.SetNotFound("certificate")
 		return
 	}

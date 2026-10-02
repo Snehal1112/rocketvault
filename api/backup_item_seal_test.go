@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
+	"rocketvault/app"
 	"rocketvault/internal/backup"
 	"rocketvault/internal/repositories"
 	"rocketvault/model"
@@ -147,4 +148,68 @@ func TestRestoreCertificateHandler_ForeignMasterKey_Returns400(t *testing.T) {
 	assert.False(t, created, "a rejected blob must not reach the repository")
 	assert.NotContains(t, w.Body.String(), strings.TrimPrefix(blob, "rvb2."),
 		"the response must not echo the blob")
+}
+
+// TestBackupHandlers_UnsetSealKey_Returns500 pins that a server with no seal
+// key reports a server fault on backup, not a missing item. The item exists,
+// so a 404 would send the caller looking for the wrong problem.
+func TestBackupHandlers_UnsetSealKey_Returns500(t *testing.T) {
+	userID := uuid.MustParse(secretHTestUserID)
+	secretRepo := &mockSecretRepo{
+		readFn: func(_ context.Context, id uuid.UUID) (*model.Secret, error) {
+			return &model.Secret{ID: id, Name: "s", Value: "v", UserID: userID}, nil
+		},
+	}
+	keyRepo := &mockKeyRepo{
+		readFn: func(_ context.Context, id uuid.UUID) (*model.Key, error) {
+			return &model.Key{ID: id, Name: "k", Type: "RSA", UserID: userID}, nil
+		},
+	}
+	certRepo := &mockCertRepo{
+		readFn: func(_ context.Context, id uuid.UUID) (*model.Certificate, error) {
+			return &model.Certificate{ID: id, Name: "c", UserID: userID}, nil
+		},
+	}
+	// Deliberately unsealed: SetSealKey is never called.
+	svc := backup.NewItemBackupService(secretRepo, keyRepo, certRepo, &mockVersionRepo{})
+
+	cases := map[string]struct {
+		params  func(id string) *ApiParams
+		handler func(c *Context, w http.ResponseWriter, r *http.Request)
+	}{
+		"secret": {
+			params:  func(id string) *ApiParams { return &ApiParams{SecretID: id, PerPage: 60} },
+			handler: backupSecretHandler,
+		},
+		"key": {
+			params:  func(id string) *ApiParams { return &ApiParams{KeyID: id, PerPage: 60} },
+			handler: backupKeyHandler,
+		},
+		"certificate": {
+			params:  func(id string) *ApiParams { return &ApiParams{CertificateID: id, PerPage: 60} },
+			handler: backupCertificateHandler,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := &Context{
+				App: &app.App{ServiceContainer: &backupItemContainer{
+					secretSvcTestContainer: &secretSvcTestContainer{},
+					backupSvc:              svc,
+				}},
+				Claims: RequestClaims{UserID: secretHTestUserID},
+				Params: tc.params(uuid.NewString()),
+			}
+			w := httptest.NewRecorder()
+			r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/backup", nil)
+
+			tc.handler(c, w, r)
+			if c.Err != nil {
+				writeError(w, c)
+			}
+
+			assert.Equal(t, http.StatusInternalServerError, w.Code)
+			assert.NotContains(t, w.Body.String(), "not found")
+		})
+	}
 }
