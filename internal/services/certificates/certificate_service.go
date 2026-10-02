@@ -170,6 +170,10 @@ type CertificateService interface {
 	// UpdateCertificateVersion changes one version's lifecycle attributes,
 	// authorized by req.Scope against the parent.
 	UpdateCertificateVersion(ctx context.Context, req UpdateCertificateVersionRequest) (*model.CertificateVersion, error)
+	// ExportCertificate returns one exportable certificate version as a
+	// leaf-first chain plus an unencrypted PKCS#8 key, or as PKCS12,
+	// authorized by scope. It always reads the repository, never a cache.
+	ExportCertificate(ctx context.Context, scope model.Scope, id uuid.UUID, req ExportCertificateRequest) (*ExportCertificateResult, error)
 	// ListDeletedCertificates lists soft-deleted certificates authorized by scope.
 	ListDeletedCertificates(ctx context.Context, scope model.Scope) ([]model.Certificate, error)
 	// RecoverCertificate restores a soft-deleted certificate authorized by scope.

@@ -167,3 +167,10 @@ func (s *retryCertificateService) UpdateCertificateVersion(ctx context.Context, 
 		return s.baseService.UpdateCertificateVersion(ctx, req)
 	})
 }
+
+// ExportCertificate is deliberately not retried. A failed export is reported
+// once; replaying it would decrypt the key again and write a second audit
+// trail for one request.
+func (s *retryCertificateService) ExportCertificate(ctx context.Context, scope model.Scope, id uuid.UUID, req certificates.ExportCertificateRequest) (*certificates.ExportCertificateResult, error) {
+	return s.baseService.ExportCertificate(ctx, scope, id, req)
+}

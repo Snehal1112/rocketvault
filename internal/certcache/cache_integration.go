@@ -223,3 +223,10 @@ func (s *CachedCertificateService) UpdateCertificateVersion(ctx context.Context,
 	}
 	return updated, nil
 }
+
+// ExportCertificate passes straight through. An export is never served from
+// or stored in the cache: the result carries a private key, and the export
+// must reflect the committed row.
+func (s *CachedCertificateService) ExportCertificate(ctx context.Context, scope model.Scope, id uuid.UUID, req certificates.ExportCertificateRequest) (*certificates.ExportCertificateResult, error) {
+	return s.certificateService.ExportCertificate(ctx, scope, id, req)
+}

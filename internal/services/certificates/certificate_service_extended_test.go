@@ -1589,3 +1589,7 @@ func (m *mockRenewalCertSvc) GetCertificateVersion(ctx context.Context, certID u
 func (m *mockRenewalCertSvc) UpdateCertificateVersion(ctx context.Context, req UpdateCertificateVersionRequest) (*model.CertificateVersion, error) {
 	panic("not called")
 }
+
+func (m *mockRenewalCertSvc) ExportCertificate(context.Context, model.Scope, uuid.UUID, ExportCertificateRequest) (*ExportCertificateResult, error) {
+	panic("not called")
+}

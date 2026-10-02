@@ -918,3 +918,11 @@ func (m *mockCertService) UpdateCertificateVersion(ctx context.Context, req cert
 	}
 	return args.Get(0).(*model.CertificateVersion), args.Error(1)
 }
+
+func (m *mockCertService) ExportCertificate(ctx context.Context, scope model.Scope, id uuid.UUID, req certServices.ExportCertificateRequest) (*certServices.ExportCertificateResult, error) {
+	args := m.Called(ctx, scope, id, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*certServices.ExportCertificateResult), args.Error(1)
+}

@@ -240,6 +240,67 @@ func (_c *MockCertificateService_DeleteCertificatePolicy_Call) RunAndReturn(run 
 	return _c
 }
 
+// ExportCertificate provides a mock function with given fields: ctx, scope, id, req
+func (_m *MockCertificateService) ExportCertificate(ctx context.Context, scope model.Scope, id uuid.UUID, req certificates.ExportCertificateRequest) (*certificates.ExportCertificateResult, error) {
+	ret := _m.Called(ctx, scope, id, req)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ExportCertificate")
+	}
+
+	var r0 *certificates.ExportCertificateResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, model.Scope, uuid.UUID, certificates.ExportCertificateRequest) (*certificates.ExportCertificateResult, error)); ok {
+		return rf(ctx, scope, id, req)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, model.Scope, uuid.UUID, certificates.ExportCertificateRequest) *certificates.ExportCertificateResult); ok {
+		r0 = rf(ctx, scope, id, req)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*certificates.ExportCertificateResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, model.Scope, uuid.UUID, certificates.ExportCertificateRequest) error); ok {
+		r1 = rf(ctx, scope, id, req)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockCertificateService_ExportCertificate_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ExportCertificate'
+type MockCertificateService_ExportCertificate_Call struct {
+	*mock.Call
+}
+
+// ExportCertificate is a helper method to define mock.On call
+//   - ctx context.Context
+//   - scope model.Scope
+//   - id uuid.UUID
+//   - req certificates.ExportCertificateRequest
+func (_e *MockCertificateService_Expecter) ExportCertificate(ctx interface{}, scope interface{}, id interface{}, req interface{}) *MockCertificateService_ExportCertificate_Call {
+	return &MockCertificateService_ExportCertificate_Call{Call: _e.mock.On("ExportCertificate", ctx, scope, id, req)}
+}
+
+func (_c *MockCertificateService_ExportCertificate_Call) Run(run func(ctx context.Context, scope model.Scope, id uuid.UUID, req certificates.ExportCertificateRequest)) *MockCertificateService_ExportCertificate_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(model.Scope), args[2].(uuid.UUID), args[3].(certificates.ExportCertificateRequest))
+	})
+	return _c
+}
+
+func (_c *MockCertificateService_ExportCertificate_Call) Return(_a0 *certificates.ExportCertificateResult, _a1 error) *MockCertificateService_ExportCertificate_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockCertificateService_ExportCertificate_Call) RunAndReturn(run func(context.Context, model.Scope, uuid.UUID, certificates.ExportCertificateRequest) (*certificates.ExportCertificateResult, error)) *MockCertificateService_ExportCertificate_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetCertificate provides a mock function with given fields: ctx, certID, scope
 func (_m *MockCertificateService) GetCertificate(ctx context.Context, certID uuid.UUID, scope model.Scope) (*model.Certificate, error) {
 	ret := _m.Called(ctx, certID, scope)

@@ -755,3 +755,13 @@ func (s *recordingCertService) UpdateCertificateVersion(_ context.Context, req c
 	}
 	return &model.CertificateVersion{CertificateID: req.CertID, Version: req.Version, Current: true, Enabled: true}, nil
 }
+
+func (s *recordingCertService) ExportCertificate(_ context.Context, scope model.Scope, id uuid.UUID, req certServices.ExportCertificateRequest) (*certServices.ExportCertificateResult, error) {
+	s.versionCalls = append(s.versionCalls, "export")
+	s.versionScope = scope
+	if s.getInVaultErr != nil {
+		return nil, s.getInVaultErr
+	}
+	return &certServices.ExportCertificateResult{ID: id, Name: "c", Version: 1, Format: req.Format,
+		CertificatePEM: "chain", PrivateKeyPEM: "key", KeyAlgorithm: "RSA-2048"}, nil
+}
