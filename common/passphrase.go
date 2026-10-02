@@ -21,6 +21,9 @@ type PassphraseSource struct {
 	EnvVar  string
 	Prompt  string
 	Confirm bool
+	// ConfirmPrompt is the second prompt when Confirm is set. Empty means
+	// "Confirm passphrase: ".
+	ConfirmPrompt string
 }
 
 // ResolvePassphrase returns a passphrase from the first available source: an
@@ -78,7 +81,11 @@ func promptPassphrase(src PassphraseSource) (string, error) {
 	}
 
 	if src.Confirm {
-		fmt.Fprint(os.Stderr, "Confirm passphrase: ") //nolint:errcheck
+		confirmPrompt := src.ConfirmPrompt
+		if confirmPrompt == "" {
+			confirmPrompt = "Confirm passphrase: "
+		}
+		fmt.Fprint(os.Stderr, confirmPrompt) //nolint:errcheck
 		second, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr) //nolint:errcheck
 		if err != nil {
