@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>v4.8.0 — Identity and sessions hardening — RocketVault Docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="../assets/doc-theme.css"/>
+</head>
+<body>
+<header class="doc-header">
+  <a class="doc-back" href="../admin-manual.html">&larr; Admin Manual</a>
+  <div class="doc-brand">
+    <div class="doc-mark" aria-hidden="true"></div>
+    <span class="doc-kicker">RocketVault Docs</span>
+  </div>
+  <h1 class="doc-title">v4.8.0 — Identity and sessions hardening</h1>
+  <div class="doc-meta"><span class="doc-chip">docs/release-notes/v4.8.0-identity-sessions-hardening.md</span></div>
+  <hr/>
+</header>
+<nav class="doc-toc"><div class="doc-toc-label">On this page</div><ol><li><a href="#behavior-changes">Behavior changes</a></li><li><a href="#schema">Schema</a></li><li><a href="#upgrade-procedure">Upgrade procedure</a></li><li><a href="#known-limitations-and-operator-warnings">Known limitations and operator warnings</a></li></ol></nav>
+<main class="doc">
+<blockquote>
+<p>The version number is provisional and may change before tagging.</p>
+</blockquote>
+<p>This release fixes four identity weaknesses from the 2026-09-30 audit of
+<code>api/</code>: cross-user session revocation (#40), OIDC accounts that gained a
+password without a working second factor (#55), sessions that survived
+password, role and delete changes (#47), and TOTP code replay (#45). The
+issues #40, #47, #45 and #55 close when this work is pushed. Full detail:
+<code>.claude/known-bugs.md</code> (B72 to B75).</p>
+<h2 id="behavior-changes">Behavior changes</h2>
+<ol>
+<li><strong>Local login refuses accounts without a TOTP secret.</strong> An account whose
+stored TOTP secret is empty can no longer log in with a password, even a
+correct one. The error reads exactly like a wrong code. Before this release
+any six digits worked for such an account, because an empty secret yields
+codes anyone can compute. In practice this affects only OIDC-provisioned
+users who set a local password (<code>rocketvault users update --new-password</code>,
+or <code>PUT /api/v1/users/{id}</code>). Admin-created users always had a secret.</li>
+<li><strong>Setting a password on such an account enrolls TOTP.</strong> The response of
+<code>PUT /api/v1/users/{id}</code> carries the new <code>otpauth://</code> URL in <code>totp_secret</code>,
+the same field <code>POST /api/v1/users</code> uses, and <code>rocketvault users update</code>
+prints it. It is shown once, the response is <code>Cache-Control: no-store</code>, and
+the secret is never logged or audited. Accounts that already have a secret
+keep it on every later password change.</li>
+<li><strong>Password and role changes end every session of the user.</strong> This
+includes the caller's own session when they change their own password, so
+the next CLI command or API call needs a new login. A username-only change
+keeps sessions, and so does re-submitting the roles the user already has.</li>
+<li><strong>Deleting a user ends their sessions first</strong>, and every authenticated
+user request now confirms that the token's user still exists. This costs
+two extra database queries per request (the revocation check plus the user
+read).</li>
+<li><strong>Each TOTP code works once.</strong> A second login with the same code, or with
+a code from an earlier 30-second step, fails with <code>invalid TOTP code</code>. Two
+local logins by the same user inside one 30-second step need two different
+codes, so automation that reuses a code will break. This applies to the CLI
+and the HTTP login alike.</li>
+<li><strong>A wrong-length TOTP code is now treated as an invalid code.</strong> It is
+audited as an invalid code and answered with <code>invalid TOTP code</code>, instead
+of a validation error, on both the CLI and HTTP paths.</li>
+<li><strong><code>DELETE /api/v1/users/sessions/{id}</code> is ownership-checked.</strong> Admins can
+still revoke any session. Anyone else gets <code>404</code> for a session they do not
+own, the same answer as for a missing session. An admin revoking a missing
+session now also gets <code>404</code> instead of <code>500</code>.</li>
+</ol>
+<h2 id="schema">Schema</h2>
+<p><code>users</code> gains <code>totp_last_step BIGINT NOT NULL DEFAULT 0</code>. It is added
+automatically at startup (<code>createOptimizedSchema</code> for new databases,
+<code>migrateSchema</code> for existing ones) on SQLite and Postgres; no manual step is
+needed and existing rows start at 0.</p>
+<h2 id="upgrade-procedure">Upgrade procedure</h2>
+<ol>
+<li>
+<p>Find accounts that the new login check will lock out (read-only):</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">sql</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">SELECT id, username, auth_provider FROM users
+WHERE (totp_secret IS NULL OR totp_secret = '') AND password_hash &lt;&gt; '';
+</pre></div>
+</li>
+<li>
+<p>Revoke the sessions of each account the query returns. Sessions and
+refresh tokens issued before this release to such accounts are not
+revoked by the upgrade, and a refresh token stays usable for up to 7 days.</p>
+</li>
+<li>
+<p>Tell each of those users to sign in with <code>rocketvault users login --oidc</code>
+and set their password again with
+<code>rocketvault users update &lt;their-user-id&gt; --new-password &lt;password&gt;</code>. The
+command prints a TOTP secret; they add it to their authenticator app. Their
+OIDC login keeps working the whole time.</p>
+</li>
+<li>
+<p>Expect every user to log in again after they change their password or an
+admin changes their roles.</p>
+</li>
+</ol>
+<h2 id="known-limitations-and-operator-warnings">Known limitations and operator warnings</h2>
+<ul>
+<li><strong>TOTP lockout is accepted and has no reset path.</strong> No command or endpoint
+resets a TOTP secret. A local account that has a password but no secret can
+only be recovered by editing the database; OIDC login still works for it.
+The same happens if the one-time enrollment URL is lost: when <code>GetUser</code>
+fails or a transient error occurs after the enrollment was written, the
+response carries no URL and the account is locked out for password login.</li>
+<li><strong>A stolen OIDC session token can set a password</strong> and receive the
+enrollment URL. A fresh IdP login is not required before setting a password
+(step 5 of <code>.claude/research-oidc-user-mfa-enrollment.md</code>), and enrollment is
+not confirmed with a first code (step 6). Both are deferred.</li>
+<li><strong>An admin who sets an OIDC user's password learns that user's TOTP
+secret</strong>, as with admin user creation.</li>
+<li><strong>Revocation can fail after the write succeeded.</strong> The password or role
+change is not in one transaction with revocation. If revocation fails, the
+update returns an error but the change stays, old sessions stay alive
+(refresh tokens up to 7 days, the old role inside an access token up to 1
+hour), and a retry of the same update skips revocation for a role change
+because the roles now read as unchanged. A generated enrollment URL is lost
+in that case too. Revoke the user's sessions by hand if you see this error.</li>
+<li><strong>A login that races a user delete</strong> can leave one unrevoked session
+until the token expires; the user-exists check on every request still
+rejects it.</li>
+<li><strong>Refresh tokens are not rotated.</strong></li>
+<li><strong>Restoring a full database backup can revive old password hashes and
+sessions.</strong> This was already the case and is not changed here.</li>
+</ul>
+
+</main>
+<footer class="doc-footer"><a href="../admin-manual.html">&larr; Back to the Admin Manual</a></footer>
+<script src="../assets/doc-theme.js"></script>
+</body>
+</html>
