@@ -2,7 +2,9 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +30,11 @@ type Key struct {
 	Bits             int        `json:"bits,omitempty"`
 	Curve            string     `json:"curve,omitempty"`
 	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+	// Exportable reports whether the key's private material may ever be
+	// exported. It is set at creation or import only; rotation keeps it
+	// because rotation updates the same row. HSM and oct keys are never
+	// exportable.
+	Exportable bool `json:"exportable"`
 }
 
 // IsAccessible returns true when the key is enabled and within its validity window.
@@ -43,6 +50,30 @@ func (k *Key) IsAccessible() bool {
 		return false
 	}
 	return true
+}
+
+// KeyAlgorithm returns a short label for the key's algorithm and size, such
+// as RSA-2048 or EC-P256. It reads only stored metadata, so it is safe on a
+// list response and for HSM-backed keys. A size the row does not record
+// yields the bare family name.
+func (k *Key) KeyAlgorithm() string {
+	switch k.Type {
+	case KeyTypeRSA:
+		if k.Bits > 0 {
+			return fmt.Sprintf("RSA-%d", k.Bits)
+		}
+		return "RSA"
+	case KeyTypeECDSA:
+		if k.Curve != "" {
+			return "EC-" + strings.ReplaceAll(k.Curve, "-", "")
+		}
+		return "EC"
+	case KeyTypeES256K:
+		return "EC-P256K"
+	case KeyTypeOct:
+		return fmt.Sprintf("oct-%d", k.Bits)
+	}
+	return k.Type
 }
 
 const (

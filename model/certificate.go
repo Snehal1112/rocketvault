@@ -37,6 +37,10 @@ type Certificate struct {
 	// Zero is a row that predates versioning and reads as version 1, see
 	// CurrentVersion.
 	Version int `json:"version"`
+	// Exportable reports whether the certificate's private key may ever be
+	// exported. It is set at creation only and no update path writes it, so
+	// it is immutable. A certificate's archived versions share this flag.
+	Exportable bool `json:"exportable"`
 }
 
 // Clone returns a copy of c that shares no mutable state with the original:

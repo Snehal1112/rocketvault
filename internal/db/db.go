@@ -427,6 +427,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			bits INTEGER NOT NULL DEFAULT 0,
 			curve TEXT NOT NULL DEFAULT '',
 			updated_at TIMESTAMP NULL,
+			exportable BOOLEAN NOT NULL DEFAULT FALSE,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		);
 		CREATE INDEX IF NOT EXISTS idx_keys_user_id ON keys(user_id);
@@ -471,6 +472,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			enabled BOOLEAN NOT NULL DEFAULT TRUE,
 			not_before TIMESTAMP NULL,
 			version INTEGER NOT NULL DEFAULT 1,
+			exportable BOOLEAN NOT NULL DEFAULT FALSE,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		);
 		CREATE INDEX IF NOT EXISTS idx_certificates_user_id ON certificates(user_id);
@@ -846,6 +848,11 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 			FOREIGN KEY (certificate_id) REFERENCES certificates(id) ON DELETE CASCADE
 		)`,
 		"CREATE INDEX IF NOT EXISTS idx_certificate_versions_certificate_id ON certificate_versions(certificate_id)",
+		// Export: an immutable opt-in flag set only at creation. Existing
+		// rows become non-exportable and nothing is backfilled.
+		// certificate_versions gets no column: versions share the parent's flag.
+		"ALTER TABLE certificates ADD COLUMN exportable BOOLEAN NOT NULL DEFAULT FALSE",
+		"ALTER TABLE keys ADD COLUMN exportable BOOLEAN NOT NULL DEFAULT FALSE",
 		// Milestone 3: service-account / OAuth2 table (CREATE TABLE IF NOT EXISTS is idempotent)
 		`CREATE TABLE IF NOT EXISTS oauth2_clients (
 			id            TEXT PRIMARY KEY,
