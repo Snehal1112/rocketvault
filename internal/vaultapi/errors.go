@@ -91,10 +91,14 @@ func hintFor(e *APIError) string {
 		action := fmt.Sprintf("Microsoft.KeyVault/vaults/%s/%s", resource, verb)
 		role := roleFor(resource, verb)
 		vault := vaultFromPath(e.Path)
-		if vault == "" {
-			return fmt.Sprintf("principal lacks %s; grant e.g. %q", action, role)
+		hint := fmt.Sprintf("principal lacks %s; grant e.g. %q", action, role)
+		if vault != "" {
+			hint = fmt.Sprintf("principal lacks %s in vault %q; grant e.g. %q", action, vault, role)
 		}
-		return fmt.Sprintf("principal lacks %s in vault %q; grant e.g. %q", action, vault, role)
+		if issuesCertificate(e.Method, e.Path) {
+			hint += "; issuing or renewing a certificate also needs Microsoft.KeyVault/vaults/keys/sign/action, e.g. \"Key Vault Crypto User\""
+		}
+		return hint
 	case KindNotFound:
 		return "no such resource in this vault"
 	case KindConflict:
@@ -132,6 +136,17 @@ func resourceAndVerb(method, path string) (resource, verb string) {
 		verb = "read"
 	}
 	return resource, verb
+}
+
+// issuesCertificate reports whether a request issues or renews a
+// certificate. Both sign with a key, so they need keys/sign as well as
+// certificates/create (B77).
+func issuesCertificate(method, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	return strings.HasSuffix(path, "/certificates") ||
+		(strings.Contains(path, "/certificates/") && strings.HasSuffix(path, "/renew"))
 }
 
 // roleFor names a built-in role that grants the given action. The names come

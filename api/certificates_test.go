@@ -167,6 +167,11 @@ func (m *mockCertService) ListCertificatesDueForRenewal(ctx context.Context, sco
 type certSvcContainer struct {
 	certSvc        certServices.CertificateService
 	certPolicyRepo repositories.CertificatePolicyRepositoryInterface
+	// policySvc and roleSvc back the keys/sign check in createCertificate and
+	// renewCertificate. Nil means allow, so tests that are not about that
+	// check need no setup.
+	policySvc authzServices.AccessPolicyService
+	roleSvc   authzServices.RoleAssignmentService
 }
 
 func (c *certSvcContainer) GetCertificateService() certServices.CertificateService { return c.certSvc }
@@ -233,10 +238,29 @@ func (c *certSvcContainer) GetAccessPolicyRepository() repositories.AccessPolicy
 	panic("unexpected call: GetAccessPolicyRepository")
 }
 func (c *certSvcContainer) GetAccessPolicyService() authzServices.AccessPolicyService {
-	panic("unexpected call: GetAccessPolicyService")
+	if c.policySvc != nil {
+		return c.policySvc
+	}
+	policies, _ := allowAllDataPlane()
+	return policies
 }
 func (c *certSvcContainer) GetRoleAssignmentService() authzServices.RoleAssignmentService {
-	return nil
+	if c.roleSvc != nil {
+		return c.roleSvc
+	}
+	_, roles := allowAllDataPlane()
+	return roles
+}
+
+// allowAllDataPlane returns policy and role services that pass every
+// data-plane check, for handler tests that are not about authorization.
+func allowAllDataPlane() (authzServices.AccessPolicyService, authzServices.RoleAssignmentService) {
+	policies := &mockAccessPolicyService{}
+	policies.On("CheckAccess", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(authzServices.AccessFallback, nil)
+	roles := &mockRoleAssignmentService{}
+	roles.On("HasDataAction", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(true, nil)
+	return policies, roles
 }
 func (c *certSvcContainer) GetGrantService() provisioning.GrantService {
 	return nil

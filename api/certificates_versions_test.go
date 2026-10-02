@@ -267,6 +267,13 @@ func TestCertificateVersionResponses_CarryNoKeyMaterial(t *testing.T) {
 	}
 }
 
+// allowKeySignOn lets the renew route's keys/sign check pass on a test API
+// built by newVaultScopedKeyCertTestAPI (B77).
+func allowKeySignOn(api *API) {
+	c := api.App.ServiceContainer.(*vaultSvcTestContainer)
+	c.policySvc, c.roleSvc = allowAllDataPlane()
+}
+
 // TestCertificateVersionRoutes_BothShapes dispatches every new route on the
 // flat and the vault-scoped router, and checks the vault each one scoped to.
 func TestCertificateVersionRoutes_BothShapes(t *testing.T) {
@@ -283,6 +290,7 @@ func TestCertificateVersionRoutes_BothShapes(t *testing.T) {
 		t.Run("flat "+tc.method+tc.suffix, func(t *testing.T) {
 			rec := &recordingCertService{}
 			api, _ := newVaultScopedKeyCertTestAPI(nil, rec, nil)
+			allowKeySignOn(api)
 			var body []byte
 			if tc.body != "" {
 				body = []byte(tc.body)
@@ -294,6 +302,7 @@ func TestCertificateVersionRoutes_BothShapes(t *testing.T) {
 		t.Run("vault-scoped "+tc.method+tc.suffix, func(t *testing.T) {
 			rec := &recordingCertService{}
 			api, repo := newVaultScopedKeyCertTestAPI(nil, rec, nil)
+			allowKeySignOn(api)
 			id := uuid.New()
 			repo.byName["prod"] = &model.Vault{ID: id, Name: "prod", Enabled: true}
 			repo.byID[id.String()] = repo.byName["prod"]

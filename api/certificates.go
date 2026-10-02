@@ -32,6 +32,7 @@ import (
 
 	"rocketvault/internal/container"
 	"rocketvault/internal/crypto"
+	authzServices "rocketvault/internal/services/authorization"
 	certServices "rocketvault/internal/services/certificates"
 	vvalidation "rocketvault/internal/validation"
 	"rocketvault/model"
@@ -155,9 +156,10 @@ func certToDomainResponse(cert *model.Certificate) CertificateResponse {
 
 // createCertificate creates a new X.509 certificate.
 func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
-	// Authorization happens in PolicyMiddleware: creating a certificate requires
-	// the Microsoft.KeyVault/vaults/certificates/create data action, granted by
-	// Key Vault Certificates Officer or Key Vault Administrator in this vault.
+	// Authorization is two checks. PolicyMiddleware requires the
+	// Microsoft.KeyVault/vaults/certificates/create data action, and
+	// requireKeySign below additionally requires keys/sign/action, because
+	// issuing a certificate signs with the named key (B77).
 
 	req, ok := decodeBody[CreateCertificateAPIRequest](c, r)
 	if !ok {
@@ -199,6 +201,9 @@ func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	certService, svcOK := svc(c, container.ServiceContainerInterface.GetCertificateService)
 	if !svcOK {
+		return
+	}
+	if !requireKeySign(c, r, userID, vaultID, "create_certificate") {
 		return
 	}
 
@@ -266,6 +271,31 @@ func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONStatus(w, http.StatusCreated, response)
+}
+
+// requireKeySign runs the full data-plane check for keys/sign in vaultID and
+// reports whether the request may continue. Issuing or renewing a
+// certificate signs with its key, but PolicyMiddleware only checked the
+// route's certificates/create action, so a caller without keys/sign, or with
+// an explicit deny on key sign, could still sign through the certificate
+// routes (B77). The CLI runs the same check through vaultcli.Session.RequireAlso.
+//
+// Only a refusal answers 403. A misuse, an unwired policy or role service, or
+// a failed lookup is a server fault and answers 500, so a broken check never
+// lets the request through.
+func requireKeySign(c *Context, r *http.Request, userID, vaultID uuid.UUID, operation string) bool {
+	err := authzServices.RequireDataPlaneAccess(r.Context(),
+		c.App.ServiceContainer.GetAccessPolicyService(), c.App.ServiceContainer.GetRoleAssignmentService(),
+		userID, vaultID, model.PolicyResourceKeys, model.OpSign, model.ActionKeysSign)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, authzServices.ErrDataPlaneDenied) {
+		c.auditDenied(operation, string(model.ActionKeysSign))
+		return false
+	}
+	c.SetInternalError(err)
+	return false
 }
 
 // listCertificates lists certificates. Legacy flat routes list the default

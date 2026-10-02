@@ -99,3 +99,20 @@ func TestAPIError_IsDiscoverableWithErrorsAs(t *testing.T) {
 	var apiErr *APIError
 	require.True(t, errors.As(err, &apiErr))
 }
+
+// TestAPIError_CertificateIssueHintNamesKeySign pins that a 403 on issuing or
+// renewing a certificate points at the second action it needs (B77).
+func TestAPIError_CertificateIssueHintNamesKeySign(t *testing.T) {
+	for _, path := range []string{"/api/v1/vaults/prod/certificates", "/api/v1/vaults/prod/certificates/tls/renew"} {
+		err := doAgainstStatus(t, http.StatusForbidden, `{}`, http.MethodPost, path)
+		var apiErr *APIError
+		require.ErrorAs(t, err, &apiErr)
+		require.Contains(t, apiErr.Hint, "Key Vault Certificates Officer")
+		require.Contains(t, apiErr.Hint, "keys/sign/action")
+	}
+
+	err := doAgainstStatus(t, http.StatusForbidden, `{}`, http.MethodGet, "/api/v1/vaults/prod/certificates")
+	var readAPI *APIError
+	require.ErrorAs(t, err, &readAPI)
+	require.NotContains(t, readAPI.Hint, "keys/sign")
+}

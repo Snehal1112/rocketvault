@@ -602,8 +602,12 @@ func TestCertCreateCmd_Authorized(t *testing.T) {
 	roles := &testutils.MockRoleAssignmentService{}
 	roles.On("HasDataAction", mock.Anything, tc.TestUserID, tc.TestVaultID, model.ActionCertificatesCreate).
 		Return(true, nil).Once()
+	roles.On("HasDataAction", mock.Anything, tc.TestUserID, tc.TestVaultID, model.ActionKeysSign).
+		Return(true, nil).Once()
 	policies := &testutils.MockAccessPolicyService{}
 	policies.On("CheckAccess", mock.Anything, tc.TestUserID, model.PolicyResourceCertificates, model.OpCreate, tc.TestVaultID).
+		Return(authzServices.AccessAllowed, nil).Once()
+	policies.On("CheckAccess", mock.Anything, tc.TestUserID, model.PolicyResourceKeys, model.OpSign, tc.TestVaultID).
 		Return(authzServices.AccessAllowed, nil).Once()
 	tc.MockContainer.RoleAssignmentService = roles
 	tc.MockContainer.AccessPolicyService = policies
@@ -1297,8 +1301,12 @@ func TestCertRenewCmd_Authorized(t *testing.T) {
 	roles := &testutils.MockRoleAssignmentService{}
 	roles.On("HasDataAction", mock.Anything, tc.TestUserID, tc.TestVaultID, model.ActionCertificatesCreate).
 		Return(true, nil).Once()
+	roles.On("HasDataAction", mock.Anything, tc.TestUserID, tc.TestVaultID, model.ActionKeysSign).
+		Return(true, nil).Once()
 	policies := &testutils.MockAccessPolicyService{}
 	policies.On("CheckAccess", mock.Anything, tc.TestUserID, model.PolicyResourceCertificates, model.OpRenew, tc.TestVaultID).
+		Return(authzServices.AccessAllowed, nil).Once()
+	policies.On("CheckAccess", mock.Anything, tc.TestUserID, model.PolicyResourceKeys, model.OpSign, tc.TestVaultID).
 		Return(authzServices.AccessAllowed, nil).Once()
 	tc.MockContainer.RoleAssignmentService = roles
 	tc.MockContainer.AccessPolicyService = policies

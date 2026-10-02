@@ -145,8 +145,9 @@ func decodeRenewBody(c *Context, r *http.Request) (RenewCertificateAPIRequest, b
 }
 
 // renewCertificate issues a new version of a certificate and returns that
-// version's metadata. Authorization happens in PolicyMiddleware: renewing
-// requires the certificates/create data action (data_actions.go).
+// version's metadata. PolicyMiddleware requires the certificates/create data
+// action (data_actions.go), and requireKeySign additionally requires
+// keys/sign/action, because renewal re-signs with the certificate's key (B77).
 func renewCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 	certID, certOK := resourceID(c, c.Params.CertificateID, "certificate_id")
 	if !certOK {
@@ -166,6 +167,9 @@ func renewCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 	scope, ok := scopeFromRequest(c, r)
 	if !ok {
+		return
+	}
+	if !requireKeySign(c, r, scope.ActorID(), scope.VaultID(), "renew_certificate") {
 		return
 	}
 

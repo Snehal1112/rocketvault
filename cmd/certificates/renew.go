@@ -33,8 +33,11 @@ rather than quietly downgraded to self-signed.
 
 Requires the admin or certificate_manager role, and the
 Microsoft.KeyVault/vaults/certificates/create data action in the target
-vault — not certificates/update. The certificate's key must still exist in
-that vault and be owned by the calling user.
+vault — not certificates/update. Renewal also needs the
+Microsoft.KeyVault/vaults/keys/sign/action data action there, because it
+signs with the certificate's key. That key must still exist in the vault,
+be owned by the calling user, and be enabled, not revoked, and inside its
+validity window. A CA's own key must be usable in the same way.
 
 Acts on the vault named by --vault, defaulting to "default".
 --validity-days must be positive; when omitted, the current version's
@@ -73,6 +76,11 @@ before it lapses rather than after.`,
 		}
 
 		if err := s.Authorize(); err != nil {
+			return err
+		}
+		// Renewal re-signs with the certificate's key, so it needs keys/sign
+		// like issuance does (B77).
+		if err := s.RequireAlso(model.ActionKeysSign, model.OpSign); err != nil {
 			return err
 		}
 		certService := s.Container.GetCertificateService()

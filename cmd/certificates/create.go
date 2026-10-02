@@ -31,10 +31,14 @@ as a Certificate Authority so it can sign later certificates. Ask for that
 only when you mean it: anything holding a CA's private key can issue
 certificates for any name. --is-ca cannot be combined with --ca-cert-id.
 
-Requires the admin or certificate_manager role, and the
-Microsoft.KeyVault/vaults/certificates/create data action in the target
-vault. The key named by --key-id must also be owned by the calling user, as
-must the certificate named by --ca-cert-id.
+Requires the admin or certificate_manager role, and both the
+Microsoft.KeyVault/vaults/certificates/create and the
+Microsoft.KeyVault/vaults/keys/sign/action data actions in the target
+vault (for example Key Vault Certificates Officer plus Key Vault Crypto
+User). The key named by --key-id must be owned by the calling user and be
+enabled, not revoked, and inside its validity window. The certificate named
+by --ca-cert-id must be owned by the calling user, and its own key must be
+usable in the same way.
 
 Acts on the vault named by --vault, defaulting to "default". --name and
 --key-id are required and --validity-days must be positive. --auto-renew and
@@ -99,6 +103,11 @@ Exporter role.`,
 		}
 
 		if err := s.Authorize(); err != nil {
+			return err
+		}
+		// Issuing a certificate signs with --key-id, so keys/sign is required
+		// as well, exactly as the HTTP handler requires it (B77).
+		if err := s.RequireAlso(model.ActionKeysSign, model.OpSign); err != nil {
 			return err
 		}
 		certService := s.Container.GetCertificateService()
