@@ -611,7 +611,7 @@ rocketvault certificate versions list &quot;$CERT_ID&quot; --vault &quot;$VAULT&
 </pre></div>
 <h2 id="mtls-client-identity-from-an-exported-certificate">mTLS Client Identity from an Exported Certificate</h2>
 <p>A service principal fetches its client certificate and key at send time and
-keeps nothing on disk. Setup, as an admin:</p>
+does not write them to a file of its own. Setup, as an admin:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">API=&quot;${ROCKETVAULT_URL:-http://127.0.0.1:8774}/api/v1/vaults/${VAULT:-default}&quot;
 
 # An exportable key and an exportable certificate issued over it.
@@ -627,9 +627,8 @@ curl -sS -X POST &quot;$API/role-assignments&quot; -H &quot;Authorization: Beare
   -H &quot;Content-Type: application/json&quot; \
   -d &quot;{\&quot;principal\&quot;:\&quot;$SA_ID\&quot;,\&quot;principal_type\&quot;:\&quot;service_account\&quot;,\&quot;role\&quot;:\&quot;Key Vault Certificate Exporter\&quot;}&quot;
 </pre></div>
-<p>The same from the CLI: <code>rocketvault keys create --name rocket-client-key --type ECDSA --curve P-256 --exportable</code> and
-<code>rocketvault certificate create --name rocket-client --key-id &quot;$KEY_ID&quot; --validity-days 365 --exportable</code>
-(<code>certificate create</code> always uses the <code>default</code> vault).</p>
+<p>The same from the CLI: <code>rocketvault keys create --name rocket-client-key --type ECDSA --curve P-256 --exportable --vault &quot;$VAULT&quot;</code> and
+<code>rocketvault certificate create --name rocket-client --key-id &quot;$KEY_ID&quot; --validity-days 365 --exportable --vault &quot;$VAULT&quot;</code>.</p>
 <p>At send time, as the service principal (<code>$SA_TOKEN</code> from the OAuth2
 client-credentials grant), fetch the identity and use it in memory only:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">#!/usr/bin/env bash
@@ -641,11 +640,13 @@ BODY=$(curl -sS -X POST &quot;$API/certificates/$CERT_ID/export&quot; \
   -H &quot;Authorization: Bearer $SA_TOKEN&quot; -H &quot;Content-Type: application/json&quot; \
   -d '{&quot;format&quot;:&quot;pem&quot;}')
 
-# Process substitution keeps the key off disk.
+# Process substitution avoids writing the key to a file of our own.
 curl -sS https://mtls.example.internal/health \
   --cert &lt;(jq -r .certificate_pem &lt;&lt;&lt;&quot;$BODY&quot;) \
   --key &lt;(jq -r .private_key_pem &lt;&lt;&lt;&quot;$BODY&quot;)
 </pre></div>
+<p>Avoid <code>set -x</code> while the identity is in a variable, and <code>unset BODY</code> after
+the call.</p>
 <p>In Go, build the identity straight from the response:</p>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">go</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">pair, err := tls.X509KeyPair([]byte(resp.CertificatePEM), []byte(resp.PrivateKeyPEM))
 if err != nil {

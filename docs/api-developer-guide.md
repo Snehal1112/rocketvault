@@ -387,7 +387,8 @@ yet valid, is refused with `409` `key_disabled`. The flat route
 `POST /api/v1/keys/{key_id}/export` acts on the `default` vault.
 
 **Response:** `200 OK` with `Cache-Control: no-store` and `Pragma: no-cache`
-(no export response, success or error, is cacheable):
+(every response written by the export handler, success or error, is
+non-cacheable):
 
 ```json
 {
@@ -528,7 +529,7 @@ The two export routes use their own error body:
 | Status | Code | When |
 |---|---|---|
 | 400 | `bad_request` | bad body, unknown `format`/`compat`, `pkcs12` without `password`, bad `version` |
-| 403 | `certificate_not_exportable` / `key_not_exportable` | flag false, HSM, `oct`, ES256K |
+| 403 | `certificate_not_exportable` / `key_not_exportable` | flag false, HSM, `oct`, ES256K, or a key type that cannot be PKCS#8-encoded |
 | 404 | `not_found` | unknown, soft-deleted, out of vault, or unknown version |
 | 409 | `certificate_disabled` / `key_disabled` | disabled, expired or outside its window; also a revoked key |
 | 500 | `internal_error` | anything else, including an unbuildable issuer chain; the message is generic |
@@ -551,7 +552,7 @@ keep their usual bodies; read the status, not the body, for those.
   verifies because renewal keeps the CA's key. This also applies when you
   export an archived version of the leaf: its chain is built from the CA's
   current certificate, not the one that was current at issue time.
-- **Nothing is cacheable.** Every export response carries `Cache-Control:
+- **Nothing is cacheable.** Every response written by the export handler carries `Cache-Control:
   no-store` and `Pragma: no-cache`.
 - Every export attempt is audited (`export_certificate` / `export_key`); no
   key, chain or password is ever logged.

@@ -626,7 +626,7 @@ curl -sS -X PUT "$API/certificates/$CERT_ID/versions/1" \
 ## mTLS Client Identity from an Exported Certificate
 
 A service principal fetches its client certificate and key at send time and
-keeps nothing on disk. Setup, as an admin:
+does not write them to a file of its own. Setup, as an admin:
 
 ```bash
 API="${ROCKETVAULT_URL:-http://127.0.0.1:8774}/api/v1/vaults/${VAULT:-default}"
@@ -645,9 +645,8 @@ curl -sS -X POST "$API/role-assignments" -H "Authorization: Bearer $ADMIN_JWT" \
   -d "{\"principal\":\"$SA_ID\",\"principal_type\":\"service_account\",\"role\":\"Key Vault Certificate Exporter\"}"
 ```
 
-The same from the CLI: `rocketvault keys create --name rocket-client-key --type ECDSA --curve P-256 --exportable` and
-`rocketvault certificate create --name rocket-client --key-id "$KEY_ID" --validity-days 365 --exportable`
-(`certificate create` always uses the `default` vault).
+The same from the CLI: `rocketvault keys create --name rocket-client-key --type ECDSA --curve P-256 --exportable --vault "$VAULT"` and
+`rocketvault certificate create --name rocket-client --key-id "$KEY_ID" --validity-days 365 --exportable --vault "$VAULT"`.
 
 At send time, as the service principal (`$SA_TOKEN` from the OAuth2
 client-credentials grant), fetch the identity and use it in memory only:
@@ -662,11 +661,14 @@ BODY=$(curl -sS -X POST "$API/certificates/$CERT_ID/export" \
   -H "Authorization: Bearer $SA_TOKEN" -H "Content-Type: application/json" \
   -d '{"format":"pem"}')
 
-# Process substitution keeps the key off disk.
+# Process substitution avoids writing the key to a file of our own.
 curl -sS https://mtls.example.internal/health \
   --cert <(jq -r .certificate_pem <<<"$BODY") \
   --key <(jq -r .private_key_pem <<<"$BODY")
 ```
+
+Avoid `set -x` while the identity is in a variable, and `unset BODY` after
+the call.
 
 In Go, build the identity straight from the response:
 
