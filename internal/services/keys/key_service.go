@@ -183,6 +183,11 @@ type KeyService interface {
 	// is master-key-encrypted in storage and api/ has no decryption
 	// precedent. An HSM-backed key yields an empty PublicJWK and a nil error.
 	GetPublicJWK(ctx context.Context, keyID uuid.UUID, version int, scope model.Scope) (*model.PublicJWK, error)
+	// ExportKey returns one version of an exportable, software-backed key as
+	// unencrypted PKCS#8 PEM, authorized by scope through GetKey. version 0
+	// means the current version. HSM, oct, ES256K and non-exportable keys are
+	// refused with model.ExportRefusedError.
+	ExportKey(ctx context.Context, scope model.Scope, id uuid.UUID, version int) (*ExportKeyResult, error)
 }
 
 // keyService implements KeyService by coordinating key operations

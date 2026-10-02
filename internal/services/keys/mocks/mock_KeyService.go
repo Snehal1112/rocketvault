@@ -311,6 +311,67 @@ func (_c *MockKeyService_DeleteKeyRotationPolicy_Call) RunAndReturn(run func(con
 	return _c
 }
 
+// ExportKey provides a mock function with given fields: ctx, scope, id, version
+func (_m *MockKeyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.UUID, version int) (*keys.ExportKeyResult, error) {
+	ret := _m.Called(ctx, scope, id, version)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ExportKey")
+	}
+
+	var r0 *keys.ExportKeyResult
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, model.Scope, uuid.UUID, int) (*keys.ExportKeyResult, error)); ok {
+		return rf(ctx, scope, id, version)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, model.Scope, uuid.UUID, int) *keys.ExportKeyResult); ok {
+		r0 = rf(ctx, scope, id, version)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*keys.ExportKeyResult)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, model.Scope, uuid.UUID, int) error); ok {
+		r1 = rf(ctx, scope, id, version)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockKeyService_ExportKey_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ExportKey'
+type MockKeyService_ExportKey_Call struct {
+	*mock.Call
+}
+
+// ExportKey is a helper method to define mock.On call
+//   - ctx context.Context
+//   - scope model.Scope
+//   - id uuid.UUID
+//   - version int
+func (_e *MockKeyService_Expecter) ExportKey(ctx interface{}, scope interface{}, id interface{}, version interface{}) *MockKeyService_ExportKey_Call {
+	return &MockKeyService_ExportKey_Call{Call: _e.mock.On("ExportKey", ctx, scope, id, version)}
+}
+
+func (_c *MockKeyService_ExportKey_Call) Run(run func(ctx context.Context, scope model.Scope, id uuid.UUID, version int)) *MockKeyService_ExportKey_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(model.Scope), args[2].(uuid.UUID), args[3].(int))
+	})
+	return _c
+}
+
+func (_c *MockKeyService_ExportKey_Call) Return(_a0 *keys.ExportKeyResult, _a1 error) *MockKeyService_ExportKey_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockKeyService_ExportKey_Call) RunAndReturn(run func(context.Context, model.Scope, uuid.UUID, int) (*keys.ExportKeyResult, error)) *MockKeyService_ExportKey_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetKey provides a mock function with given fields: ctx, keyID, scope
 func (_m *MockKeyService) GetKey(ctx context.Context, keyID uuid.UUID, scope model.Scope) (*model.Key, error) {
 	ret := _m.Called(ctx, keyID, scope)

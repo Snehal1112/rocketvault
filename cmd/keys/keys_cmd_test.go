@@ -186,6 +186,14 @@ func (m *keyCmdKeyService) GetPublicJWK(ctx context.Context, keyID uuid.UUID, ve
 	return &model.PublicJWK{}, nil
 }
 
+func (m *keyCmdKeyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.UUID, version int) (*keyServices.ExportKeyResult, error) {
+	args := m.Called(ctx, scope, id, version)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*keyServices.ExportKeyResult), args.Error(1)
+}
+
 // keyCmdCryptoService is a full mock for keyServices.CryptoService.
 type keyCmdCryptoService struct{ mock.Mock }
 

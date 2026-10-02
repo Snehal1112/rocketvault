@@ -41,6 +41,8 @@ type recordingKeyService struct {
 
 	deleteCalled bool
 	deleteScope  model.Scope
+
+	exportScope model.Scope
 }
 
 func (s *recordingKeyService) CreateRSAKey(context.Context, keyServices.CreateKeyRequest) (*keyServices.CreateKeyResult, error) {
@@ -121,6 +123,11 @@ func (s *recordingKeyService) GetPublicJWK(context.Context, uuid.UUID, int, mode
 	// These tests exercise routing and authorization, not response bodies, and
 	// keyJWK tolerates an error by omitting the components.
 	return nil, errors.New("not used in these tests")
+}
+func (s *recordingKeyService) ExportKey(_ context.Context, scope model.Scope, id uuid.UUID, version int) (*keyServices.ExportKeyResult, error) {
+	s.exportScope = scope
+	return &keyServices.ExportKeyResult{ID: id, Name: "k", Type: "RSA", Version: 1, Format: "pem",
+		PrivateKeyPEM: "key", KeyAlgorithm: "RSA-2048"}, nil
 }
 
 // recordingCertService records which list/get method was called and with what

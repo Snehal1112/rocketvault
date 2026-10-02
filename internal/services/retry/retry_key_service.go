@@ -174,3 +174,9 @@ func (s *retryKeyService) GetPublicJWK(ctx context.Context, keyID uuid.UUID, ver
 		return s.baseService.GetPublicJWK(ctx, keyID, version, scope)
 	})
 }
+
+// ExportKey is deliberately not retried. A failed export is reported once;
+// replaying it would decrypt the key again for one request.
+func (s *retryKeyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.UUID, version int) (*keys.ExportKeyResult, error) {
+	return s.baseService.ExportKey(ctx, scope, id, version)
+}
