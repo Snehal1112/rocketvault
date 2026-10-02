@@ -1124,7 +1124,7 @@ rocketvault vault-access roles</pre>
   "vault_id": "&lt;uuid&gt;",
   "created_at": "2026-06-03T07:44:46Z"
 }</pre></div>
-    <details class="collapse"><summary>Notes</summary><div class="inner">Omit <code>vault_id</code> for a global policy that applies in every vault. <code>resource_type</code> is one of <code>secrets</code>, <code>keys</code>, <code>certificates</code>, <code>vaults</code>; <code>operation</code> one of <code>get</code>, <code>list</code>, <code>set</code>, <code>create</code>, <code>delete</code>, <code>backup</code>, <code>restore</code>, <code>recover</code>, <code>purge</code>, <code>rotate</code>, <code>sign</code>, <code>verify</code>, <code>encrypt</code>, <code>decrypt</code>, <code>import</code>, <code>renew</code>, <code>manage</code>.</div></details>
+    <details class="collapse"><summary>Notes</summary><div class="inner">Omit <code>vault_id</code> for a global policy that applies in every vault. <code>resource_type</code> is one of <code>secrets</code>, <code>keys</code>, <code>certificates</code>, <code>vaults</code>; <code>operation</code> one of <code>get</code>, <code>list</code>, <code>set</code>, <code>create</code>, <code>delete</code>, <code>backup</code>, <code>restore</code>, <code>purge</code>, <code>recover</code>, <code>rotate</code>, <code>sign</code>, <code>verify</code>, <code>encrypt</code>, <code>decrypt</code>, <code>wrap</code>, <code>unwrap</code>, <code>import</code>, <code>renew</code>, <code>manage</code>.</div></details>
   </div>
   <div class="ep">
     <div class="ep-hd"><span class="meth meth-get">GET</span> <span class="ep-path">/api/v1/access-policies</span> <span class="ep-auth">JWT</span> <span class="ep-label">List all</span></div>

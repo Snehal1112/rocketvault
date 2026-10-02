@@ -1630,6 +1630,64 @@ func TestPolicyMiddleware_ExplicitDenyEvaluatedPerKeyOperation(t *testing.T) {
 	}
 }
 
+// TestPolicyMiddleware_WrapAndUnwrapDeniesDoNotCross pins that a deny on wrap
+// blocks only wrap and a deny on unwrap blocks only unwrap, on both route
+// shapes. The operation that is not denied reaches the role-assignment check.
+func TestPolicyMiddleware_WrapAndUnwrapDeniesDoNotCross(t *testing.T) {
+	t.Parallel()
+
+	ops := map[string]struct {
+		op     model.PolicyOperation
+		action model.DataAction
+	}{
+		"wrap":   {model.OpWrap, model.ActionKeysWrap},
+		"unwrap": {model.OpUnwrap, model.ActionKeysUnwrap},
+	}
+	cases := []struct {
+		denied, requested string
+	}{
+		{"wrap", "wrap"}, {"wrap", "unwrap"}, {"unwrap", "unwrap"}, {"unwrap", "wrap"},
+	}
+	for _, prefix := range []string{"/api/v1/keys/abc/", "/api/v1/vaults/prod/keys/abc/"} {
+		for _, c := range cases {
+			path := prefix + c.requested
+			t.Run("deny "+c.denied+" POST "+path, func(t *testing.T) {
+				t.Parallel()
+				mw, policySvc, roleSvc := setupDataPlaneMiddlewareTest(t)
+
+				userID, vaultID := uuid.New(), uuid.New()
+				denied, requested := ops[c.denied], ops[c.requested]
+				policySvc.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, denied.op, vaultID).
+					Return(authzServices.AccessDenied, nil).Maybe()
+				if c.denied != c.requested {
+					policySvc.On("CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, requested.op, vaultID).
+						Return(authzServices.AccessFallback, nil)
+					roleSvc.On("HasDataAction", mock.Anything, userID, vaultID, requested.action).
+						Return(true, nil)
+				}
+
+				nextCalled := false
+				rr := httptest.NewRecorder()
+				mw.PolicyMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					nextCalled = true
+					w.WriteHeader(http.StatusOK)
+				})).ServeHTTP(rr, dataPlaneRequest(http.MethodPost, path, userID, vaultID))
+
+				if c.denied == c.requested {
+					assert.False(t, nextCalled, "a deny on %s must block %s", c.denied, path)
+					assert.Equal(t, http.StatusForbidden, rr.Code)
+					roleSvc.AssertNotCalled(t, "HasDataAction", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+				} else {
+					assert.True(t, nextCalled, "a deny on %s must not block %s", c.denied, path)
+					assert.Equal(t, http.StatusOK, rr.Code)
+					policySvc.AssertNotCalled(t, "CheckAccess", mock.Anything, userID, model.PolicyResourceKeys, denied.op, vaultID)
+					roleSvc.AssertExpectations(t)
+				}
+			})
+		}
+	}
+}
+
 // TestPolicyMiddleware_CreateDenyNoLongerBlocksKeyCrypto pins the other half of
 // B79: before the fix, a deny on (keys, create) blocked encrypt collaterally.
 func TestPolicyMiddleware_CreateDenyNoLongerBlocksKeyCrypto(t *testing.T) {
