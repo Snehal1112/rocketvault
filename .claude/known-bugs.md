@@ -5520,7 +5520,8 @@ The blob carried no integrity protection. The scheduler used an admin scope.
   in the target vault (`dropForeignReferences`); otherwise it clears it.
   Cleared, not rejected: cross-vault restore is supported (B15), and every
   consequence of a cleared link is a later refusal, never a grant. A
-  same-vault restore keeps every link and every version.
+  same-vault restore keeps every link and every version, including a link
+  to a key or CA owned by another member of the vault (see § B100).
 - The scheduler renews with `model.NewVaultScope(cert.VaultID,
   cert.UserID)` and skips a row with no vault.
 
@@ -5676,8 +5677,10 @@ data action, and key lifecycle lived only in the key crypto service.
   the CA certificate's own lifecycle, so a disabled or expired CA certificate
   still issues on create (pre-existing). Renewal goes through
   `GetCertificate` and refuses it.
-- `requireCAKeyUsable` wraps every CA key read error as
-  `ErrSigningKeyUnusable`, including a transient database error.
+- `requireCAKeyUsable` gives `ErrSigningKeyUnusable` only to a CA key that
+  does not resolve in scope (a not-found, decided by `isRepositoryNotFound`,
+  § B78). A database fault reading it returns `failed to read CA signing key`
+  without the sentinel, still stops the signing, and answers 500.
 
 **Decision — what revoking a key does to certificates that embed it**: the
 key can no longer issue or renew anything, as a leaf key or through a CA
@@ -5711,8 +5714,8 @@ grant refused it); the CLI writes a `failed` row, following
 `vaultcli.Session.Fail`. The create handler runs the check before parsing
 `ca_cert_id`, so a caller without `keys/sign` gets 403 before a malformed
 CA ID would give 400. An unusable signing key or CA key
-(`ErrSigningKeyUnusable`) currently answers 500 on both routes; mapping it
-to 403 on create and 409 on renew is § B78's work.
+(`ErrSigningKeyUnusable`) answers 403 on create and 409 on renew since § B78;
+a database fault reading it answers 500.
 
 **Known limitations**:
 
@@ -5929,6 +5932,55 @@ status. One behaviour changed on the way: a database fault on
 (`cmd/certificates/versions_test.go`);
 `TestValidateCertificateCreate_ValidityDaysUpperBound`
 (`internal/validation/validation_test.go`).
+
+---
+
+### B100 — A vault member can clone another member's CA signing power through backup and restore
+
+**Status**: Open, found 2026-10-03 (GitHub #68)
+**Severity**: Medium — a member holding Certificates Officer and Crypto User
+in a vault can issue leaves that chain to a CA owned by someone else in that
+vault. Predates the B76/B77/B78 work; not a regression of it.
+**Files**: `internal/backup/item_backup.go` (`dropForeignReferences`),
+`internal/services/certificates/certificate_service.go`
+(`requireCAKeyUsable`, `ValidateCertificateAccess`,
+`CreateCASignedCertificate`)
+
+**Symptom**: member A owns a CA certificate C_A, linked to A's key K_A, in
+vault V. Member B holds Key Vault Certificates Officer (which includes
+`certificates/backup` and `certificates/restore`) and Key Vault Crypto User
+in V, and owns a usable key K_B there. B can:
+
+1. Back up C_A: `BackupCertificate` reads under
+   `model.NewVaultScope(V, B)`, a vault-only predicate, and the blob carries
+   the row including its encrypted `private_key`.
+2. Restore the blob into V. `RestoreCertificate` stamps the new row with
+   `UserID = B` and keeps `key_id = K_A`, because `dropForeignReferences`
+   compares only the vault (`k.VaultID == vaultID`), not the owner. The
+   embedded CA private key copy is restored unchanged.
+3. Create a leaf with `key_id = K_B` and `ca_cert_id` = the restored row.
+   `ValidateKeyOwnership(K_B)` passes (B owns it),
+   `ValidateCertificateAccess` passes (B owns the restored row), and
+   `requireCAKeyUsable` reads `caCert.KeyID` (K_A) under B's vault scope
+   with no owner comparison and finds it usable. The service then decrypts
+   the restored row's `private_key` and signs.
+
+B thereby mints leaves chaining to A's CA, and A cannot restrict the clone,
+which B owns. Steps 1-3 were traced in the code on 2026-10-03; not exercised
+end to end.
+
+**Root cause**: the B32 owner comparison is applied to the leaf key and the
+CA row, but not to the key the CA row links to, and restore treats "resolves
+in this vault" as sufficient. Vault members see every certificate in the
+vault, so backup of another member's CA is allowed by design.
+
+**Fix options**: (a) `dropForeignReferences` also clears a key or CA link
+whose owner is not the restorer; (b) `requireCAKeyUsable` requires
+`key.UserID == caCert.UserID`. (b) also covers rows already restored, so
+(a) alone leaves existing clones working.
+
+**Related**: § B76 (same-vault restore keeps every link), § B77
+(`requireCAKeyUsable`), § B32 (owner comparison).
 
 ---
 

@@ -148,9 +148,10 @@ principal must also own a usable key.</li>
 <li>After the first scheduler run, query the audit log for the skipped rows
 (admin only):
 <code>rocketvault audit logs --action cert_auto_renew --from &lt;date&gt;</code>.
-Rows with outcome <code>denied</code> or <code>failed</code> name the certificate (and its
-owner) that stopped renewing. <code>--outcome</code> cannot select <code>denied</code> rows
-(§ B98), so filter by action.</li>
+Each row's details carry <code>status=denied</code> or <code>status=failed</code> and name the
+certificate that stopped renewing. The audit outcome column is never set
+for these rows (§ B98), so <code>--outcome</code> cannot select them; filter by
+action and read the status in the details.</li>
 <li>A CA certificate that now refuses to sign because it records no signing
 key, or whose key is purged, cannot be repaired. Re-issue it with
 <code>rocketvault certificate create --is-ca --key-id &lt;key-id&gt; ...</code> over a key
@@ -191,6 +192,11 @@ it with --is-ca&quot; and CA inspection failures on both routes, and a CA that
 vanishes between two reads during create. A disabled or expired CA on
 renew reports the renewed certificate as disabled in its 409 message, and
 a disabled or expired CA certificate still issues on create (pre-existing).</li>
+<li><strong>B100 (GitHub #68)</strong>: a vault member holding Certificates Officer and
+Crypto User can back up and restore another member's CA into the same
+vault and then issue leaves chaining to it, because restore keeps a key
+link that resolves in the vault without comparing owners, and the CA key
+gate does not either. Predates this release; not fixed here.</li>
 <li>Item-backup restore gives no signal when it drops a key or CA link (§ B76).</li>
 </ul>
 
