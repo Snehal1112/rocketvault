@@ -82,7 +82,8 @@ func TestTOTPStepRepository_ClaimTOTPStep_IsPerUser(t *testing.T) {
 	assert.True(t, claimed, "another user's claim must not consume this user's step")
 }
 
-// Steps beyond the 32-bit range must round-trip, since the API takes int64.
+// Steps beyond the 32-bit range must round-trip on SQLite. Postgres uses BIGINT
+// for this column, which the Postgres integration test covers.
 func TestTOTPStepRepository_ClaimTOTPStep_LargeStep(t *testing.T) {
 	t.Parallel()
 	db := setupUserDB(t)
@@ -119,7 +120,7 @@ func TestTOTPStepRepository_ClaimTOTPStep_ConcurrentSameStep(t *testing.T) {
 		CREATE TABLE users (
 			id             TEXT PRIMARY KEY,
 			username       TEXT UNIQUE NOT NULL,
-			totp_last_step INTEGER NOT NULL DEFAULT 0
+			totp_last_step BIGINT NOT NULL DEFAULT 0
 		);
 	`)
 	require.NoError(t, err)

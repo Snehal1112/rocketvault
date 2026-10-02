@@ -320,4 +320,14 @@ func TestPostgres_TOTPStepClaim(t *testing.T) {
 	claimed, err = steps.ClaimTOTPStep(ctx, uuid.New(), step+2)
 	require.NoError(t, err)
 	require.False(t, claimed, "a missing user can never claim a step")
+
+	// A step beyond 32 bits must fit the BIGINT column.
+	big := int64(1) << 40
+	claimed, err = steps.ClaimTOTPStep(ctx, userID, big)
+	require.NoError(t, err)
+	require.True(t, claimed, "a step beyond 32 bits must be accepted")
+
+	claimed, err = steps.ClaimTOTPStep(ctx, userID, big-1)
+	require.NoError(t, err)
+	require.False(t, claimed, "a step below a large stored step must be rejected")
 }

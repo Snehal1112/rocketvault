@@ -12,7 +12,8 @@ import (
 // TOTPStepRepositoryInterface records the last TOTP time step each user has used.
 type TOTPStepRepositoryInterface interface {
 	// ClaimTOTPStep stores step as the user's last accepted TOTP time step.
-	// It returns false when step is not newer than the stored one.
+	// It returns false when step is not newer than the stored one. An unknown
+	// user also returns (false, nil), so callers must treat false only as reject.
 	ClaimTOTPStep(ctx context.Context, userID uuid.UUID, step int64) (bool, error)
 }
 
