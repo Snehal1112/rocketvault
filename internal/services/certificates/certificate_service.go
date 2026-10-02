@@ -79,6 +79,11 @@ type CreateCertificateRequest struct {
 	// PurgeProtection is optional: nil leaves the stored default alone, true
 	// enables purge protection on the freshly created certificate.
 	PurgeProtection *bool
+
+	// Exportable requests an exportable certificate. It requires a key whose
+	// own exportable flag is true, because the certificate keeps a copy of
+	// that key; otherwise the create fails with model.ErrExportableKeyRequired.
+	Exportable bool
 }
 
 // resolveVaultID returns the requested vault id, falling back to the default
@@ -90,14 +95,27 @@ func resolveVaultID(vaultID uuid.UUID) uuid.UUID {
 	return vaultID
 }
 
+// requireExportableKey refuses an exportable certificate over a key whose
+// exportable flag is false, so a certificate cannot carry out a key its
+// creator marked non-exportable.
+func (s *certificateService) requireExportableKey(req CreateCertificateRequest, key *model.Key, action string) error {
+	if !req.Exportable || key.Exportable {
+		return nil
+	}
+	s.logger.LogAuditError(req.UserID.String(), action, "failed", "exportable certificate requested over a non-exportable key", nil)
+	return fmt.Errorf("%w: key %s has exportable=false", model.ErrExportableKeyRequired, req.KeyID)
+}
+
 // CreateCertificateResult represents the result of creating a new certificate.
 type CreateCertificateResult struct {
-	CertID    uuid.UUID
-	Name      string
-	Tags      []string
-	CreatedAt time.Time
-	ExpiresAt *time.Time
-	Version   int // The certificate's current version number.
+	CertID       uuid.UUID
+	Name         string
+	Tags         []string
+	CreatedAt    time.Time
+	ExpiresAt    *time.Time
+	Version      int    // The certificate's current version number.
+	Exportable   bool   // The immutable exportable flag the certificate was created with.
+	KeyAlgorithm string // The leaf public key's algorithm, such as RSA-2048.
 }
 
 // UpdateCertificateRequest represents a request to update an existing certificate.
@@ -295,6 +313,9 @@ func (s *certificateService) CreateSelfSignedCertificate(ctx context.Context, re
 		s.logger.LogAuditError(req.UserID.String(), "create_self_signed_cert", "failed", "failed to read key", err)
 		return nil, fmt.Errorf("failed to read key: %w", err)
 	}
+	if err := s.requireExportableKey(req, key, "create_self_signed_cert"); err != nil {
+		return nil, err
+	}
 
 	// Decrypt the private key
 	privateKeyPEM, err := common.DecryptSecret(key.Value)
@@ -359,6 +380,7 @@ func (s *certificateService) CreateSelfSignedCertificate(ctx context.Context, re
 		Enabled:     enabled,
 		NotBefore:   req.NotBefore,
 		Version:     1,
+		Exportable:  req.Exportable,
 	}
 
 	// Store in repository
@@ -379,12 +401,14 @@ func (s *certificateService) CreateSelfSignedCertificate(ctx context.Context, re
 	}).Info("Self-signed certificate created successfully")
 
 	return &CreateCertificateResult{
-		CertID:    cert.ID,
-		Name:      cert.Name,
-		Tags:      cert.Tags,
-		CreatedAt: cert.CreatedAt,
-		ExpiresAt: expiresAt,
-		Version:   1,
+		CertID:       cert.ID,
+		Name:         cert.Name,
+		Tags:         cert.Tags,
+		CreatedAt:    cert.CreatedAt,
+		ExpiresAt:    expiresAt,
+		Version:      1,
+		Exportable:   cert.Exportable,
+		KeyAlgorithm: crypto.KeyAlgorithmFromCertificatePEM(certPEM),
 	}, nil
 }
 
@@ -448,6 +472,9 @@ func (s *certificateService) CreateCASignedCertificate(ctx context.Context, req 
 	if err != nil {
 		s.logger.LogAuditError(req.UserID.String(), "create_ca_signed_cert", "failed", "failed to read key", err)
 		return nil, fmt.Errorf("failed to read key: %w", err)
+	}
+	if err := s.requireExportableKey(req, key, "create_ca_signed_cert"); err != nil {
+		return nil, err
 	}
 
 	// Decrypt the private key
@@ -550,6 +577,7 @@ func (s *certificateService) CreateCASignedCertificate(ctx context.Context, req 
 		Enabled:     enabled,
 		NotBefore:   req.NotBefore,
 		Version:     1,
+		Exportable:  req.Exportable,
 	}
 
 	// Store in repository
@@ -571,12 +599,14 @@ func (s *certificateService) CreateCASignedCertificate(ctx context.Context, req 
 	}).Info("CA-signed certificate created successfully")
 
 	return &CreateCertificateResult{
-		CertID:    cert.ID,
-		Name:      cert.Name,
-		Tags:      cert.Tags,
-		CreatedAt: cert.CreatedAt,
-		ExpiresAt: expiresAt,
-		Version:   1,
+		CertID:       cert.ID,
+		Name:         cert.Name,
+		Tags:         cert.Tags,
+		CreatedAt:    cert.CreatedAt,
+		ExpiresAt:    expiresAt,
+		Version:      1,
+		Exportable:   cert.Exportable,
+		KeyAlgorithm: crypto.KeyAlgorithmFromCertificatePEM(certPEM),
 	}, nil
 }
 

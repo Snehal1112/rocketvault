@@ -307,6 +307,9 @@ func (s *ItemBackupService) RestoreKey(ctx context.Context, blob string, userID,
 	key.ID = newID
 	key.UserID = userID
 	key.VaultID = vaultID
+	// A restore never grants exportability: the blob is unauthenticated
+	// base64 JSON, so its exportable value cannot be trusted.
+	key.Exportable = false
 
 	if txKeyRepo, repoOK := s.keyRepo.(txCapableKeyRepo); repoOK && s.txBeginner != nil {
 		return s.withTx(ctx, func(tx *db.Tx) error {
@@ -430,6 +433,8 @@ func (s *ItemBackupService) RestoreCertificate(ctx context.Context, blob string,
 	cert.ID = newID
 	cert.UserID = userID
 	cert.VaultID = vaultID
+	// A restore never grants exportability; see RestoreKey.
+	cert.Exportable = false
 
 	if txCertRepo, repoOK := s.certRepo.(txCapableCertRepo); repoOK && s.txBeginner != nil {
 		txVersionRepo, versionOK := s.certVersionRepo.(txCapableCertVersionRepo)
