@@ -122,10 +122,7 @@ func TestLoginUser_EmptyTOTPSecret_FailsClosedLikeWrongCode(t *testing.T) {
 	// A code that is wrong for the enrolled account.
 	goodCode, err := totp.GenerateCode(enrolledSecret, time.Now())
 	require.NoError(t, err)
-	wrongCode := "000000"
-	if goodCode == wrongCode {
-		wrongCode = "111111"
-	}
+	wrongCode := wrongCodeFor(t, enrolledSecret)
 	wrongCodeResp := postLogin(authSvc, "carol", "Correct-Horse-9", wrongCode)
 
 	assert.Equal(t, http.StatusForbidden, unenrolledResp.Code)

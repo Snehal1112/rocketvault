@@ -52,10 +52,7 @@ func TestPerformPasswordLogin_ReplayedTOTPCode_Rejected(t *testing.T) {
 
 	code, err := totp.GenerateCode(key.Secret(), time.Now())
 	require.NoError(t, err)
-	wrongCode := "000000"
-	if code == wrongCode {
-		wrongCode = "111111"
-	}
+	wrongCode := wrongCodeFor(t, key.Secret())
 
 	// A wrong code first: it must not use up the current step.
 	_, wrongCodeErr := performPasswordLogin(context.Background(), authSvc, "dora", "Correct-Horse-9", wrongCode)
@@ -68,4 +65,27 @@ func TestPerformPasswordLogin_ReplayedTOTPCode_Rejected(t *testing.T) {
 	_, replayErr := performPasswordLogin(context.Background(), authSvc, "dora", "Correct-Horse-9", code)
 	require.Error(t, replayErr, "a replayed code must be rejected")
 	assert.Equal(t, wrongCodeErr.Error(), replayErr.Error())
+}
+
+// wrongCodeFor returns a six-digit code that matches none of the codes near
+// now for secret, so it is wrong for every step a login checks.
+func wrongCodeFor(t *testing.T, secret string) string {
+	t.Helper()
+	totp := authServices.NewTOTPService()
+	now := time.Now()
+	// The login accepts two steps either side of now. Two more steps of margin
+	// cover a step boundary crossed while the test runs.
+	window := make(map[string]bool)
+	for offset := -4; offset <= 4; offset++ {
+		code, err := totp.GenerateCode(secret, now.Add(time.Duration(offset)*30*time.Second))
+		require.NoError(t, err)
+		window[code] = true
+	}
+	for _, candidate := range []string{"000000", "111111", "222222", "333333", "444444", "555555", "666666", "777777", "888888", "999999"} {
+		if !window[candidate] {
+			return candidate
+		}
+	}
+	t.Fatal("no wrong code found")
+	return ""
 }

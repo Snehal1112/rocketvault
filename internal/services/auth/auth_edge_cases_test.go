@@ -96,8 +96,7 @@ func TestTOTPService_ValidateCode_WrongCode(t *testing.T) {
 	key, err := svc.GenerateSecret("RocketVault", "charlie")
 	require.NoError(t, err)
 
-	// "000000" is almost never the correct TOTP for a fresh secret.
-	valid, err := svc.ValidateCode("000000", key.Secret(), time.Now())
+	valid, err := svc.ValidateCode(wrongCodeFor(t, key.Secret()), key.Secret(), time.Now())
 	require.NoError(t, err)
 	assert.False(t, valid)
 }
@@ -431,4 +430,27 @@ func TestValidateSession_ExpiredServiceAccount_Rejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "service account")
 	sessionRepo.AssertNotCalled(t, "IsSessionRevoked")
+}
+
+// wrongCodeFor returns a six-digit code that matches none of the codes near
+// now for secret, so it is wrong for every step a login checks.
+func wrongCodeFor(t *testing.T, secret string) string {
+	t.Helper()
+	totp := NewTOTPService()
+	now := time.Now()
+	// The login accepts two steps either side of now. Two more steps of margin
+	// cover a step boundary crossed while the test runs.
+	window := make(map[string]bool)
+	for offset := -4; offset <= 4; offset++ {
+		code, err := totp.GenerateCode(secret, now.Add(time.Duration(offset)*30*time.Second))
+		require.NoError(t, err)
+		window[code] = true
+	}
+	for _, candidate := range []string{"000000", "111111", "222222", "333333", "444444", "555555", "666666", "777777", "888888", "999999"} {
+		if !window[candidate] {
+			return candidate
+		}
+	}
+	t.Fatal("no wrong code found")
+	return ""
 }

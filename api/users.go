@@ -24,6 +24,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -328,18 +329,29 @@ func updateUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get updated user for response.
+	var response model.UserResponse
 	user, err := userSvc.GetUser(r.Context(), userID)
-	if err != nil {
+	switch {
+	case err == nil:
+		response = model.UserResponse{
+			ID:        user.ID.String(),
+			Username:  user.Username,
+			Roles:     user.Roles,
+			CreatedAt: user.CreatedAt.Format(time.RFC3339),
+		}
+	case result != nil && result.TOTPEnrollmentURL != "":
+		// The update is saved and enrolled a secret that is shown only here.
+		// A failed read-back must not lose it, so the response is built from
+		// the request instead and the read error is only logged.
+		c.logInternalError(fmt.Errorf("read back user after update with TOTP enrollment: %w", err))
+		response = model.UserResponse{
+			ID:       userID.String(),
+			Username: req.Username,
+			Roles:    req.Roles,
+		}
+	default:
 		c.SetInternalError(err)
 		return
-	}
-
-	// Prepare response.
-	response := model.UserResponse{
-		ID:        user.ID.String(),
-		Username:  user.Username,
-		Roles:     user.Roles,
-		CreatedAt: user.CreatedAt.Format(time.RFC3339),
 	}
 
 	// The enrollment URL is returned only by the call that generated the secret.

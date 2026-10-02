@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/subtle"
+	"encoding/base32"
 	"fmt"
 	"strings"
 	"time"
@@ -127,8 +128,8 @@ func (s *totpService) ValidateCode(code, secret string, currentTime time.Time) (
 //	for a wrong code or a wrong length. An error for an empty or malformed secret.
 func (s *totpService) ValidateCodeWithStep(code, secret string, currentTime time.Time) (int64, bool, error) {
 	// An empty secret decodes to an empty HMAC key that still yields codes, so
-	// it must never validate.
-	if secret == "" {
+	// it must never validate. Spaces or padding alone count as empty too.
+	if totpSecretIsEmpty(secret) {
 		return 0, false, fmt.Errorf("TOTP validation error: empty secret")
 	}
 
@@ -187,4 +188,20 @@ func (s *totpService) GenerateCode(secret string, currentTime time.Time) (string
 		return "", fmt.Errorf("failed to generate TOTP code: %w", err)
 	}
 	return code, nil
+}
+
+// totpSecretIsEmpty reports whether a secret yields no HMAC key material.
+// It normalizes the secret the same way the otp library does before decoding,
+// so a secret made only of whitespace or base32 padding counts as empty.
+// A secret that does not decode at all is not empty; validation rejects it.
+func totpSecretIsEmpty(secret string) bool {
+	trimmed := strings.TrimSpace(secret)
+	if strings.TrimSpace(strings.TrimRight(trimmed, "=")) == "" {
+		return true
+	}
+	if n := len(trimmed) % 8; n != 0 {
+		trimmed += strings.Repeat("=", 8-n)
+	}
+	key, err := base32.StdEncoding.DecodeString(strings.ToUpper(trimmed))
+	return err == nil && len(key) == 0
 }

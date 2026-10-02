@@ -76,12 +76,7 @@ func TestPerformPasswordLogin_EmptyTOTPSecret_FailsClosedLikeWrongCode(t *testin
 	require.NoError(t, err)
 	_, unenrolledErr := performPasswordLogin(context.Background(), authSvc, "bob", "Correct-Horse-9", emptySecretCode)
 
-	goodCode, err := totp.GenerateCode(enrolledSecret, time.Now())
-	require.NoError(t, err)
-	wrongCode := "000000"
-	if goodCode == wrongCode {
-		wrongCode = "111111"
-	}
+	wrongCode := wrongCodeFor(t, enrolledSecret)
 	_, wrongCodeErr := performPasswordLogin(context.Background(), authSvc, "carol", "Correct-Horse-9", wrongCode)
 
 	require.ErrorIs(t, unenrolledErr, authServices.ErrMFANotEnrolled)

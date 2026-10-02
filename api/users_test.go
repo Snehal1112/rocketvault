@@ -994,6 +994,10 @@ func (c *enrollRouteContainer) GetRBACService() authzServices.RBACService {
 
 // The enrollment response must be marked no-store on the real
 // PUT /api/v1/users/{id} route, not only when the handler is called directly.
+// The container uses permissiveRBAC, so this role:user caller reaches the
+// handler. Production RBAC maps PUT /users/* to users:update, which only the
+// admin role holds, so a non-admin is denied before the handler runs; see
+// TestUpdateUserRoute_PasswordEnrollment_RealRBAC for both cases.
 func TestUpdateUserRoute_PasswordEnrollment_NoStore(t *testing.T) {
 	svc := &mockUserService{}
 	targetID := uuid.New()
@@ -1025,6 +1029,129 @@ func TestUpdateUserRoute_PasswordEnrollment_NoStore(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, enrollURL, body.TOTPSecret)
 	svc.AssertExpectations(t)
+}
+
+// realRBACRouteContainer uses the production role-permission map.
+type realRBACRouteContainer struct {
+	userSvcContainer
+}
+
+func (c *realRBACRouteContainer) GetRBACService() authzServices.RBACService {
+	return authzServices.NewRBACService(userTestLog())
+}
+
+// With production RBAC an admin setting another user's password gets the
+// enrollment URL with no-store, and a role:user caller never reaches the handler.
+func TestUpdateUserRoute_PasswordEnrollment_RealRBAC(t *testing.T) {
+	enrollURL := "otpauth://totp/PasswordManager:alice?secret=ABC"
+
+	cases := []struct {
+		name       string
+		roles      []string
+		wantStatus int
+	}{
+		{name: "admin", roles: []string{model.RoleAdmin}, wantStatus: http.StatusOK},
+		{name: "user", roles: []string{model.RoleUser}, wantStatus: http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &mockUserService{}
+			targetID := uuid.New()
+			svc.On("UpdateUser", mock.Anything, mock.Anything).
+				Return(&userServices.UpdateUserResult{TOTPEnrollmentURL: enrollURL}, nil)
+			svc.On("GetUser", mock.Anything, targetID).Return(&model.User{
+				ID: targetID, Username: "alice", Roles: []string{model.RoleUser}, CreatedAt: time.Now(),
+			}, nil)
+
+			application := &app.App{
+				ServiceContainer: &realRBACRouteContainer{userSvcContainer{userSvc: svc}},
+				Logger:           userTestLog(),
+			}
+			router := mux.NewRouter()
+			a := &API{App: application, BaseRoutes: &Routes{Users: router.PathPrefix("/api/v1/users").Subrouter()}}
+			a.InitUsers()
+
+			// The admin updates someone else; the user updates their own account.
+			callerID := targetID.String()
+			if tc.name == "admin" {
+				callerID = uuid.New().String()
+			}
+			ctx := context.WithValue(context.Background(), common.UserIDKey, callerID)
+			ctx = context.WithValue(ctx, common.RoleKey, tc.roles)
+			r := httptest.NewRequestWithContext(ctx, http.MethodPut, "/api/v1/users/"+targetID.String(),
+				encodeBody(map[string]string{"password": "newpass123"}))
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, r)
+
+			require.Equal(t, tc.wantStatus, w.Code, w.Body.String())
+			if tc.wantStatus != http.StatusOK {
+				svc.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+				return
+			}
+			assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+			var body model.UserResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			assert.Equal(t, enrollURL, body.TOTPSecret)
+		})
+	}
+}
+
+// When the update enrolled TOTP but the read-back fails, the one-time URL must
+// still reach the caller. The body is built from the request instead, and the
+// URL never appears in the log.
+func TestUpdateUser_PasswordEnrollment_GetUserFails_StillReturnsURL(t *testing.T) {
+	svc := &mockUserService{}
+	targetID := uuid.New()
+	enrollURL := "otpauth://totp/PasswordManager:alice?secret=ABC"
+	svc.On("UpdateUser", mock.Anything, mock.Anything).
+		Return(&userServices.UpdateUserResult{TOTPEnrollmentURL: enrollURL}, nil)
+	svc.On("GetUser", mock.Anything, targetID).Return(nil, errors.New("database is locked"))
+
+	c := newUserCtx(svc, nil, uViewerClaims(targetID.String()))
+	c.Params = &ApiParams{UserID: targetID.String(), PerPage: 60}
+	var logBuf bytes.Buffer
+	c.Logger.SetOutput(&logBuf)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/users/"+targetID.String(),
+		encodeBody(map[string]string{"password": "newpass123"}))
+
+	updateUser(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+	var body model.UserResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Equal(t, enrollURL, body.TOTPSecret)
+	assert.Equal(t, targetID.String(), body.ID)
+	assert.NotContains(t, w.Body.String(), "database is locked")
+	// The read failure is logged server-side, and the secret is not.
+	assert.Contains(t, logBuf.String(), "database is locked")
+	assert.NotContains(t, logBuf.String(), "secret=ABC")
+}
+
+// Without an enrollment URL a failed read-back stays a plain 500.
+func TestUpdateUser_NoEnrollment_GetUserFails_Returns500(t *testing.T) {
+	svc := &mockUserService{}
+	targetID := uuid.New()
+	svc.On("UpdateUser", mock.Anything, mock.Anything).Return(&userServices.UpdateUserResult{}, nil)
+	svc.On("GetUser", mock.Anything, targetID).Return(nil, errors.New("database is locked"))
+
+	c := newUserCtx(svc, nil, uViewerClaims(targetID.String()))
+	c.Params = &ApiParams{UserID: targetID.String(), PerPage: 60}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPut, "/users/"+targetID.String(),
+		encodeBody(map[string]string{"password": "newpass123"}))
+
+	updateUser(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "database is locked")
 }
 
 func TestUpdateUser_DeprecatedRoleField_Rejected(t *testing.T) {

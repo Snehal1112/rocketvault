@@ -97,14 +97,22 @@ func (rr *replayRouter) login(code string) *httptest.ResponseRecorder {
 	return w
 }
 
-// wrongCodeFor returns a six-digit code that is not valid for secret now.
+// wrongCodeFor returns a six-digit code that matches none of the codes near
+// now for secret, so it is wrong for every step a login checks.
 func wrongCodeFor(t *testing.T, secret string) string {
 	t.Helper()
 	totp := authServices.NewTOTPService()
-	for _, candidate := range []string{"000000", "111111", "222222", "333333"} {
-		valid, err := totp.ValidateCode(candidate, secret, time.Now())
+	now := time.Now()
+	// The login accepts two steps either side of now. Two more steps of margin
+	// cover a step boundary crossed while the test runs.
+	window := make(map[string]bool)
+	for offset := -4; offset <= 4; offset++ {
+		code, err := totp.GenerateCode(secret, now.Add(time.Duration(offset)*30*time.Second))
 		require.NoError(t, err)
-		if !valid {
+		window[code] = true
+	}
+	for _, candidate := range []string{"000000", "111111", "222222", "333333", "444444", "555555", "666666", "777777", "888888", "999999"} {
+		if !window[candidate] {
 			return candidate
 		}
 	}

@@ -191,8 +191,9 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 	// An empty secret makes every TOTP code computable by anyone, so an
 	// unenrolled account must not log in with a password alone. The check runs
 	// after the password so it tells nothing to someone without the password,
-	// and its error reads exactly like a wrong code.
-	if user.TOTPSecret == "" {
+	// and its error reads exactly like a wrong code. A secret of only spaces
+	// or padding counts as empty, because it decodes to the same empty key.
+	if totpSecretIsEmpty(user.TOTPSecret) {
 		if s.auditService != nil {
 			_ = s.auditService.RecordEvent(ctx, auditServices.AuditEvent{
 				UserID: user.ID.String(), Action: "authenticate_user", Outcome: "failure", Source: "system",
@@ -390,20 +391,23 @@ func (s *authenticationService) ValidateSession(ctx context.Context, token strin
 	if slices.Contains(claims.Roles, model.RoleServiceAccount) {
 		// For service accounts, verify the client still exists and is active.
 		// sessionID equals client.ID, set as jti in IssueToken.
-		if s.oauth2ClientRepo != nil {
-			client, err := s.oauth2ClientRepo.GetByID(ctx, sessionID)
-			if err != nil {
-				s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account client not found", err)
-				return nil, fmt.Errorf("service account not found or revoked")
-			}
-			if !client.Enabled {
-				s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account disabled", nil)
-				return nil, fmt.Errorf("service account disabled")
-			}
-			if client.ExpiresAt != nil && client.ExpiresAt.Before(time.Now()) {
-				s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account expired", nil)
-				return nil, fmt.Errorf("service account expired")
-			}
+		// Without a client repository nothing can be checked, so the token is denied.
+		if s.oauth2ClientRepo == nil {
+			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account client repository not configured", nil)
+			return nil, errors.New("invalid session")
+		}
+		client, err := s.oauth2ClientRepo.GetByID(ctx, sessionID)
+		if err != nil {
+			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account client not found", err)
+			return nil, fmt.Errorf("service account not found or revoked")
+		}
+		if !client.Enabled {
+			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account disabled", nil)
+			return nil, fmt.Errorf("service account disabled")
+		}
+		if client.ExpiresAt != nil && client.ExpiresAt.Before(time.Now()) {
+			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Service account expired", nil)
+			return nil, fmt.Errorf("service account expired")
 		}
 	} else {
 		// For user sessions, check the session revocation table.
