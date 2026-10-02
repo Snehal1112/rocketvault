@@ -30,7 +30,7 @@ func (api *API) InitAccessPolicies() {
 // already used in api/audit.go, api/oauth2.go, and api/jwks.go.
 func requireAccessPolicyAdmin(c *Context) bool {
 	if !common.HasAnyRole(c.Claims.Roles, model.RoleAdmin) {
-		c.SetPermissionError("admin role required to manage access policies")
+		c.auditDenied("manage_access_policy", "admin role required to manage access policies")
 		return false
 	}
 	return true

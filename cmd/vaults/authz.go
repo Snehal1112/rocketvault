@@ -35,6 +35,14 @@ func resolveTargetVaultID(ctx context.Context, svc vaultServices.VaultService, n
 	return uuid.Nil, vaultServices.ErrVaultNotFound
 }
 
+// auditDenied records a CLI refusal with the same operation name and status
+// the HTTP handler writes for the same refusal (B81).
+func auditDenied(sc container.ServiceContainerInterface, principalID uuid.UUID, operation, message string) {
+	if logger := sc.GetLogger(); logger != nil {
+		logger.LogAuditError(principalID.String(), operation, "denied", message, nil)
+	}
+}
+
 // requireCanCreateVault checks the three-way create decision: the global
 // admin role, a global (not vault-specific) vaults:manage grant, or a bounded
 // provisioning grant. There is no target vault to resolve yet when creating
@@ -61,7 +69,9 @@ func requireCanCreateVault(ctx context.Context, sc container.ServiceContainerInt
 	}
 	right := authz.CanCreateVault(ctx, roles, sc.GetAccessPolicyService(), sc.GetGrantService(), principalID)
 	if right == authz.CreateRightNone {
-		return authz.CreateRightNone, fmt.Errorf("permission denied: admin, a global vaults/manage grant, or a vault provisioning grant required to create a vault")
+		err := fmt.Errorf("permission denied: admin, a global vaults/manage grant, or a vault provisioning grant required to create a vault")
+		auditDenied(sc, principalID, "create_vault", err.Error())
+		return authz.CreateRightNone, err
 	}
 	return right, nil
 }
@@ -90,7 +100,7 @@ func requireCanListVaults(ctx context.Context, sc container.ServiceContainerInte
 
 // requireCanManageVault resolves vaultName to an ID, checks CanManageVault
 // against it, and returns the caller's principal for audit attribution.
-func requireCanManageVault(ctx context.Context, sc container.ServiceContainerInterface, vaultName string) (uuid.UUID, error) {
+func requireCanManageVault(ctx context.Context, sc container.ServiceContainerInterface, vaultName, operation string) (uuid.UUID, error) {
 	roles, principalID, err := vaultcli.CallerIdentity(ctx)
 	if err != nil {
 		return uuid.Nil, err
@@ -100,7 +110,9 @@ func requireCanManageVault(ctx context.Context, sc container.ServiceContainerInt
 		return uuid.Nil, fmt.Errorf("resolve vault %q: %w", vaultName, err)
 	}
 	if !authz.CanManageVault(ctx, roles, sc.GetAccessPolicyService(), principalID, vaultID) {
-		return uuid.Nil, fmt.Errorf("permission denied: admin or vaults/manage required for vault %q", vaultName)
+		err := fmt.Errorf("permission denied: admin or vaults/manage required for vault %q", vaultName)
+		auditDenied(sc, principalID, operation, err.Error())
+		return uuid.Nil, err
 	}
 	return principalID, nil
 }
@@ -117,7 +129,9 @@ func requireCanPurgeVault(ctx context.Context, sc container.ServiceContainerInte
 		return uuid.Nil, fmt.Errorf("resolve vault %q: %w", vaultName, err)
 	}
 	if !authz.CanPurgeVault(ctx, roles, sc.GetRoleAssignmentService(), principalID, vaultID) {
-		return uuid.Nil, fmt.Errorf("permission denied: admin or Key Vault Purge Operator required for vault %q", vaultName)
+		err := fmt.Errorf("permission denied: admin or Key Vault Purge Operator required for vault %q", vaultName)
+		auditDenied(sc, principalID, "purge_vault", err.Error())
+		return uuid.Nil, err
 	}
 	return principalID, nil
 }

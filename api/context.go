@@ -118,6 +118,17 @@ func (c *Context) SetPermissionError(permission string) {
 		"Insufficient permissions: "+permission, nil, "", http.StatusForbidden)
 }
 
+// auditDenied records a handler-level authorization refusal, then sets the
+// 403 response. Middleware refusals were already audited; handler refusals
+// were not, so a refused grant, revoke or vault change left no trace (B81).
+func (c *Context) auditDenied(operation, permission string) {
+	if c.Logger != nil {
+		c.Logger.LogAuditError(c.Claims.UserID, operation, "denied",
+			"Insufficient permissions: "+permission, nil)
+	}
+	c.SetPermissionError(permission)
+}
+
 // SetConflict sets a 409 error for a request that collides with existing state.
 func (c *Context) SetConflict(message string) {
 	c.Err = common.NewAppError("api.context.set_conflict", message, nil, "", http.StatusConflict)

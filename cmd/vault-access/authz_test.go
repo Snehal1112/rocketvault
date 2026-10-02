@@ -12,6 +12,7 @@ import (
 
 	"rocketvault/cmd/testutils"
 	"rocketvault/common"
+	"rocketvault/internal/logging/logtest"
 	authzServices "rocketvault/internal/services/authorization"
 	"rocketvault/model"
 )
@@ -114,12 +115,17 @@ func TestVaultAccessGrant_DeniedWithoutGrant(t *testing.T) {
 
 	cmd, _ := newVaultAccessCmd(ctx)
 	cmd.SetArgs([]string{"grant", "alice", "--role", model.RoleKeyVaultAdministrator})
+	rec := &logtest.Recorder{}
+	tc.MockContainer.GetLogger().SetAuditPersister(rec)
 
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "permission denied")
 	assert.False(t, roleSvc.assignCalled, "AssignRole must not be reached when the caller is denied")
 	assert.Contains(t, roleSvc.actionsAsked, model.ActionRoleAssignmentsWrite)
+	row, ok := rec.Find("assign_role", "denied")
+	require.True(t, ok, "a refused CLI grant must be audited")
+	assert.Equal(t, tc.TestUserID.String(), row.UserID)
 }
 
 // TestVaultAccessRevoke_DeniedWithoutGrant mirrors the grant case: revoking

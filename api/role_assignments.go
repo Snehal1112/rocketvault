@@ -68,7 +68,7 @@ func createRoleAssignment(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 	if !authzServices.CanManageRoleAssignments(r.Context(), roles, c.App.ServiceContainer.GetAccessPolicyService(),
 		c.App.ServiceContainer.GetRoleAssignmentService(), callerID, vaultID, true) {
-		c.SetPermissionError("admin, vaults/manage, or Key Vault Data Access Administrator required")
+		c.auditDenied("assign_role", "admin, vaults/manage, or Key Vault Data Access Administrator required")
 		return
 	}
 	isGlobalAdmin := common.HasAnyRole(roles, string(model.RoleAdmin))
@@ -103,7 +103,7 @@ func createRoleAssignment(c *Context, w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, authzServices.ErrPrincipalNotFound):
 			c.SetNotFound("principal")
 		case errors.Is(err, authzServices.ErrRoleNotGrantable):
-			c.SetPermissionError("role not grantable by a non-admin caller")
+			c.auditDenied("assign_role", "role not grantable by a non-admin caller")
 		default:
 			c.SetInternalError(err)
 		}
@@ -135,7 +135,7 @@ func listRoleAssignments(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 	if !authzServices.CanManageRoleAssignments(r.Context(), roles, c.App.ServiceContainer.GetAccessPolicyService(),
 		c.App.ServiceContainer.GetRoleAssignmentService(), callerID, vaultID, false) {
-		c.SetPermissionError("admin, vaults/manage, or Key Vault Data Access Administrator required")
+		c.auditDenied("list_role_assignments", "admin, vaults/manage, or Key Vault Data Access Administrator required")
 		return
 	}
 	svc := c.App.ServiceContainer.GetRoleAssignmentService()
@@ -173,7 +173,7 @@ func getRoleAssignment(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 	if !authzServices.CanManageRoleAssignments(r.Context(), roles, c.App.ServiceContainer.GetAccessPolicyService(),
 		c.App.ServiceContainer.GetRoleAssignmentService(), callerID, vaultID, false) {
-		c.SetPermissionError("admin, vaults/manage, or Key Vault Data Access Administrator required")
+		c.auditDenied("get_role_assignment", "admin, vaults/manage, or Key Vault Data Access Administrator required")
 		return
 	}
 	id, idOK := resourceID(c, c.Params.AssignmentID, "assignment_id")
@@ -214,7 +214,7 @@ func deleteRoleAssignment(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 	if !authzServices.CanManageRoleAssignments(r.Context(), roles, c.App.ServiceContainer.GetAccessPolicyService(),
 		c.App.ServiceContainer.GetRoleAssignmentService(), callerID, vaultID, false) {
-		c.SetPermissionError("admin, vaults/manage, or Key Vault Data Access Administrator required")
+		c.auditDenied("revoke_role_assignment", "admin, vaults/manage, or Key Vault Data Access Administrator required")
 		return
 	}
 	isGlobalAdmin := common.HasAnyRole(roles, string(model.RoleAdmin))
@@ -228,7 +228,7 @@ func deleteRoleAssignment(c *Context, w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, authzServices.ErrAssignmentNotFound):
 			c.SetNotFound("role assignment")
 		case errors.Is(err, authzServices.ErrRoleNotGrantable):
-			c.SetPermissionError("role not revocable by a non-admin caller")
+			c.auditDenied("revoke_role_assignment", "role not revocable by a non-admin caller")
 		default:
 			c.SetInternalError(err)
 		}

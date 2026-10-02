@@ -81,7 +81,7 @@ func createVault(c *Context, w http.ResponseWriter, r *http.Request) {
 		c.App.ServiceContainer.GetAccessPolicyService(),
 		c.App.ServiceContainer.GetGrantService(), userID)
 	if right == authzServices.CreateRightNone {
-		c.SetPermissionError("admin, vaults/manage, or a vault provisioning grant required")
+		c.auditDenied("create_vault", "admin, vaults/manage, or a vault provisioning grant required")
 		return
 	}
 
@@ -102,7 +102,7 @@ func createVault(c *Context, w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, vaultServices.ErrVaultQuotaExceeded), errors.Is(err, vaultServices.ErrPurgeProtectionNotPermitted):
-			c.SetPermissionError(err.Error())
+			c.auditDenied("create_vault", err.Error())
 		default:
 			// Validation and duplicate failures are client errors.
 			c.SetInvalidParam(err.Error())
@@ -199,7 +199,7 @@ func getVault(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !authzServices.CanManageVault(r.Context(), roles, c.App.ServiceContainer.GetAccessPolicyService(), userID, vault.ID) {
-		c.SetPermissionError("admin or vaults/manage required")
+		c.auditDenied("get_vault", "admin or vaults/manage required")
 		return
 	}
 
@@ -237,7 +237,7 @@ func updateVault(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !authzServices.CanManageVault(r.Context(), roles, c.App.ServiceContainer.GetAccessPolicyService(), userID, target.ID) {
-		c.SetPermissionError("admin or vaults/manage required")
+		c.auditDenied("update_vault", "admin or vaults/manage required")
 		return
 	}
 
@@ -294,7 +294,7 @@ func deleteVault(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !authzServices.CanManageVault(r.Context(), roles, c.App.ServiceContainer.GetAccessPolicyService(), userID, target.ID) {
-		c.SetPermissionError("admin or vaults/manage required")
+		c.auditDenied("delete_vault", "admin or vaults/manage required")
 		return
 	}
 

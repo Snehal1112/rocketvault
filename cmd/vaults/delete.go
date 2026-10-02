@@ -35,7 +35,7 @@ The default vault cannot be deleted.`,
 		if !ok || serviceContainer == nil {
 			return fmt.Errorf("service container not available in context")
 		}
-		actorID, err := requireCanManageVault(ctx, serviceContainer, name)
+		actorID, err := requireCanManageVault(ctx, serviceContainer, name, "delete_vault")
 		if err != nil {
 			return err
 		}

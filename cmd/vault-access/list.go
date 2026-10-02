@@ -66,7 +66,7 @@ variable, then config, then "default" if none of those is set.`,
 			if err != nil {
 				return err
 			}
-			if err := requireCanManageRoleAssignments(ctx, sc, vaultID, false); err != nil {
+			if err := requireCanManageRoleAssignments(ctx, sc, vaultID, false, "list_role_assignments"); err != nil {
 				return err
 			}
 			list, err := sc.GetRoleAssignmentService().ListAssignments(ctx, vaultID)

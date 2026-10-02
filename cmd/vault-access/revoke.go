@@ -72,7 +72,7 @@ assignment did not exist.`,
 			if err != nil {
 				return err
 			}
-			if err := requireCanManageRoleAssignments(ctx, sc, vaultID, false); err != nil {
+			if err := requireCanManageRoleAssignments(ctx, sc, vaultID, false, "revoke_role_assignment"); err != nil {
 				return err
 			}
 			callerRoles, callerID, err := vaultcli.CallerIdentity(ctx)

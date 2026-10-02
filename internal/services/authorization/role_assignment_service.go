@@ -161,17 +161,17 @@ func (s *roleAssignmentService) AssignRole(ctx context.Context, in AssignRoleInp
 	policies, err := ExpandRole(in.Role, principalID, pType, in.VaultID, assignmentID)
 	if err != nil {
 		if delErr := s.roleRepo.Delete(ctx, assignmentID); delErr != nil && s.log != nil {
-			s.log.LogAuditError("", "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete assignment %s", assignmentID), delErr)
+			s.log.LogAuditError(in.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete assignment %s", assignmentID), delErr)
 		}
 		return nil, err
 	}
 	for _, p := range policies {
 		if err := s.policyRepo.Create(ctx, p); err != nil {
 			if delErr := s.policyRepo.DeleteByAssignmentID(ctx, assignmentID); delErr != nil && s.log != nil {
-				s.log.LogAuditError("", "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete policies for assignment %s", assignmentID), delErr)
+				s.log.LogAuditError(in.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete policies for assignment %s", assignmentID), delErr)
 			}
 			if delErr := s.roleRepo.Delete(ctx, assignmentID); delErr != nil && s.log != nil {
-				s.log.LogAuditError("", "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete assignment %s", assignmentID), delErr)
+				s.log.LogAuditError(in.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete assignment %s", assignmentID), delErr)
 			}
 			return nil, fmt.Errorf("expand role policies: %w", err)
 		}

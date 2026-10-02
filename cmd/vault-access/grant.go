@@ -103,7 +103,7 @@ variable, then config, then "default" if none of those is set.
 			if err != nil {
 				return err
 			}
-			if err := requireCanManageRoleAssignments(ctx, sc, vaultID, true); err != nil {
+			if err := requireCanManageRoleAssignments(ctx, sc, vaultID, true, "assign_role"); err != nil {
 				return err
 			}
 			callerRoles, _, err := vaultcli.CallerIdentity(ctx)

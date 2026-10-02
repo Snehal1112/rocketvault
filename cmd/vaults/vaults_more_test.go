@@ -15,6 +15,7 @@ import (
 
 	"rocketvault/cmd/testutils"
 	"rocketvault/common"
+	"rocketvault/internal/logging/logtest"
 	authzServices "rocketvault/internal/services/authorization"
 	"rocketvault/model"
 )
@@ -415,11 +416,16 @@ func TestVaultsDelete_ForbiddenWithoutGrant(t *testing.T) {
 	cmd := &cobra.Command{Use: "delete", Args: cobra.ExactArgs(1), RunE: deleteCmd.RunE}
 	cmd.SetContext(nonAdminCtx)
 	cmd.SetArgs([]string{"guarded-vault"})
+	rec := &logtest.Recorder{}
+	tc.MockContainer.GetLogger().SetAuditPersister(rec)
 
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "permission denied")
 	tc.MockVaultService.AssertNotCalled(t, "DeleteVault", mock.Anything, mock.Anything, mock.Anything)
+	row, ok := rec.Find("delete_vault", "denied")
+	require.True(t, ok, "a refused CLI vault delete must be audited")
+	assert.Equal(t, tc.TestUserID.String(), row.UserID)
 }
 
 // TestVaultsRecover_ForbiddenWithoutGrant mirrors the delete case for recover.

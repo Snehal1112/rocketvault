@@ -57,7 +57,7 @@ func resolveAndAuthorizeVault(c *Context, r *http.Request) (*model.Vault, uuid.U
 		return nil, uuid.Nil, false
 	}
 	if !authzServices.CanManageVault(r.Context(), roles, c.App.ServiceContainer.GetAccessPolicyService(), userID, target.ID) {
-		c.SetPermissionError("admin or vaults/manage required")
+		c.auditDenied("manage_vault_webhook", "admin or vaults/manage required")
 		return nil, uuid.Nil, false
 	}
 	return target, userID, true

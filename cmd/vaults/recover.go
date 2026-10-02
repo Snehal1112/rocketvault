@@ -34,7 +34,7 @@ flag.`,
 		if !ok || serviceContainer == nil {
 			return fmt.Errorf("service container not available in context")
 		}
-		actorID, err := requireCanManageVault(ctx, serviceContainer, name)
+		actorID, err := requireCanManageVault(ctx, serviceContainer, name, "recover_vault")
 		if err != nil {
 			return err
 		}
