@@ -7,16 +7,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAzureRoleNames asserts the exact eleven built-in data-plane roles, sorted.
+// TestAzureRoleNames asserts the exact thirteen built-in data-plane roles, sorted.
 func TestAzureRoleNames(t *testing.T) {
 	assert.Equal(t, []string{
 		"Key Vault Administrator",
+		"Key Vault Certificate Exporter",
 		"Key Vault Certificate User",
 		"Key Vault Certificates Officer",
 		"Key Vault Crypto Officer",
 		"Key Vault Crypto Service Encryption User",
 		"Key Vault Crypto User",
 		"Key Vault Data Access Administrator",
+		"Key Vault Key Exporter",
 		"Key Vault Purge Operator",
 		"Key Vault Reader",
 		"Key Vault Secrets Officer",
@@ -24,7 +26,7 @@ func TestAzureRoleNames(t *testing.T) {
 	}, AzureRoleNames())
 }
 
-// TestIsAzureRole accepts the eleven names and rejects everything else,
+// TestIsAzureRole accepts the thirteen names and rejects everything else,
 // including the legacy vault role vocabulary and case variations.
 func TestIsAzureRole(t *testing.T) {
 	for _, name := range AzureRoleNames() {
@@ -81,7 +83,7 @@ func TestAzureRoleDataActions(t *testing.T) {
 	// RoleKeyVaultPurgeOperator (vault purge) and RoleKeyVaultDataAccessAdministrator
 	// (role assignment management). These exist as separate roles precisely because
 	// Administrator doesn't have those permissions in Azure. All other roles grant
-	// actions already covered by Administrator's 34 data-plane actions.
+	// actions already covered by Administrator's 36 data-plane actions.
 	var union []DataAction
 	seen := map[DataAction]bool{}
 	for _, role := range AzureRoleNames() {
@@ -96,7 +98,7 @@ func TestAzureRoleDataActions(t *testing.T) {
 		}
 	}
 	admin := AzureRoleDataActions(RoleKeyVaultAdministrator)
-	assert.Len(t, admin, 34, "administrator must grant all 34 data actions")
+	assert.Len(t, admin, 36, "administrator must grant all 36 data actions")
 	for _, a := range union {
 		assert.Contains(t, admin, a)
 	}
@@ -212,10 +214,10 @@ func TestRoleKeyVaultDataAccessAdministrator_GrantsRoleAssignmentActionsOnly(t *
 	}
 }
 
-func TestAzureRoleNames_IncludesAllElevenGrantableRoles(t *testing.T) {
+func TestAzureRoleNames_IncludesAllThirteenGrantableRoles(t *testing.T) {
 	names := AzureRoleNames()
-	if len(names) != 11 {
-		t.Fatalf("got %d role names, want 11: %v", len(names), names)
+	if len(names) != 13 {
+		t.Fatalf("got %d role names, want 13: %v", len(names), names)
 	}
 }
 

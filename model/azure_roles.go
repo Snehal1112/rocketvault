@@ -71,6 +71,10 @@ const (
 	// ActionKeysRotationPolicyWrite permits creating, updating, or clearing a
 	// key's rotation policy.
 	ActionKeysRotationPolicyWrite DataAction = "Microsoft.KeyVault/vaults/keys/rotationpolicy/write"
+	// ActionKeysExport permits exporting one software-backed, exportable key
+	// as unencrypted PKCS#8. RocketVault-only: Azure keys are non-extractable.
+	// Granted by Key Vault Key Exporter and Administrator only.
+	ActionKeysExport DataAction = "Microsoft.KeyVault/vaults/keys/export/action"
 )
 
 // Certificate data actions.
@@ -94,6 +98,11 @@ const (
 	// ActionCertificatesPurge permits permanently destroying a soft-deleted
 	// certificate.
 	ActionCertificatesPurge DataAction = "Microsoft.KeyVault/vaults/certificates/purge"
+	// ActionCertificatesExportItem permits exporting one exportable
+	// certificate with its private key, as PEM or PKCS12. RocketVault-only.
+	// Named so it cannot collide with the unbuilt bulk export. Granted by Key
+	// Vault Certificate Exporter and Administrator only.
+	ActionCertificatesExportItem DataAction = "Microsoft.KeyVault/vaults/certificates/export/action"
 )
 
 // Vault-management and role-assignment data actions.
@@ -146,6 +155,12 @@ const (
 	// revoke role assignments within a vault, without granting any data
 	// action on the vault's secrets, keys, or certificates.
 	RoleKeyVaultDataAccessAdministrator = "Key Vault Data Access Administrator"
+	// RoleKeyVaultCertificateExporter grants per-certificate export of
+	// exportable certificates only. Only a global admin can grant it.
+	RoleKeyVaultCertificateExporter = "Key Vault Certificate Exporter"
+	// RoleKeyVaultKeyExporter grants per-key export of exportable software
+	// keys only. Only a global admin can grant it.
+	RoleKeyVaultKeyExporter = "Key Vault Key Exporter"
 )
 
 // azureRoleDataActions is the single source of truth for what each role grants.
@@ -164,6 +179,7 @@ var azureRoleDataActions = map[string][]DataAction{
 		ActionCertificatesRead, ActionCertificatesCreate, ActionCertificatesUpdate,
 		ActionCertificatesDelete, ActionCertificatesBackup, ActionCertificatesRestore,
 		ActionCertificatesRecover, ActionCertificatesPurge,
+		ActionCertificatesExportItem, ActionKeysExport,
 	},
 	RoleKeyVaultReader: {
 		ActionSecretsReadMetadata,
@@ -210,9 +226,15 @@ var azureRoleDataActions = map[string][]DataAction{
 	RoleKeyVaultDataAccessAdministrator: {
 		ActionRoleAssignmentsWrite, ActionRoleAssignmentsDelete,
 	},
+	RoleKeyVaultCertificateExporter: {
+		ActionCertificatesExportItem,
+	},
+	RoleKeyVaultKeyExporter: {
+		ActionKeysExport,
+	},
 }
 
-// AzureRoleNames returns the eleven built-in role names in sorted order.
+// AzureRoleNames returns the thirteen built-in role names in sorted order.
 func AzureRoleNames() []string {
 	names := make([]string, 0, len(azureRoleDataActions))
 	for name := range azureRoleDataActions {
@@ -222,7 +244,7 @@ func AzureRoleNames() []string {
 	return names
 }
 
-// IsAzureRole reports whether name is one of the eleven built-in roles. The
+// IsAzureRole reports whether name is one of the thirteen built-in roles. The
 // comparison is exact: role names are stored verbatim in role_assignments.role.
 func IsAzureRole(name string) bool {
 	_, ok := azureRoleDataActions[name]

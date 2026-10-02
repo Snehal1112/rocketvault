@@ -58,7 +58,7 @@ var builtInRoles = map[string][]permission{
 var vaultAdminExtra = permission{model.PolicyResourceVaults, model.OpManage}
 
 // BuiltInRoleNames returns the sorted list of grantable role names: the legacy
-// vault roles plus the eleven Azure built-in data-plane roles.
+// vault roles plus the thirteen Azure built-in data-plane roles.
 func BuiltInRoleNames() []string {
 	names := make([]string, 0, len(builtInRoles)+1+len(model.AzureRoleNames()))
 	for n := range builtInRoles {
@@ -90,7 +90,7 @@ func RolePermissions(role string) ([][2]string, error) {
 }
 
 // IsValidRole reports whether name is a grantable role: a legacy vault role or
-// one of the eleven Azure built-in data-plane roles.
+// one of the thirteen Azure built-in data-plane roles.
 //
 // This stays permissive for the legacy names even though AssignRole (the
 // new-grant path) additionally rejects them via IsLegacyRole below: this
@@ -108,7 +108,7 @@ func IsValidRole(name string) bool {
 }
 
 // legacyRoleNames is the set of pre-Azure vault-scoped role names (RocketVault
-// v0.2.0, 2026-06-06). model.RoleGrantsDataAction only understands the eleven
+// v0.2.0, 2026-06-06). model.RoleGrantsDataAction only understands the thirteen
 // Azure names, so a role_assignments row holding one of these grants zero
 // data-plane access — IsValidRole still recognizes them (see above), but
 // IsLegacyRole lets the new-grant path (RoleAssignmentService.AssignRole)

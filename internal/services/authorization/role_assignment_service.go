@@ -118,7 +118,7 @@ func (s *roleAssignmentService) AssignRole(ctx context.Context, in AssignRoleInp
 	if IsLegacyRole(in.Role) {
 		// IsValidRole still accepts these for ExpandRole/RolePermissions/the
 		// backfill's legacy-role translation, but model.RoleGrantsDataAction only
-		// understands the eleven Azure names — granting one of these now would
+		// understands the thirteen Azure names — granting one of these now would
 		// silently confer zero data-plane access.
 		return nil, fmt.Errorf("%w: %q is a legacy role name and grants no data-plane access; use one of the Azure built-in roles instead: %s",
 			ErrInvalidRole, in.Role, strings.Join(model.AzureRoleNames(), ", "))

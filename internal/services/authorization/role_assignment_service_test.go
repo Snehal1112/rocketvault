@@ -131,7 +131,7 @@ func TestAssignRole_HappyPath(t *testing.T) {
 
 // TestAssignRole_RejectsLegacyRole asserts every one of the seven pre-Azure
 // vault-scoped role names is refused by the new-grant path: model.RoleGrantsDataAction
-// only understands the eleven Azure names, so granting one of these would
+// only understands the thirteen Azure names, so granting one of these would
 // silently confer zero data-plane access. IsValidRole still recognizes them
 // (ExpandRole, RolePermissions, and the upgrade backfill's legacy-role
 // translation legitimately need to), so the rejection must come from AssignRole
@@ -207,7 +207,7 @@ func TestAssignRole_Idempotent(t *testing.T) {
 // used to drive AssignRole with a legacy role name to exercise the
 // materialise-then-rollback loop below (ExpandRole -> policyRepo.Create).
 // Since AssignRole now refuses every legacy name (TestAssignRole_RejectsLegacyRole)
-// and the only roles it still accepts are the eleven Azure ones — which
+// and the only roles it still accepts are the thirteen Azure ones — which
 // ExpandRole always expands to zero policies for — that loop can no longer be
 // reached through AssignRole with any input. The rollback logic itself stays
 // in role_assignment_service.go as defense in depth; it is exercised directly

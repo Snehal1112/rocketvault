@@ -202,6 +202,8 @@ func mapKeyAction(method, rest string) (model.DataAction, RouteKind) {
 				return model.ActionKeysEncrypt, RouteVaultData
 			case "decrypt":
 				return model.ActionKeysDecrypt, RouteVaultData
+			case "export":
+				return model.ActionKeysExport, RouteVaultData
 			}
 		}
 	}
@@ -264,6 +266,10 @@ func mapCertificateAction(method, rest string) (model.DataAction, RouteKind) {
 		case "renew":
 			if method == http.MethodPost {
 				return model.ActionCertificatesCreate, RouteVaultData
+			}
+		case "export":
+			if method == http.MethodPost {
+				return model.ActionCertificatesExportItem, RouteVaultData
 			}
 		}
 	}

@@ -86,6 +86,8 @@ var matrixOps = []matrixOp{
 	{"certs.listDeleted", http.MethodGet, "/api/v1/deleted/certificates"},          // flat only, see doc comment above
 	{"certs.recover", http.MethodPost, "/api/v1/deleted/certificates/abc/restore"}, // flat only, see doc comment above
 	{"certs.purge", http.MethodDelete, "/api/v1/deleted/certificates/abc/purge"},   // flat only, see doc comment above
+	{"certs.export", http.MethodPost, "/api/v1/vaults/prod/certificates/abc/export"},
+	{"keys.export", http.MethodPost, "/api/v1/vaults/prod/keys/abc/export"},
 }
 
 // allSecretOps, allKeyOps and allCertOps are named once so the officer roles
@@ -117,8 +119,8 @@ var (
 // matrixAllowed names, per role, the exact operations that role permits.
 // Every operation absent from a role's list is asserted denied.
 var matrixAllowed = map[string][]string{
-	model.RoleKeyVaultAdministrator: append(append(append([]string{},
-		allSecretOps...), allKeyOps...), allCertOps...),
+	model.RoleKeyVaultAdministrator: append(append(append(append([]string{},
+		allSecretOps...), allKeyOps...), allCertOps...), "certs.export", "keys.export"),
 
 	model.RoleKeyVaultReader: {
 		"secrets.list", "secrets.listVersions", "secrets.listDeleted",
@@ -156,12 +158,15 @@ var matrixAllowed = map[string][]string{
 	},
 
 	model.RoleKeyVaultDataAccessAdministrator: {}, // control-plane operation only, no data-plane operations
+
+	model.RoleKeyVaultCertificateExporter: {"certs.export"},
+	model.RoleKeyVaultKeyExporter:         {"keys.export"},
 }
 
 // TestAuthorizationMatrix asserts, for every (role, operation) pair, that the
 // role's data actions permit exactly the operations named for it and no others.
 func TestAuthorizationMatrix(t *testing.T) {
-	require.Len(t, matrixAllowed, 11, "all eleven Azure roles must appear in the matrix")
+	require.Len(t, matrixAllowed, 13, "all thirteen Azure roles must appear in the matrix")
 
 	for _, role := range model.AzureRoleNames() {
 		allowedNames, ok := matrixAllowed[role]
@@ -194,7 +199,7 @@ func TestAuthorizationMatrixCoversEveryOperation(t *testing.T) {
 		require.False(t, known[op.name], "duplicate operation %q", op.name)
 		known[op.name] = true
 	}
-	assert.Len(t, matrixOps, 51)
+	assert.Len(t, matrixOps, 53)
 
 	for role, names := range matrixAllowed {
 		for _, n := range names {
@@ -208,9 +213,9 @@ func TestAuthorizationMatrixCoversEveryOperation(t *testing.T) {
 func TestAuthorizationMatrixNoRoleGrantsEverythingButAdministrator(t *testing.T) {
 	for role, names := range matrixAllowed {
 		if role == model.RoleKeyVaultAdministrator {
-			assert.Len(t, names, 51)
+			assert.Len(t, names, 53)
 			continue
 		}
-		assert.Less(t, len(names), 51, "only Key Vault Administrator may grant every operation")
+		assert.Less(t, len(names), 53, "only Key Vault Administrator may grant every operation")
 	}
 }

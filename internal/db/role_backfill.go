@@ -43,7 +43,7 @@ var ownershipBackfillSources = []ownershipBackfillSource{
 // built-in role it corresponds to. The role_assignments table and this
 // vocabulary shipped in RocketVault v0.2.0 (2026-06-06), well before the
 // Task 9 deny-by-default PolicyMiddleware inversion, which is evaluated
-// entirely against model.RoleGrantsDataAction and understands only the eleven
+// entirely against model.RoleGrantsDataAction and understands only the thirteen
 // Azure names. Without this translation, a principal holding only a legacy
 // role like "secrets-officer" -- and who happens to own no objects directly,
 // so the ownership-derived sources above never see them -- grants zero data
