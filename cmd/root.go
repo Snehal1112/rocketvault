@@ -79,8 +79,8 @@ Log in once with 'rocketvault users login'. The session is cached under
 ~/.rocketvault/sessions and refreshed automatically, so everyday commands need
 no credential flags. These commands need no session at all: health, serve,
 users admin, users login, users logout, the migrate commands, vaults
-preview-migration, vault-access roles, secrets generate-password, and the
-whole context group.
+preview-migration, vault-access roles, secrets generate-password, export
+open, and the whole context group.
 
 Secrets, keys, and certificates live inside a vault. Those commands act on the
 vault named by --vault or ROCKETVAULT_VAULT, falling back to "default".`,
@@ -324,8 +324,9 @@ func initConfig() {
 	// remote mode — remote mode needs no local database or crypto config at
 	// all, only a target server — nor for the `context` command group, which
 	// never needs a local database/config at all, remote target or not (it
-	// only reads/writes ~/.rocketvault/contexts.json).
-	if err := viper.ReadInConfig(); err != nil && !isContextCommandArgs(os.Args[1:]) {
+	// only reads/writes ~/.rocketvault/contexts.json), nor for the `export`
+	// group, which only decrypts local files (see cmd/export.go).
+	if err := viper.ReadInConfig(); err != nil && !isContextCommandArgs(os.Args[1:]) && !isExportGroupArgs(os.Args[1:]) {
 		serverFlag, _ := rootCmd.PersistentFlags().GetString("server")
 		target, targetErr := cliclient.ResolveTarget(serverFlag)
 		if targetErr != nil || target == nil {
