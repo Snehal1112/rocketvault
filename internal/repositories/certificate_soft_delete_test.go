@@ -39,6 +39,7 @@ func setupCertTestDB(t *testing.T) *sql.DB {
 			certificate TEXT NOT NULL,
 			private_key TEXT NOT NULL,
 			version INTEGER NOT NULL DEFAULT 1,
+			exportable BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			deleted_at TIMESTAMP DEFAULT NULL,
 			purge_protection BOOLEAN NOT NULL DEFAULT FALSE,

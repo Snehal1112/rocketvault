@@ -88,7 +88,7 @@ type KeyRepositoryInterface interface {
 type KeyFilter = model.KeyFilter
 
 // keyColumns is the canonical SELECT list shared by every scoped key query.
-const keyColumns = "id, user_id, vault_id, name, value, type, revoked, created_at, enabled, expires_at, not_before, bits, curve, updated_at, deleted_at, purge_protection"
+const keyColumns = "id, user_id, vault_id, name, value, type, revoked, created_at, enabled, expires_at, not_before, bits, curve, updated_at, deleted_at, purge_protection, exportable"
 
 // scanKeyRow scans one keys row in the canonical column order.
 func scanKeyRow(scan func(dest ...any) error) (model.Key, error) {
@@ -97,7 +97,7 @@ func scanKeyRow(scan func(dest ...any) error) (model.Key, error) {
 
 	if err := scan(&idStr, &userIDStr, &vaultIDStr, &key.Name, &key.Value, &key.Type, &key.Revoked,
 		&key.CreatedAt, &key.Enabled, &key.ExpiresAt, &key.NotBefore, &key.Bits, &key.Curve, &key.UpdatedAt,
-		&key.DeletedAt, &key.PurgeProtection); err != nil {
+		&key.DeletedAt, &key.PurgeProtection, &key.Exportable); err != nil {
 		return key, err
 	}
 
@@ -371,11 +371,13 @@ func (r *KeyRepository) CreateTx(ctx context.Context, ex db.DBTX, key *model.Key
 // is a transaction an outer caller began and owns).
 func (r *KeyRepository) insertKeyAndTags(ctx context.Context, ex db.DBTX, key *model.Key) error {
 	// Insert key with pre-encrypted value.
+	// exportable is written here and nowhere else: Update never touches it,
+	// so rotation and PUT keep the flag the key was created with.
 	_, err := ex.ExecContext(
 		ctx,
-		"INSERT INTO keys (id, user_id, vault_id, name, value, type, revoked, created_at, enabled, expires_at, not_before, bits, curve) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO keys (id, user_id, vault_id, name, value, type, revoked, created_at, enabled, expires_at, not_before, bits, curve, exportable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		key.ID.String(), key.UserID.String(), key.VaultID.String(), key.Name, key.Value, key.Type, key.Revoked, key.CreatedAt,
-		key.Enabled, key.ExpiresAt, key.NotBefore, key.Bits, key.Curve,
+		key.Enabled, key.ExpiresAt, key.NotBefore, key.Bits, key.Curve, key.Exportable,
 	)
 	if err != nil {
 		if db.SQLite.IsConstraintErr(err) {

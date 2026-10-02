@@ -157,7 +157,8 @@ func newCrossVaultKeysTestAPI(t *testing.T) (*API, *vaultFakeRepo, repositories.
 		not_before TIMESTAMP NULL,
 		bits INTEGER NOT NULL DEFAULT 0,
 		curve TEXT NOT NULL DEFAULT '',
-		updated_at TIMESTAMP NULL
+		updated_at TIMESTAMP NULL,
+		exportable BOOLEAN NOT NULL DEFAULT FALSE
 	)`)
 	if err != nil {
 		t.Fatalf("create keys schema: %v", err)
@@ -239,6 +240,7 @@ func newCrossVaultCertsTestAPI(t *testing.T) (*API, *vaultFakeRepo, repositories
 		certificate TEXT NOT NULL,
 		private_key TEXT NOT NULL,
 		version INTEGER NOT NULL DEFAULT 1,
+		exportable BOOLEAN NOT NULL DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		deleted_at TIMESTAMP DEFAULT NULL,
 		purge_protection BOOLEAN NOT NULL DEFAULT FALSE,
@@ -351,6 +353,7 @@ func newCrossVaultCertPolicyTestAPI(t *testing.T) (*API, *vaultFakeRepo, reposit
 		certificate TEXT NOT NULL,
 		private_key TEXT NOT NULL,
 		version INTEGER NOT NULL DEFAULT 1,
+		exportable BOOLEAN NOT NULL DEFAULT FALSE,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		deleted_at TIMESTAMP DEFAULT NULL,
 		purge_protection BOOLEAN NOT NULL DEFAULT FALSE,

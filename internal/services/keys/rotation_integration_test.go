@@ -66,7 +66,8 @@ func setupRotationIntegrationDB(t *testing.T) *sql.DB {
 			not_before TIMESTAMP NULL,
 			bits INTEGER NOT NULL DEFAULT 0,
 			curve TEXT NOT NULL DEFAULT '',
-			updated_at TIMESTAMP NULL
+			updated_at TIMESTAMP NULL,
+			exportable BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE TABLE IF NOT EXISTS key_tags (
 			key_id TEXT NOT NULL,

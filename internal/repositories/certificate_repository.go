@@ -69,7 +69,7 @@ type CertificateFilter = model.CertificateFilter
 // silent -- the omitted fields simply read back as their zero values, so
 // nothing failed until someone depended on one. TestCertificateSelectListIsNotDuplicated
 // now fails the build if a third one appears.
-const certificateColumns = "id, user_id, vault_id, name, certificate, private_key, created_at, expires_at, auto_renew, renewal_days, key_id, ca_cert_id, enabled, not_before, deleted_at, purge_protection, version"
+const certificateColumns = "id, user_id, vault_id, name, certificate, private_key, created_at, expires_at, auto_renew, renewal_days, key_id, ca_cert_id, enabled, not_before, deleted_at, purge_protection, version, exportable"
 
 // scanCertificateRow scans one certificates row in the canonical column order.
 func scanCertificateRow(scan func(dest ...any) error) (model.Certificate, error) {
@@ -79,7 +79,7 @@ func scanCertificateRow(scan func(dest ...any) error) (model.Certificate, error)
 
 	if err := scan(&idStr, &userIDStr, &vaultIDStr, &cert.Name, &cert.Certificate, &cert.PrivateKey,
 		&cert.CreatedAt, &cert.ExpiresAt, &cert.AutoRenew, &cert.RenewalDays, &keyIDStr, &caCertIDStr,
-		&cert.Enabled, &cert.NotBefore, &cert.DeletedAt, &cert.PurgeProtection, &cert.Version); err != nil {
+		&cert.Enabled, &cert.NotBefore, &cert.DeletedAt, &cert.PurgeProtection, &cert.Version, &cert.Exportable); err != nil {
 		return cert, err
 	}
 
@@ -445,11 +445,13 @@ func (r *CertificateRepository) insertCertAndTags(ctx context.Context, ex db.DBT
 	// Insert certificate with pre-encrypted private key and renewal metadata.
 	// version is the row's current version: 1 on create, the blob's own
 	// number on restore.
+	// exportable is written here and nowhere else: Update never touches it,
+	// so the flag is immutable after creation.
 	_, err := ex.ExecContext(
 		ctx,
-		"INSERT INTO certificates (id, user_id, vault_id, name, certificate, private_key, created_at, expires_at, auto_renew, renewal_days, key_id, ca_cert_id, enabled, not_before, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO certificates (id, user_id, vault_id, name, certificate, private_key, created_at, expires_at, auto_renew, renewal_days, key_id, ca_cert_id, enabled, not_before, version, exportable) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		cert.ID.String(), cert.UserID.String(), cert.VaultID.String(), cert.Name, cert.Certificate, cert.PrivateKey, cert.CreatedAt,
-		cert.ExpiresAt, cert.AutoRenew, cert.RenewalDays, cert.KeyID.String(), caCertID, cert.Enabled, cert.NotBefore, cert.CurrentVersion(),
+		cert.ExpiresAt, cert.AutoRenew, cert.RenewalDays, cert.KeyID.String(), caCertID, cert.Enabled, cert.NotBefore, cert.CurrentVersion(), cert.Exportable,
 	)
 	if err != nil {
 		if db.SQLite.IsConstraintErr(err) {

@@ -85,7 +85,8 @@ func newCryptoVaultScopeFixture(t *testing.T, vaultID, ownerID, keyID uuid.UUID)
 		not_before TIMESTAMP NULL,
 		bits INTEGER NOT NULL DEFAULT 0,
 		curve TEXT NOT NULL DEFAULT '',
-		updated_at TIMESTAMP NULL
+		updated_at TIMESTAMP NULL,
+		exportable BOOLEAN NOT NULL DEFAULT FALSE
 	)`)
 	require.NoError(t, err)
 	_, err = sqlDB.Exec(`CREATE TABLE IF NOT EXISTS key_tags (

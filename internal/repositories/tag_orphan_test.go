@@ -52,7 +52,8 @@ func setupTagOrphanTestDB(t *testing.T) *sql.DB {
 			updated_at TIMESTAMP,
 			deleted_at TIMESTAMP,
 			scheduled_purge_at TIMESTAMP,
-			purge_protection BOOLEAN NOT NULL DEFAULT FALSE
+			purge_protection BOOLEAN NOT NULL DEFAULT FALSE,
+			exportable BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE TABLE key_tags (
 			key_id TEXT NOT NULL,
