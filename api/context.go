@@ -246,6 +246,8 @@ func ApiSessionRequired(a *app.App, handler func(*Context, http.ResponseWriter, 
 			Logger:         a.Logger,
 		}
 
+		setNoStore(w)
+
 		if ctx.Logger != nil {
 			ctx.Logger.Printf("Handling %s %s (user: %s)", r.Method, r.URL.Path, userIDStr)
 		}
