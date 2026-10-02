@@ -601,7 +601,8 @@ func TestUpdateSecret_NotFound_Returns404(t *testing.T) {
 	svc.AssertExpectations(t)
 }
 
-func TestUpdateSecret_LifecycleDenied_Returns403(t *testing.T) {
+// The real service never returns this error from UpdateSecret; this only pins the error-to-403 mapping.
+func TestUpdateSecret_LifecycleDeniedErrorMapping_Returns403(t *testing.T) {
 	secretID := uuid.New()
 	svc := &mockSecretService{}
 	svc.On("UpdateSecret", mock.Anything, mock.Anything).

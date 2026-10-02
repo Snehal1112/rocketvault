@@ -4352,8 +4352,8 @@ context and respond tests added with each commit.
 
 ### B83 — Secret export and version reads bypassed the enabled and expiry check
 
-**Status**: Fixed 2026-10-02 in commits `91b809ac`, `68225fce` and the
-`updateSecret` handler commit that closes GitHub #44, plan
+**Status**: Fixed 2026-10-02 in commits `91b809ac`, `68225fce` and
+`93e1badb` (GitHub #44), plan
 `docs/superpowers/plans/2026-09-30-secrets-and-error-responses.md`
 **Severity**: Medium — plaintext of a disabled, expired or not-yet-active
 secret was readable, and the update handler both blocked a legitimate
@@ -4386,16 +4386,24 @@ service's scoped read stays the access check, and it still archives the
 prior value and bumps the version), and `GetSecret` runs only afterwards to
 build the response. When that read-back is refused because the update just
 disabled or expired the secret, the handler answers 200 with a minimal body
-(`id` and `enabled`). Tests: `api/secrets_update_lifecycle_test.go` and the
-service tests added with `91b809ac` and `68225fce`.
+(`id` and `enabled`). Tests: `api/secrets_update_lifecycle_test.go`,
+`internal/services/secrets/versioning_lifecycle_test.go` and
+`internal/services/secrets/export_lifecycle_test.go`.
 
 **Accepted behavior change**: version metadata listing
 (`GetVersionsMetadata`) stays allowed for a disabled secret because it
 carries no plaintext. An update of a disabled secret's value or attributes is
 now allowed over HTTP, matching Azure, where attributes of a disabled secret
 stay editable. An identical-value `PUT` is now a real update that archives a
-version. The CLI (`cmd/secrets`) calls the service directly and never had the
-handler's pre-read, so its behavior is unchanged.
+version. `rocketvault secrets update` in local mode calls the service
+directly and already allowed both. In remote mode it sends this same `PUT`
+through `cliclient.UpdateSecretRemote`, so it used to fail with 403 on a
+disabled secret and 400 on an identical value, and now succeeds like local
+mode. The minimal body can misreport `enabled` as `false` for a secret that
+is enabled but expired or not yet active, when the request did not set
+`enabled`. If the read-back fails for any reason other than the lifecycle
+gate, the handler returns that error even though the update was already
+saved.
 
 ---
 

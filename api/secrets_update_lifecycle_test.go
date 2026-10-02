@@ -52,11 +52,14 @@ func TestUpdateSecret_IdenticalValue_Returns200NotEqualityOracle(t *testing.T) {
 	id := uuid.New()
 	svc := &mockSecretService{}
 	same := makeSecretModel(id)
-	svc.On("UpdateSecret", mock.Anything, mock.Anything).Return(nil).Once()
+	svc.On("UpdateSecret", mock.Anything, mock.MatchedBy(func(r secrets.UpdateSecretRequest) bool {
+		return r.Value != nil && *r.Value == same.Value
+	})).Return(nil).Once()
 	svc.On("GetSecret", mock.Anything, id, mock.Anything).Return(same, nil).Once()
 
 	w := putSecret(t, newSecretCtx(svc), id, map[string]any{"value": same.Value})
 	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
 }
 
 // Disabling a secret makes the read-back legitimately refuse it; the update
