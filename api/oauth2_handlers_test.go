@@ -13,8 +13,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -891,6 +893,54 @@ func TestRotateSA_Success_RecordsAuditEvent(t *testing.T) {
 	}
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	svc.AssertExpectations(t)
+	mockAudit.AssertExpectations(t)
+}
+
+// ============================================================
+// sanitizeAuditClientID
+// ============================================================
+
+func TestSanitizeAuditClientID(t *testing.T) {
+	assert.Equal(t, "my-app_1", sanitizeAuditClientID("my-app_1"))
+	assert.Equal(t, "evilfake", sanitizeAuditClientID("evil\r\n\x00fake"))
+	assert.Equal(t, "ab", sanitizeAuditClientID("a\xffb"), "invalid UTF-8 is dropped")
+	assert.Equal(t, "a[31mb", sanitizeAuditClientID("a\x1b[31mb"), "ESC is dropped")
+	assert.Equal(t, "", sanitizeAuditClientID("\n\t"))
+	assert.Equal(t, "", sanitizeAuditClientID(""))
+
+	long := strings.Repeat("é", 200) // 400 bytes.
+	got := sanitizeAuditClientID(long)
+	assert.LessOrEqual(t, len(got), maxAuditClientIDLen)
+	assert.True(t, utf8.ValidString(got), "truncation must not split a rune")
+	assert.Equal(t, strings.Repeat("é", 127), got, "254 bytes, the last whole rune that fits")
+
+	assert.Len(t, sanitizeAuditClientID(strings.Repeat("a", 1000)), maxAuditClientIDLen)
+}
+
+func TestTokenHandler_ControlCharsInClientIDAreStrippedFromAuditEvent(t *testing.T) {
+	svc := &mockOAuth2Svc{}
+	// The lookup still receives the original value.
+	svc.On("IssueToken", mock.Anything, "evil\nname", "s").Return(nil, errors.New("invalid"))
+	mockAudit := &testutils.MockAuditService{}
+	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
+		return e.UserID == "evilname" && e.ResourceID == "evilname"
+	})).Return(nil)
+
+	a := &app.App{ServiceContainer: &oauth2HTestContainer{svc: svc, auditSvc: mockAudit}}
+	api := &API{App: a, Logger: userTestLog()}
+	router := mux.NewRouter()
+	router.HandleFunc("/oauth2/token", api.tokenHandler).Methods(http.MethodPost)
+
+	w := httptest.NewRecorder()
+	body := strings.NewReader("grant_type=client_credentials&client_id=evil%0Aname&client_secret=s")
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/oauth2/token", body)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	router.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.NotContains(t, w.Body.String(), "evil", "the response must not echo the client_id")
 	svc.AssertExpectations(t)
 	mockAudit.AssertExpectations(t)
 }

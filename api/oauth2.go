@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"rocketvault/common"
 	"rocketvault/internal/middleware"
@@ -110,6 +112,24 @@ func (api *API) tokenHandler(w http.ResponseWriter, r *http.Request) {
 // attacker from growing audit_logs rows without limit.
 const maxAuditClientIDLen = 255
 
+// sanitizeAuditClientID makes an untrusted client_id safe to store in an audit
+// row. It drops control characters and invalid UTF-8, then caps the length at
+// maxAuditClientIDLen bytes without splitting a rune. Only the audit copy is
+// sanitised; the client lookup still uses the original value.
+func sanitizeAuditClientID(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r == utf8.RuneError || !unicode.IsPrint(r) {
+			continue
+		}
+		if b.Len()+utf8.RuneLen(r) > maxAuditClientIDLen {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // recordOAuth2TokenAudit writes an audit entry for a token-issuance attempt.
 // clientID is the caller-supplied identifier — safe to log even on failure
 // since the response never reveals whether the ID or the secret was wrong
@@ -125,9 +145,7 @@ func (api *API) recordOAuth2TokenAudit(r *http.Request, clientID, outcome string
 	if svc == nil {
 		return
 	}
-	if len(clientID) > maxAuditClientIDLen {
-		clientID = clientID[:maxAuditClientIDLen]
-	}
+	clientID = sanitizeAuditClientID(clientID)
 	_ = svc.RecordEvent(r.Context(), auditSvc.AuditEvent{
 		UserID:       clientID,
 		Action:       "oauth2_token_issue",
