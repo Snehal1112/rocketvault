@@ -52,16 +52,10 @@ func RequireDataAction(ctx context.Context, cmd *cobra.Command, sc container.Ser
 		return uuid.Nil, err
 	}
 
-	resourceType := resourceTypeFromAction(action)
-	decision, err := sc.GetAccessPolicyService().CheckAccess(ctx, principalID, resourceType, op, vaultID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("checking access policy: %w", err)
-	}
-	if decision == authorization.AccessDenied {
-		return uuid.Nil, fmt.Errorf("forbidden: access denied by an explicit access policy for %s", action)
-	}
-
-	if err := authorization.RequireDataAction(ctx, sc.GetRoleAssignmentService(), principalID, vaultID, action); err != nil {
+	// One implementation for the CLI, HTTP handlers and the renewal
+	// scheduler, so the two-stage order cannot drift between them.
+	if err := authorization.RequireDataPlaneAccess(ctx, sc.GetAccessPolicyService(), sc.GetRoleAssignmentService(),
+		principalID, vaultID, resourceTypeFromAction(action), op, action); err != nil {
 		return uuid.Nil, err
 	}
 	return vaultID, nil

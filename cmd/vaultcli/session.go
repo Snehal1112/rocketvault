@@ -11,6 +11,7 @@ import (
 	"rocketvault/common"
 	"rocketvault/internal/container"
 	"rocketvault/internal/logging"
+	"rocketvault/internal/services/authorization"
 	"rocketvault/model"
 )
 
@@ -163,6 +164,27 @@ func (s *Session) Authorize() error {
 	}
 	s.VaultID = vaultID
 	s.Scope = model.NewVaultScope(vaultID, s.Claims.UserID)
+	return nil
+}
+
+// RequireAlso runs Authorize's two-stage check for one more data action, in
+// the vault Authorize already resolved. It is for commands that act on two
+// object types at once, such as issuing a certificate with a key. Calling it
+// before Authorize fails closed.
+func (s *Session) RequireAlso(action model.DataAction, op model.PolicyOperation) error {
+	msg := s.op.AuthzFailMsg
+	if msg == "" {
+		msg = "vault authorization failed"
+	}
+	if s.Container == nil || s.VaultID == uuid.Nil {
+		return s.Fail(msg, fmt.Errorf("RequireAlso called before Authorize"))
+	}
+
+	if err := authorization.RequireDataPlaneAccess(s.Ctx, s.Container.GetAccessPolicyService(),
+		s.Container.GetRoleAssignmentService(), s.Claims.UserID, s.VaultID,
+		resourceTypeFromAction(action), op, action); err != nil {
+		return s.Fail(msg, err)
+	}
 	return nil
 }
 
