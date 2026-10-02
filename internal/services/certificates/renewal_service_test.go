@@ -188,9 +188,11 @@ func TestCheckAndRenewCertificates_AutoRenew(t *testing.T) {
 	expires := time.Now().Add(10 * 24 * time.Hour)
 	certID := uuid.New()
 	userID := uuid.New()
+	vaultID := uuid.New()
 	cert := model.Certificate{
 		ID:          certID,
 		UserID:      userID,
+		VaultID:     vaultID,
 		Name:        "test-cert",
 		CreatedAt:   time.Now().Add(-365 * 24 * time.Hour),
 		ExpiresAt:   &expires,
@@ -201,8 +203,11 @@ func TestCheckAndRenewCertificates_AutoRenew(t *testing.T) {
 	repo := &mockCertRepoForRenewal{}
 	repo.On("ListAll", mock.Anything).Return([]model.Certificate{cert}, nil)
 
+	// B76: the scheduler must renew inside the certificate's own vault. An
+	// admin scope carries no vault predicate, so it let a restored row reach
+	// keys and CA certificates in other vaults.
 	certSvc := &mockCertSvcForRenewal{}
-	certSvc.On("RenewCertificate", mock.Anything, certID, model.NewAdminScope(userID), mock.AnythingOfType("int")).
+	certSvc.On("RenewCertificate", mock.Anything, certID, model.NewVaultScope(vaultID, userID), mock.AnythingOfType("int")).
 		Return(&certificates.CreateCertificateResult{CertID: uuid.New()}, nil)
 
 	svc := certificates.NewCertificateRenewalService(certificates.RenewalServiceConfig{
@@ -216,6 +221,38 @@ func TestCheckAndRenewCertificates_AutoRenew(t *testing.T) {
 	assert.Equal(t, 1, renewed)
 	assert.Equal(t, 0, warned)
 	certSvc.AssertExpectations(t)
+}
+
+// TestCheckAndRenewCertificates_NilVaultSkipped pins that a row with no vault
+// is never renewed. There is no vault to scope the renewal to, and falling
+// back to a broader scope is the B76 defect.
+func TestCheckAndRenewCertificates_NilVaultSkipped(t *testing.T) {
+	expires := time.Now().Add(10 * 24 * time.Hour)
+	cert := model.Certificate{
+		ID:          uuid.New(),
+		UserID:      uuid.New(),
+		Name:        "no-vault",
+		CreatedAt:   time.Now().Add(-365 * 24 * time.Hour),
+		ExpiresAt:   &expires,
+		AutoRenew:   true,
+		RenewalDays: 30,
+	}
+
+	repo := &mockCertRepoForRenewal{}
+	repo.On("ListAll", mock.Anything).Return([]model.Certificate{cert}, nil)
+	certSvc := &mockCertSvcForRenewal{}
+
+	svc := certificates.NewCertificateRenewalService(certificates.RenewalServiceConfig{
+		CertRepository:     repo,
+		CertificateService: certSvc,
+		Logger:             newTestLogger(),
+	})
+
+	renewed, warned, err := svc.CheckAndRenewCertificates(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 0, renewed)
+	assert.Equal(t, 0, warned)
+	certSvc.AssertNotCalled(t, "RenewCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestCheckAndRenewCertificates_WarnOnly(t *testing.T) {

@@ -7,6 +7,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
+
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
 	"rocketvault/model"
@@ -74,10 +76,22 @@ func (s *certRenewalService) CheckAndRenewCertificates(ctx context.Context) (int
 		}
 
 		if cert.AutoRenew {
+			// A row with no vault cannot be scoped to one, so it is never
+			// renewed. Renewing under an admin scope is what let a restored
+			// row reach keys and CA certificates in other vaults (B76).
+			if cert.VaultID == uuid.Nil {
+				s.logger.LogAuditError(cert.UserID.String(), "cert_auto_renew", "failed",
+					"Auto-renewal skipped, certificate has no vault: "+cert.Name, nil)
+				continue
+			}
+
 			// Preserve the current version's validity period when renewing.
 			validityDays := CurrentValidityDays(&cert)
 
-			_, err := s.certSvc.RenewCertificate(ctx, cert.ID, model.NewAdminScope(cert.UserID), validityDays)
+			// The renewal is scoped to the certificate's own vault, so its key
+			// and CA links are only followed inside that vault, and
+			// ArchiveAndRenew only updates a row in that vault (B76).
+			_, err := s.certSvc.RenewCertificate(ctx, cert.ID, model.NewVaultScope(cert.VaultID, cert.UserID), validityDays)
 			if err != nil {
 				s.logger.LogAuditError(cert.UserID.String(), "cert_auto_renew", "failed",
 					"Auto-renewal failed for: "+cert.Name, err)

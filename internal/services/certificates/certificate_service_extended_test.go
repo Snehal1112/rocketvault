@@ -1025,12 +1025,14 @@ func TestCheckAndRenewCertificates_AutoRenewFailureSkipped(t *testing.T) {
 	expires := time.Now().Add(10 * 24 * time.Hour)
 	certID := uuid.New()
 	userID := uuid.New()
+	vaultID := uuid.New()
 
 	repo := &mockCertRepository{}
 	repo.On("ListAll", mock.Anything).Return([]model.Certificate{
 		{
 			ID:          certID,
 			UserID:      userID,
+			VaultID:     vaultID,
 			Name:        "failing",
 			CreatedAt:   time.Now().Add(-365 * 24 * time.Hour),
 			ExpiresAt:   &expires,
@@ -1040,7 +1042,7 @@ func TestCheckAndRenewCertificates_AutoRenewFailureSkipped(t *testing.T) {
 	}, nil)
 
 	certSvc := &mockRenewalCertSvc{}
-	certSvc.On("RenewCertificate", mock.Anything, certID, model.NewAdminScope(userID), mock.AnythingOfType("int")).
+	certSvc.On("RenewCertificate", mock.Anything, certID, model.NewVaultScope(vaultID, userID), mock.AnythingOfType("int")).
 		Return(nil, errors.New("renewal failed"))
 
 	svc := NewCertificateRenewalService(RenewalServiceConfig{

@@ -22,6 +22,7 @@ func TestCheckAndRenewCertificates_CASignedKeepsIssuer(t *testing.T) {
 	setupMasterKey()
 
 	userID := uuid.New()
+	vaultID := uuid.New()
 	certID := uuid.New()
 	keyID := uuid.New()
 	caCertID := uuid.New()
@@ -48,28 +49,28 @@ func TestCheckAndRenewCertificates_CASignedKeepsIssuer(t *testing.T) {
 	// Inside its renewal window: expires in 5 days, renewal_days 30.
 	expiresAt := time.Now().Add(5 * 24 * time.Hour)
 	original := &model.Certificate{
-		ID: certID, UserID: userID, KeyID: keyID, CACertID: &caCertID,
+		ID: certID, UserID: userID, VaultID: vaultID, KeyID: keyID, CACertID: &caCertID,
 		Name: "scheduled-leaf", Certificate: leafPEM, PrivateKey: encEntity,
 		CreatedAt: time.Now().Add(-360 * 24 * time.Hour), ExpiresAt: &expiresAt,
 		AutoRenew: true, RenewalDays: 30, Enabled: true,
 	}
 	caCert := &model.Certificate{
-		ID: caCertID, UserID: userID, Name: "scheduler-ca",
+		ID: caCertID, UserID: userID, VaultID: vaultID, Name: "scheduler-ca",
 		Certificate: caPEM, PrivateKey: encCA, Enabled: true,
 	}
 
 	certRepo := &mockCertRepository{}
 	keyRepo := &mockKeyRepo{}
 
-	adminScope := model.NewAdminScope(userID)
+	vaultScope := model.NewVaultScope(vaultID, userID)
 	certRepo.On("ListAll", mock.Anything).Return([]model.Certificate{*original}, nil)
-	certRepo.On("Read", mock.Anything, certID, adminScope).Return(original, nil)
-	certRepo.On("Read", mock.Anything, caCertID, adminScope).Return(caCert, nil)
-	keyRepo.On("Read", mock.Anything, keyID, adminScope).
+	certRepo.On("Read", mock.Anything, certID, vaultScope).Return(original, nil)
+	certRepo.On("Read", mock.Anything, caCertID, vaultScope).Return(caCert, nil)
+	keyRepo.On("Read", mock.Anything, keyID, vaultScope).
 		Return(&model.Key{ID: keyID, UserID: userID, Type: model.KeyTypeRSA, Value: encEntity}, nil)
 
 	var updated *model.Certificate
-	certRepo.On("Update", mock.Anything, mock.AnythingOfType("*model.Certificate"), adminScope).
+	certRepo.On("Update", mock.Anything, mock.AnythingOfType("*model.Certificate"), vaultScope).
 		Run(func(args mock.Arguments) { updated = args.Get(1).(*model.Certificate) }).
 		Return(nil)
 
