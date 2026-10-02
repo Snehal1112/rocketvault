@@ -307,6 +307,8 @@ func (s *authenticationService) IssueSessionForUser(ctx context.Context, user *m
 // ValidateSession validates a JWT token and returns the user claims.
 // It provides session validation for authenticated requests,
 // ensuring tokens are valid and not expired.
+// A user session must also be unrevoked and its user must still exist.
+// A service-account session must name an enabled, unexpired client.
 //
 // Parameters:
 //
@@ -358,6 +360,19 @@ func (s *authenticationService) ValidateSession(ctx context.Context, token strin
 		if revoked {
 			s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Session is revoked", nil)
 			return nil, fmt.Errorf("session revoked")
+		}
+
+		// Tokens name a user that must still exist. SQLite keeps session rows
+		// after a user delete, so the revocation table alone cannot tell.
+		// Both failures return the same generic error, so a caller cannot
+		// tell a deleted user from a failed lookup. A lookup error denies.
+		if _, err := s.userRepo.Read(ctx, claims.UserID); err != nil {
+			if errors.Is(err, repositories.ErrNotFound) {
+				s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "User no longer exists", nil)
+			} else {
+				s.logger.LogAuditError(claims.UserID.String(), "validate_session", "failed", "Could not load session user", err)
+			}
+			return nil, errors.New("invalid session")
 		}
 	}
 

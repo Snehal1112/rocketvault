@@ -322,13 +322,103 @@ func TestValidateSession_ActiveSession(t *testing.T) {
 
 	jwt.On("ValidateToken", "good-token").Return(claims, nil)
 	sessionRepo.On("IsSessionRevoked", ctx, sessionID).Return(false, nil)
+	userRepo.On("Read", ctx, userID).Return(&model.User{ID: userID, Username: "alice"}, nil)
 
 	svc := newAuthService(userRepo, sessionRepo, pwd, totp, jwt, nil)
 	got, err := svc.ValidateSession(ctx, "good-token")
 
 	require.NoError(t, err)
 	assert.Equal(t, userID, got.UserID)
+	userRepo.AssertExpectations(t)
 	sessionRepo.AssertExpectations(t)
+}
+
+// SQLite keeps user_sessions rows after a user delete, so a live token must
+// not outlive its user.
+func TestValidateSession_DeletedUser_Rejected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	sessionID := uuid.New()
+	userID := uuid.New()
+
+	claims := &JWTClaims{UserID: userID, Username: "ghost", Roles: []string{model.RoleUser}}
+	claims.ID = sessionID.String()
+
+	userRepo := &MockUserRepository{}
+	sessionRepo := &MockSessionRepository{}
+	jwt := &MockJWTService{}
+
+	jwt.On("ValidateToken", "orphan-token").Return(claims, nil)
+	sessionRepo.On("IsSessionRevoked", ctx, sessionID).Return(false, nil)
+	userRepo.On("Read", ctx, userID).Return(nil, fmt.Errorf("user not found: %w", repositories.ErrNotFound))
+
+	svc := newAuthService(userRepo, sessionRepo, &MockPasswordService{}, &MockTOTPService{}, jwt, nil)
+	got, err := svc.ValidateSession(ctx, "orphan-token")
+
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.EqualError(t, err, "invalid session")
+	userRepo.AssertExpectations(t)
+}
+
+// A failed user lookup must deny, never allow, and must not reveal why.
+func TestValidateSession_UserLookupError_Rejected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	sessionID := uuid.New()
+	userID := uuid.New()
+
+	claims := &JWTClaims{UserID: userID, Username: "alice", Roles: []string{model.RoleUser}}
+	claims.ID = sessionID.String()
+
+	userRepo := &MockUserRepository{}
+	sessionRepo := &MockSessionRepository{}
+	jwt := &MockJWTService{}
+
+	jwt.On("ValidateToken", "lookup-fails").Return(claims, nil)
+	sessionRepo.On("IsSessionRevoked", ctx, sessionID).Return(false, nil)
+	userRepo.On("Read", ctx, userID).Return(nil, errors.New("db unavailable"))
+
+	svc := newAuthService(userRepo, sessionRepo, &MockPasswordService{}, &MockTOTPService{}, jwt, nil)
+	got, err := svc.ValidateSession(ctx, "lookup-fails")
+
+	require.Error(t, err)
+	assert.Nil(t, got)
+	assert.EqualError(t, err, "invalid session")
+	assert.NotContains(t, err.Error(), "db unavailable")
+	userRepo.AssertExpectations(t)
+}
+
+// A deleted user and a failed lookup must be indistinguishable to the caller.
+func TestValidateSession_UserErrors_NoOracle(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	run := func(readErr error) error {
+		sessionID := uuid.New()
+		userID := uuid.New()
+		claims := &JWTClaims{UserID: userID, Username: "x", Roles: []string{model.RoleUser}}
+		claims.ID = sessionID.String()
+
+		userRepo := &MockUserRepository{}
+		sessionRepo := &MockSessionRepository{}
+		jwt := &MockJWTService{}
+		jwt.On("ValidateToken", "tok").Return(claims, nil)
+		sessionRepo.On("IsSessionRevoked", ctx, sessionID).Return(false, nil)
+		userRepo.On("Read", ctx, userID).Return(nil, readErr)
+
+		svc := newAuthService(userRepo, sessionRepo, &MockPasswordService{}, &MockTOTPService{}, jwt, nil)
+		_, err := svc.ValidateSession(ctx, "tok")
+		return err
+	}
+
+	notFound := run(fmt.Errorf("user not found: %w", repositories.ErrNotFound))
+	lookupErr := run(errors.New("connection refused"))
+
+	require.Error(t, notFound)
+	require.Error(t, lookupErr)
+	assert.Equal(t, notFound.Error(), lookupErr.Error())
+	assert.NotErrorIs(t, notFound, repositories.ErrNotFound)
 }
 
 func TestValidateSession_RevocationCheckError(t *testing.T) {
@@ -443,6 +533,8 @@ func TestValidateSession_ActiveServiceAccount_Allowed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, clientID, got.UserID)
 	sessionRepo.AssertNotCalled(t, "IsSessionRevoked")
+	// Service accounts have no users row, so the user check must not run.
+	userRepo.AssertNotCalled(t, "Read", mock.Anything, mock.Anything)
 	oauth2Repo.AssertExpectations(t)
 }
 

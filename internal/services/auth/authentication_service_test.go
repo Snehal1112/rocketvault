@@ -38,6 +38,9 @@ func (m *MockUserRepository) Create(ctx context.Context, user *model.User) error
 
 func (m *MockUserRepository) Read(ctx context.Context, id uuid.UUID) (*model.User, error) {
 	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*model.User), args.Error(1)
 }
 

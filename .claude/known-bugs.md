@@ -4652,6 +4652,74 @@ and setting the password again with `rocketvault users update <id>
 
 ---
 
+### B74 — Password, role and delete changes left existing sessions alive
+
+**Status**: Fixed (identity and sessions hardening, 2026-09-30); GitHub #47.
+Refresh-token rotation and reuse detection from the same issue are an
+optional follow-up (plan task 13) because they change the refresh contract;
+it was not done. Items under "Still open" are not fixed.
+**Severity**: Medium
+**Files**: `internal/services/users/user_service.go`,
+`internal/services/auth/authentication_service.go`,
+`internal/container/service_container.go`
+
+**Symptom**: demoting an admin left the admin role in their JWT until it
+expired (`jwt.expiry`, default 1h). Deleting a user left their access token
+valid, and on SQLite, where foreign keys are off, their `user_sessions` rows
+survived. A password change did not end existing refresh tokens (7 days).
+
+**Root cause**: `UpdateUser` and `DeleteUser` never touched sessions, and
+`ValidateSession` checked only the session revocation table, never that the
+user still existed.
+
+**What was fixed**: `UserService` gained a `SessionRevoker` dependency (wired
+to the session repository in the container, so HTTP and CLI both get it).
+`UpdateUser` revokes every session of the target user after a successful
+password or role change; a username-only change keeps them. A revoke failure
+after the write fails the update and is marked non-retryable. `DeleteUser`
+revokes first and deletes only if that succeeded. A missing revoker fails
+closed before any write. `ValidateSession` now reads the user row for every
+user session and rejects the token when the user is gone or the read fails.
+Both cases return the same generic `invalid session` error as other invalid
+tokens, and the HTTP middleware answers 401 `Unauthorized: invalid token` as
+before, so a caller cannot tell a deleted user from a database error. The
+reason is only in the audit log. A failed read denies; it never allows.
+Service-account (OAuth2 client-credentials) tokens have no `users` row and
+keep their own client check, so they skip the user read. OIDC users have a
+`users` row and are unaffected.
+
+**Accepted consequences**:
+- A user who changes their own password is logged out too, on HTTP and on the
+  CLI, and must log in again. The same applies to an admin changing their own
+  role.
+- Every authenticated user request now costs one extra `users` read by
+  primary key plus its `user_roles` read (`UserRepository.Read`), on top of
+  the existing revocation check. No cache was added; that is out of scope.
+- A transient database error during the user read now gives a 401 for that
+  request instead of letting it through. The retry wrapper does not retry
+  it, the same as the revocation check.
+
+**Still open**:
+- If revocation fails after a password write that also enrolled a TOTP secret
+  (B73), the update returns an error and the one-time enrollment URL is lost.
+  Local password login then needs an admin (see B73's recovery path); OIDC
+  login is unaffected.
+- The user update and the revoke are not one transaction, so there is a
+  window of milliseconds in which the new password or role is stored and the
+  old sessions still work.
+- A login that completes between the delete path's revoke and the delete
+  creates a session that was never revoked. Since `ValidateSession` now
+  rejects tokens of a missing user, and `RefreshAccessToken` already read the
+  user, that session stops working as soon as the delete commits; it is only
+  left as an unrevoked row. If the delete fails, the user was not deleted and
+  the session is an ordinary one. Optional hardening: a best-effort second
+  revoke after `Delete`, so no unrevoked row remains.
+- A full-database backup restore can bring back old password hashes and
+  sessions that were revoked after the backup was taken. This predates the
+  fix; restoring a backup restores its sessions too.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and
