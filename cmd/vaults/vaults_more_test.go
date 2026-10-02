@@ -17,6 +17,7 @@ import (
 	"rocketvault/common"
 	"rocketvault/internal/logging/logtest"
 	authzServices "rocketvault/internal/services/authorization"
+	vaultServices "rocketvault/internal/services/vaults"
 	"rocketvault/model"
 )
 
@@ -216,6 +217,36 @@ func TestVaultsCreate_WithRetentionDays(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out.String(), "retention-vault")
 	tc.MockVaultService.AssertExpectations(t)
+}
+
+// TestVaultsCreate_ServiceRefusalsAreAudited proves the quota and
+// purge-protection refusals leave the same denied row HTTP writes.
+func TestVaultsCreate_ServiceRefusalsAreAudited(t *testing.T) {
+	for name, refusal := range map[string]error{
+		"quota":            vaultServices.ErrVaultQuotaExceeded,
+		"purge protection": vaultServices.ErrPurgeProtectionNotPermitted,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tc := testutils.NewTestContext(t)
+			tc.MockVaultService.On("CreateVaultProvisioned", mock.Anything, mock.Anything, tc.TestUserID, false, false).
+				Return(nil, refusal)
+			rec := &logtest.Recorder{}
+			tc.MockContainer.GetLogger().SetAuditPersister(rec)
+
+			cmd := &cobra.Command{Use: "create", RunE: createCmd.RunE}
+			cmd.Flags().Bool("purge-protection", false, "")
+			cmd.Flags().Int("retention-days", 0, "")
+			cmd.SetContext(ctxWithFormatter(tc.Ctx))
+			cmd.SetArgs([]string{"some-vault"})
+
+			err := cmd.Execute()
+			require.ErrorIs(t, err, refusal)
+			assert.Contains(t, err.Error(), "failed to create vault")
+			row, ok := rec.Find("create_vault", "denied")
+			require.True(t, ok, "a refused CLI vault create must be audited")
+			assert.Equal(t, tc.TestUserID.String(), row.UserID)
+		})
+	}
 }
 
 // ---- getCmd additional error paths ----

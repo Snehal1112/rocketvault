@@ -27,10 +27,16 @@ func requireCanManageRoleAssignments(ctx context.Context, sc container.ServiceCo
 	}
 	if !authz.CanManageRoleAssignments(ctx, roles, sc.GetAccessPolicyService(), sc.GetRoleAssignmentService(), principalID, vaultID, write) {
 		err := fmt.Errorf("permission denied: admin, vaults/manage, or Key Vault Data Access Administrator required for this vault")
-		if logger := sc.GetLogger(); logger != nil {
-			logger.LogAuditError(principalID.String(), operation, "denied", err.Error(), nil)
-		}
+		auditDeniedRefusal(sc, principalID, operation, err)
 		return err
 	}
 	return nil
+}
+
+// auditDeniedRefusal records a CLI refusal with the same operation name and
+// status the HTTP handler writes for the same refusal (B81).
+func auditDeniedRefusal(sc container.ServiceContainerInterface, principalID uuid.UUID, operation string, refusal error) {
+	if logger := sc.GetLogger(); logger != nil {
+		logger.LogAuditError(principalID.String(), operation, "denied", refusal.Error(), nil)
+	}
 }

@@ -1,6 +1,7 @@
 package vaultaccess
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -106,7 +107,7 @@ variable, then config, then "default" if none of those is set.
 			if err := requireCanManageRoleAssignments(ctx, sc, vaultID, true, "assign_role"); err != nil {
 				return err
 			}
-			callerRoles, _, err := vaultcli.CallerIdentity(ctx)
+			callerRoles, principalID, err := vaultcli.CallerIdentity(ctx)
 			if err != nil {
 				return err
 			}
@@ -120,6 +121,9 @@ variable, then config, then "default" if none of those is set.
 				CallerIsGlobalAdmin: isGlobalAdmin,
 			})
 			if err != nil {
+				if errors.Is(err, authz.ErrRoleNotGrantable) {
+					auditDeniedRefusal(sc, principalID, "assign_role", err)
+				}
 				return fmt.Errorf("grant failed: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "granted %s to %s in vault (assignment %s)\n", role, principal, ra.ID) //nolint:errcheck

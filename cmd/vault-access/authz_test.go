@@ -56,11 +56,16 @@ type fakeRoleSvc struct {
 	assignedInput             authzServices.AssignRoleInput
 	revokeCallerIsGlobalAdmin bool
 	revokeActor               uuid.UUID
+	assignErr                 error
+	revokeErr                 error
 }
 
 func (f *fakeRoleSvc) AssignRole(_ context.Context, in authzServices.AssignRoleInput) (*model.RoleAssignment, error) {
 	f.assignCalled = true
 	f.assignedInput = in
+	if f.assignErr != nil {
+		return nil, f.assignErr
+	}
 	return &model.RoleAssignment{ID: uuid.New(), VaultID: in.VaultID, Role: in.Role}, nil
 }
 
@@ -68,7 +73,7 @@ func (f *fakeRoleSvc) RevokeAssignment(_ context.Context, _, _ uuid.UUID, actorI
 	f.revokeCalled = true
 	f.revokeActor = actorID
 	f.revokeCallerIsGlobalAdmin = callerIsGlobalAdmin
-	return nil
+	return f.revokeErr
 }
 
 func (f *fakeRoleSvc) ListAssignments(context.Context, uuid.UUID) ([]*model.RoleAssignment, error) {
@@ -143,6 +148,45 @@ func TestVaultAccessRevoke_DeniedWithoutGrant(t *testing.T) {
 	assert.Contains(t, err.Error(), "permission denied")
 	assert.False(t, roleSvc.revokeCalled, "RevokeAssignment must not be reached when the caller is denied")
 	assert.Contains(t, roleSvc.actionsAsked, model.ActionRoleAssignmentsDelete)
+}
+
+// TestVaultAccessGrant_NotGrantableRefusalIsAudited covers the service-level
+// refusal: the HTTP handler audits it, so the CLI must too.
+func TestVaultAccessGrant_NotGrantableRefusalIsAudited(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+	roleSvc := &fakeRoleSvc{hasAction: true, assignErr: authzServices.ErrRoleNotGrantable}
+	ctx := nonAdminCtx(tc, &fakePolicySvc{decision: authzServices.AccessFallback}, roleSvc)
+	rec := &logtest.Recorder{}
+	tc.MockContainer.GetLogger().SetAuditPersister(rec)
+
+	cmd, _ := newVaultAccessCmd(ctx)
+	cmd.SetArgs([]string{"grant", "alice", "--role", model.RoleKeyVaultAdministrator})
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, authzServices.ErrRoleNotGrantable)
+	assert.Contains(t, err.Error(), "grant failed")
+	row, ok := rec.Find("assign_role", "denied")
+	require.True(t, ok, "a not-grantable CLI grant must be audited")
+	assert.Equal(t, tc.TestUserID.String(), row.UserID)
+}
+
+// TestVaultAccessRevoke_NotGrantableRefusalIsAudited mirrors the grant case.
+func TestVaultAccessRevoke_NotGrantableRefusalIsAudited(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+	roleSvc := &fakeRoleSvc{hasAction: true, revokeErr: authzServices.ErrRoleNotGrantable}
+	ctx := nonAdminCtx(tc, &fakePolicySvc{decision: authzServices.AccessFallback}, roleSvc)
+	rec := &logtest.Recorder{}
+	tc.MockContainer.GetLogger().SetAuditPersister(rec)
+
+	cmd, _ := newVaultAccessCmd(ctx)
+	cmd.SetArgs([]string{"revoke", uuid.New().String()})
+
+	err := cmd.Execute()
+	require.ErrorIs(t, err, authzServices.ErrRoleNotGrantable)
+	assert.Contains(t, err.Error(), "revoke failed")
+	row, ok := rec.Find("revoke_role_assignment", "denied")
+	require.True(t, ok, "a not-revocable CLI revoke must be audited")
+	assert.Equal(t, tc.TestUserID.String(), row.UserID)
 }
 
 // TestVaultAccessGrant_AllowedForDataAccessAdministrator proves the gate is

@@ -1,6 +1,7 @@
 package vaultaccess
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -10,6 +11,7 @@ import (
 	"rocketvault/common"
 	"rocketvault/internal/cliclient"
 	"rocketvault/internal/container"
+	authz "rocketvault/internal/services/authorization"
 	"rocketvault/internal/vaultapi"
 	"rocketvault/model"
 )
@@ -81,6 +83,9 @@ assignment did not exist.`,
 			}
 			isGlobalAdmin := common.HasAnyRole(callerRoles, string(model.RoleAdmin))
 			if err := sc.GetRoleAssignmentService().RevokeAssignment(ctx, id, vaultID, callerID, isGlobalAdmin); err != nil {
+				if errors.Is(err, authz.ErrRoleNotGrantable) {
+					auditDeniedRefusal(sc, callerID, "revoke_role_assignment", err)
+				}
 				return fmt.Errorf("revoke failed: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "revoked assignment %s\n", id) //nolint:errcheck
