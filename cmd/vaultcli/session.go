@@ -170,14 +170,16 @@ func (s *Session) Authorize() error {
 // RequireAlso runs Authorize's two-stage check for one more data action, in
 // the vault Authorize already resolved. It is for commands that act on two
 // object types at once, such as issuing a certificate with a key. Calling it
-// before Authorize fails closed.
+// before Authorize, or on a session without claims, fails closed. Its errors
+// carry the classes RequireDataPlaneAccess documents, prefixed by the
+// operation's failure message.
 func (s *Session) RequireAlso(action model.DataAction, op model.PolicyOperation) error {
 	msg := s.op.AuthzFailMsg
 	if msg == "" {
 		msg = "vault authorization failed"
 	}
-	if s.Container == nil || s.VaultID == uuid.Nil {
-		return s.Fail(msg, fmt.Errorf("RequireAlso called before Authorize"))
+	if s.Container == nil || s.Claims == nil || s.VaultID == uuid.Nil {
+		return s.Fail(msg, fmt.Errorf("RequireAlso called before Authorize or without claims"))
 	}
 
 	if err := authorization.RequireDataPlaneAccess(s.Ctx, s.Container.GetAccessPolicyService(),

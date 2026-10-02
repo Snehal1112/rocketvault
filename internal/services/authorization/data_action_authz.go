@@ -16,6 +16,17 @@ import (
 // tests already match. A lookup failure never wraps it.
 var ErrDataPlaneDenied = errors.New("forbidden")
 
+// ErrDataPlaneMisuse marks a data-plane check called with an empty resource
+// type, operation or action, or a nil principal or vault. It is a caller bug,
+// not a refusal, so it never wraps ErrDataPlaneDenied. The check still fails
+// closed.
+var ErrDataPlaneMisuse = errors.New("data-plane check called with incomplete arguments")
+
+// ErrAuthorizationUnavailable marks a data-plane check that has no access
+// policy or role assignment service to consult. It is a wiring bug, not a
+// refusal, so it never wraps ErrDataPlaneDenied. The check still fails closed.
+var ErrAuthorizationUnavailable = errors.New("authorization services are not available")
+
 // RequireDataAction returns nil if principalID holds a role assignment in
 // vaultID granting action, and an error otherwise. It is the CLI-callable
 // equivalent of the role-assignment half of PolicyMiddleware's check (its
@@ -49,7 +60,17 @@ func RequireDataAction(ctx context.Context, roles RoleAssignmentService, princip
 // override, then the deny-by-default role-assignment check. It is the single
 // implementation behind the CLI (cmd/vaultcli), handlers that need a second
 // action beyond the one their route maps to, and the renewal scheduler, so
-// the three cannot drift apart. Nil services deny.
+// the three cannot drift apart.
+//
+// It returns nil only when access is granted. Every other outcome is an
+// error in one of four classes:
+//   - A refusal (explicit deny, or no role grant) wraps ErrDataPlaneDenied.
+//   - Incomplete arguments return ErrDataPlaneMisuse before any lookup.
+//   - Nil services return ErrAuthorizationUnavailable before any lookup.
+//   - A policy or role lookup failure is wrapped as is.
+//
+// Only the first class is a refusal; callers map the others to a server
+// fault.
 func RequireDataPlaneAccess(
 	ctx context.Context,
 	policies AccessPolicyService,
@@ -59,8 +80,12 @@ func RequireDataPlaneAccess(
 	op model.PolicyOperation,
 	action model.DataAction,
 ) error {
+	if resourceType == "" || op == "" || action == "" || principalID == uuid.Nil || vaultID == uuid.Nil {
+		return fmt.Errorf("%w: resource=%q op=%q action=%q principal=%s vault=%s",
+			ErrDataPlaneMisuse, resourceType, op, action, principalID, vaultID)
+	}
 	if policies == nil || roles == nil {
-		return fmt.Errorf("%w: authorization services are not available", ErrDataPlaneDenied)
+		return ErrAuthorizationUnavailable
 	}
 
 	decision, err := policies.CheckAccess(ctx, principalID, resourceType, op, vaultID)

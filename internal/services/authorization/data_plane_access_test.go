@@ -57,18 +57,77 @@ func TestRequireDataPlaneAccess_GrantPassesAndForwardsArguments(t *testing.T) {
 	require.Equal(t, model.ActionKeysSign, roles.calledAction)
 }
 
+// TestRequireDataPlaneAccess_NilServicesFailClosed pins that a missing
+// service fails closed as a wiring fault, not as a refusal.
 func TestRequireDataPlaneAccess_NilServicesFailClosed(t *testing.T) {
-	err := RequireDataPlaneAccess(context.Background(), nil, nil, uuid.New(), uuid.New(),
-		model.PolicyResourceKeys, model.OpSign, model.ActionKeysSign)
-	require.ErrorIs(t, err, ErrDataPlaneDenied)
+	cases := []struct {
+		name     string
+		policies AccessPolicyService
+		roles    RoleAssignmentService
+	}{
+		{"both nil", nil, nil},
+		{"nil roles", &fakeAccessPolicyService{decision: AccessFallback}, nil},
+		{"nil policies", nil, &fakeRoleAssignmentService{hasAction: true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := RequireDataPlaneAccess(context.Background(), tc.policies, tc.roles, uuid.New(), uuid.New(),
+				model.PolicyResourceKeys, model.OpSign, model.ActionKeysSign)
+			require.ErrorIs(t, err, ErrAuthorizationUnavailable)
+			require.NotErrorIs(t, err, ErrDataPlaneDenied, "a wiring fault is not a refusal")
+		})
+	}
+}
 
-	err = RequireDataPlaneAccess(context.Background(), &fakeAccessPolicyService{decision: AccessFallback}, nil,
-		uuid.New(), uuid.New(), model.PolicyResourceKeys, model.OpSign, model.ActionKeysSign)
-	require.ErrorIs(t, err, ErrDataPlaneDenied)
+// countingPolicyService records whether CheckAccess ran.
+type countingPolicyService struct {
+	fakeAccessPolicyService
+	calls int
+}
 
-	err = RequireDataPlaneAccess(context.Background(), nil, &fakeRoleAssignmentService{hasAction: true},
-		uuid.New(), uuid.New(), model.PolicyResourceKeys, model.OpSign, model.ActionKeysSign)
-	require.ErrorIs(t, err, ErrDataPlaneDenied)
+func (c *countingPolicyService) CheckAccess(ctx context.Context, p uuid.UUID, r model.PolicyResourceType, o model.PolicyOperation, v uuid.UUID) (AccessDecision, error) {
+	c.calls++
+	return c.fakeAccessPolicyService.CheckAccess(ctx, p, r, o, v)
+}
+
+// TestRequireDataPlaneAccess_IncompleteArgumentsFailClosed pins that every
+// empty or nil argument is refused as misuse before any service is called.
+func TestRequireDataPlaneAccess_IncompleteArgumentsFailClosed(t *testing.T) {
+	type args struct {
+		principalID, vaultID uuid.UUID
+		resourceType         model.PolicyResourceType
+		op                   model.PolicyOperation
+		action               model.DataAction
+	}
+	valid := func() args {
+		return args{uuid.New(), uuid.New(), model.PolicyResourceKeys, model.OpSign, model.ActionKeysSign}
+	}
+	cases := map[string]func(*args){
+		"empty resource type": func(a *args) { a.resourceType = "" },
+		"empty op":            func(a *args) { a.op = "" },
+		"empty action":        func(a *args) { a.action = "" },
+		"nil principal":       func(a *args) { a.principalID = uuid.Nil },
+		"nil vault":           func(a *args) { a.vaultID = uuid.Nil },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			a := valid()
+			mutate(&a)
+			policies := &countingPolicyService{fakeAccessPolicyService: fakeAccessPolicyService{decision: AccessFallback}}
+			roles := &fakeRoleAssignmentService{hasAction: true}
+
+			err := RequireDataPlaneAccess(context.Background(), policies, roles, a.principalID, a.vaultID,
+				a.resourceType, a.op, a.action)
+			require.ErrorIs(t, err, ErrDataPlaneMisuse)
+			require.NotErrorIs(t, err, ErrDataPlaneDenied, "a caller bug is not a refusal")
+			require.Zero(t, policies.calls, "no policy lookup may run")
+			require.Empty(t, roles.calledAction, "no role lookup may run")
+		})
+	}
+
+	// Misuse is reported even when the services are missing too.
+	err := RequireDataPlaneAccess(context.Background(), nil, nil, uuid.Nil, uuid.Nil, "", "", "")
+	require.ErrorIs(t, err, ErrDataPlaneMisuse)
 }
 
 func TestRequireDataPlaneAccess_PolicyLookupErrorIsNotADenial(t *testing.T) {

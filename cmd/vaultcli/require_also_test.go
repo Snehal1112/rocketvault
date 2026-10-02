@@ -27,6 +27,28 @@ func TestRequireAlso_BeforeAuthorizeFailsClosed(t *testing.T) {
 	require.Contains(t, err.Error(), "before Authorize")
 }
 
+// TestRequireAlso_NilClaimsFailsClosed pins that a session without claims
+// never reaches the authorization services.
+func TestRequireAlso_NilClaimsFailsClosed(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+
+	policies := &testutils.MockAccessPolicyService{}
+	tc.MockContainer.AccessPolicyService = policies
+	roles := &testutils.MockRoleAssignmentService{}
+	tc.MockContainer.RoleAssignmentService = roles
+
+	s, hook := authorizedSession(t, tc)
+	s.Claims = nil
+
+	err := s.RequireAlso(model.ActionKeysSign, model.OpSign)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to create certificate")
+	require.NotErrorIs(t, err, authorization.ErrDataPlaneDenied)
+	policies.AssertNotCalled(t, "CheckAccess", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	roles.AssertNotCalled(t, "HasDataAction", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	require.Len(t, hook.AllEntries(), 1, "the failure is audited through Fail")
+}
+
 // authorizedSession builds a Session as Authorize would leave it, with a
 // logger whose entries the returned hook records.
 func authorizedSession(t *testing.T, tc *testutils.TestContext) (*Session, *logtest.Hook) {
