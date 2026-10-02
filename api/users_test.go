@@ -1116,6 +1116,8 @@ func TestLoginUser_Success_Returns200(t *testing.T) {
 	}
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	// The body carries tokens, so no cache may keep it.
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 	assert.Equal(t, "tok", body["token"])
@@ -1184,6 +1186,8 @@ func TestRefreshToken_Success_Returns200(t *testing.T) {
 	}
 
 	assert.Equal(t, http.StatusOK, w.Code)
+	// The body carries tokens, so no cache may keep it.
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 	authSvc.AssertExpectations(t)
 }
 

@@ -350,7 +350,7 @@ func TestImportCommand_ReturnsErrorAndPrintsDetailsOnFailure(t *testing.T) {
 			ImportedCount: 1,
 			SkippedCount:  0,
 			FailedCount:   1,
-			Errors:        []string{"Failed to import 'db-password': encryption failed"},
+			Errors:        []string{"'db-password': internal error"},
 		}, nil)
 	tc.MockContainer.On("GetSecretService").Return(tc.MockSecretService)
 
@@ -394,5 +394,5 @@ func TestImportCommand_ReturnsErrorAndPrintsDetailsOnFailure(t *testing.T) {
 	require.Error(t, execErr, "a nonzero FailedCount must fail the command")
 	assert.Contains(t, execErr.Error(), "1 record(s) failed to import")
 	assert.Contains(t, string(out), "Errors:")
-	assert.Contains(t, string(out), "Failed to import 'db-password': encryption failed")
+	assert.Contains(t, string(out), "'db-password': internal error")
 }

@@ -34,6 +34,8 @@ func writeSecretError(c *Context, err error) {
 		c.SetConflict("a resource with this name already exists in this vault")
 	case errors.Is(err, secrets.ErrInvalidContentType):
 		c.SetInvalidParam("content_type")
+	case errors.Is(err, secrets.ErrImportParse):
+		c.SetInvalidParam("file: could not be parsed as the requested format")
 	default:
 		c.SetInternalError(err)
 	}

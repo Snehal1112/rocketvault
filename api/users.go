@@ -425,7 +425,8 @@ func loginUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		Roles:        result.Roles,
 	}
 
-	// Send response.
+	// Send response. The body carries tokens, so it must never be cached.
+	setNoStore(w)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(response.ToJson())) //nolint:errcheck,gosec
@@ -471,7 +472,8 @@ func refreshToken(c *Context, w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:    result.ExpiresAt,
 	}
 
-	// Send response.
+	// Send response. The body carries tokens, so it must never be cached.
+	setNoStore(w)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(response.ToJson())) //nolint:errcheck,gosec
 

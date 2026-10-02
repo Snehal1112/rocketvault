@@ -63,3 +63,32 @@ func TestImportSecrets_CleanRunStaysSuccessful(t *testing.T) {
 	assert.Equal(t, "Successfully imported 2/2 secrets", resp.Message)
 	assert.NotContains(t, w.Body.String(), `"errors"`)
 }
+
+// TestImportSecrets_MalformedFileIs400 verifies that a file the real service
+// cannot parse is reported as a client error, not an opaque 500. The real
+// service is used because the parse step runs before any repository call.
+func TestImportSecrets_MalformedFileIs400(t *testing.T) {
+	cases := []struct {
+		name    string
+		format  string
+		content string
+	}{
+		{name: "json", format: "json", content: `not json at all`},
+		{name: "csv header", format: "csv", content: "name,va\"lue\nx,y\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := secretServices.NewSecretService(secretServices.SecretServiceConfig{Logger: userTestLog()})
+			c := newSecretCtx(svc)
+			w := httptest.NewRecorder()
+			r := buildMultipartRequest(t, tc.content, map[string]string{"format": tc.format})
+
+			importSecrets(c, w, r)
+			require.NotNil(t, c.Err)
+			writeError(w, c)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "could not be parsed")
+		})
+	}
+}

@@ -38,6 +38,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	rvdb "rocketvault/internal/db"
+	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
 	"rocketvault/internal/services/secrets"
 	"rocketvault/internal/testutils"
@@ -112,6 +113,8 @@ type importFixture struct {
 	versionRepo repositories.SecretVersionRepositoryInterface
 	tagSvc      secrets.TagService
 	crypto      secrets.CryptographyService
+	versionSvc  secrets.VersioningServiceInterface
+	log         *logging.Logger
 	userID      uuid.UUID
 	vaultID     uuid.UUID
 }
@@ -165,6 +168,8 @@ func newImportFixture(t *testing.T) *importFixture {
 		versionRepo: versionRepo,
 		tagSvc:      tagSvc,
 		crypto:      crypto,
+		versionSvc:  versioningSvc,
+		log:         log,
 		userID:      uuid.New(),
 		vaultID:     uuid.New(),
 	}

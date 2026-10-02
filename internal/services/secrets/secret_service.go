@@ -43,6 +43,10 @@ var ErrExportPassphraseRequired = errors.New("export encryption requested but no
 // passphrase and must never prompt for one.
 var ErrImportDataIsSealed = errors.New("import data is an encrypted RocketVault export: decrypt it before importing")
 
+// ErrImportParse is returned when an import file cannot be parsed as the
+// requested format. It is a client error, so the HTTP layer maps it to 400.
+var ErrImportParse = errors.New("import file could not be parsed")
+
 // CreateSecretRequest represents a request to create a new secret.
 type CreateSecretRequest struct {
 	UserID      uuid.UUID
@@ -784,7 +788,7 @@ func (s *secretService) ImportSecrets(ctx context.Context, req ImportSecretsRequ
 		// Parse JSON
 		if err := json.Unmarshal(req.Data, &secretsToImport); err != nil {
 			s.logger.LogAuditError(req.Scope.ActorID().String(), "import_secrets", "failed", "Failed to parse JSON", err)
-			return nil, fmt.Errorf("failed to parse JSON: %w", err)
+			return nil, fmt.Errorf("%w: invalid JSON: %w", ErrImportParse, err)
 		}
 	} else {
 		// Parse CSV via encoding/csv, which handles doubled-quote escaping
@@ -796,7 +800,7 @@ func (s *secretService) ImportSecrets(ctx context.Context, req ImportSecretsRequ
 		header, err := reader.Read()
 		if err != nil && err != io.EOF {
 			s.logger.LogAuditError(req.Scope.ActorID().String(), "import_secrets", "failed", "Failed to parse CSV header", err)
-			return nil, fmt.Errorf("failed to parse CSV: %w", err)
+			return nil, fmt.Errorf("%w: invalid CSV header: %w", ErrImportParse, err)
 		}
 		hasTags := len(header) > 2
 
@@ -871,7 +875,7 @@ func (s *secretService) ImportSecrets(ctx context.Context, req ImportSecretsRequ
 
 		existing, err := s.secretRepo.FindByName(ctx, importSec.Name, req.Scope)
 		if err != nil && !errors.Is(err, repositories.ErrNotFound) {
-			result.Errors = append(result.Errors, fmt.Sprintf("Failed to look up '%s': %v", importSec.Name, err))
+			result.Errors = append(result.Errors, s.importItemError(req.Scope, importSec.Name, "look up", err))
 			result.FailedCount++
 			continue
 		}
@@ -895,7 +899,7 @@ func (s *secretService) ImportSecrets(ctx context.Context, req ImportSecretsRequ
 				updateReq.Tags = &importSec.Tags
 			}
 			if err := s.UpdateSecret(ctx, updateReq); err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("Failed to overwrite '%s': %v", importSec.Name, err))
+				result.Errors = append(result.Errors, s.importItemError(req.Scope, importSec.Name, "overwrite", err))
 				result.FailedCount++
 			} else {
 				result.ImportedCount++
@@ -912,7 +916,7 @@ func (s *secretService) ImportSecrets(ctx context.Context, req ImportSecretsRequ
 		}
 
 		if _, err := s.CreateSecret(ctx, createReq); err != nil {
-			result.Errors = append(result.Errors, fmt.Sprintf("Failed to import '%s': %v", importSec.Name, err))
+			result.Errors = append(result.Errors, s.importItemError(req.Scope, importSec.Name, "create", err))
 			result.FailedCount++
 		} else {
 			result.ImportedCount++
@@ -932,6 +936,19 @@ func (s *secretService) ImportSecrets(ctx context.Context, req ImportSecretsRequ
 	}).Info("Secrets import completed")
 
 	return result, nil
+}
+
+// importItemError turns a per-item storage failure into a fixed message for
+// ImportResult.Errors, which reaches the HTTP body and the CLI. Raw errors can
+// carry database driver text, so only a fixed class is returned and the real
+// error goes to the service log. The secret value is never logged.
+func (s *secretService) importItemError(scope model.Scope, name, step string, err error) string {
+	if errors.Is(err, repositories.ErrNameTaken) {
+		return fmt.Sprintf("'%s': name already exists", name)
+	}
+	s.logger.LogAuditError(scope.ActorID().String(), "import_secrets", "failed",
+		fmt.Sprintf("Failed to %s '%s' during import", step, name), err)
+	return fmt.Sprintf("'%s': internal error", name)
 }
 
 // softDeletedInScope reports whether secretID names a soft-deleted secret the
