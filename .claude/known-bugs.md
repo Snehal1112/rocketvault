@@ -5218,15 +5218,64 @@ pick its operation with this in mind. The router walk pins the current
 `OpRecover` result so a fix must update the test on purpose.
 
 **Not compared in this fix (follow-up)**: the other CLI commands that pass
-`OpCreate` were not aligned against HTTP by this plan. A spot check on
-2026-10-02 found: key create, certificate create and secret create pass
-`OpCreate`, matching their POST collection routes; `secrets export` passes
-`OpCreate` (with `ActionSecretsGet`), matching `POST .../secrets/export`;
-`cmd/rotation.go`'s secret rotation-policy create passes `OpCreate`. Two
-mismatches were seen and not fixed: `keys import` passes `OpCreate` while
-`POST .../keys/import` resolves to `OpImport`, and `cmd/version.go`'s version
-list passes `OpList` while HTTP GET routes never resolve to `OpList`. A deny
-on `import` or `list` therefore behaves differently on the CLI and over HTTP.
+`OpCreate` were not aligned against HTTP by this plan. Tracked as B94: the
+`keys import` mismatch (fixed 2026-10-02), the `cmd/version.go` version-list
+`OpList` mismatch (open), and the remaining `OpCreate` uses (not compared).
+
+---
+
+### B94 — CLI and HTTP evaluate different policy operations for some commands
+
+**Status**: Partially fixed 2026-10-02 (part a); parts b and c open; GitHub #60
+**Severity**: Low to Medium — an explicit deny is the one mechanism that
+overrides a role grant, and for these commands it behaves differently per entry point.
+**Files**: `cmd/keys/import.go`, `cmd/version.go`, `cmd/secrets/export.go`,
+`internal/middleware/middleware.go` (`resolvePolicy`)
+
+**Symptom**:
+- (a) FIXED: `keys import` passed `OpCreate` to `vaultcli.RequireDataAction`
+  while `POST .../keys/import` resolves to `OpImport`, so a deny on
+  `(keys, import)` was bypassed over the CLI and a deny on `(keys, create)`
+  wrongly blocked it. The command now passes `OpImport`; test
+  `TestImportCmd_PolicyOperationIsImport`.
+- (b) OPEN: `cmd/version.go` (secret version list, ~line 179) passes `OpList`
+  with `ActionSecretsReadMetadata`, but `resolvePolicy` never returns `OpList`
+  for any route (GET resolves to `OpGet`). A deny on `(secrets, get)` blocks
+  `GET .../secrets/{id}/versions` over HTTP but not the CLI list (low: metadata
+  only), and an operator-configured deny on `list` is never evaluated over HTTP.
+- (c) NOT COMPARED: other CLI uses of `OpCreate` (certificate create, secret
+  create, secret export) were not checked against HTTP beyond a spot check.
+
+**Root cause**: the CLI and `resolvePolicy` choose operations independently;
+nothing ties them together except per-command tests.
+
+**Fix recipe**: for (b), either resolve collection GETs to `OpList` in
+`resolvePolicy` or make the CLI pass `OpGet`; owner decision. For (c), compare
+each remaining command's operation to its HTTP route.
+
+---
+
+### B95 — Export is not blocked by an explicit deny on get
+
+**Status**: Open; GitHub #61 (pre-existing, kept fail-closed on create on purpose)
+**Severity**: Medium
+**Files**: `internal/middleware/middleware.go` (`resolvePolicy`),
+`cmd/secrets/export.go`, `api/export.go`
+
+**Symptom**: `POST .../keys/{id}/export`, `POST .../certificates/{id}/export`
+and bulk `POST .../secrets/export` all resolve to `OpCreate`, so a deny on
+create blocks them, but an explicit access-policy deny on
+`(keys|certificates|secrets, get)` does not. A principal explicitly denied
+`get` who still holds the export data action through a role can dump secret
+values or export a private key, over HTTP and over the CLI
+(`cmd/secrets/export.go` passes `OpCreate` with `ActionSecretsGet`).
+
+**Root cause**: export has no policy operation of its own and is classed as
+create.
+
+**Fix recipe**: evaluate both create and get (or add a dedicated export
+operation) for these routes. Owner decision, since either choice changes which
+existing denies take effect.
 
 ---
 
