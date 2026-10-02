@@ -5083,19 +5083,29 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
     ExportBadRequest:
-      description: Bad body, unknown format or compat, pkcs12 without password, or bad version
+      description: |
+        Malformed or missing body, an id that is not a UUID, an unknown format
+        (certificates accept pem or pkcs12, keys only pem), an unknown compat
+        or a pkcs12 request without a password (certificates only), or a
+        negative version
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ExportError"
     ExportForbidden:
       description: |
-        `certificate_not_exportable` or `key_not_exportable` (ExportError
-        body), or a missing role (plain-text body from the policy middleware)
+        The item is not exportable: `certificate_not_exportable` on the
+        certificate route or `key_not_exportable` on the key route, as an
+        ExportError body. A caller without the export role instead gets the
+        policy middleware's plain-text 403.
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ExportError"
+        text/plain:
+          schema:
+            type: string
+            example: "Forbidden: no role assignment grants this operation in this vault"
     ExportNotFound:
       description: Unknown, soft-deleted, out of vault, or unknown version
       content:
@@ -7429,7 +7439,7 @@ components:
           properties:
             code:
               type: string
-              enum: [bad_request, forbidden, certificate_not_exportable, key_not_exportable, not_found, certificate_disabled, key_disabled, internal_error]
+              enum: [bad_request, certificate_not_exportable, key_not_exportable, not_found, certificate_disabled, key_disabled, internal_error]
             message:
               type: string
             key_algorithm:
