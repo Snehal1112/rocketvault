@@ -594,6 +594,18 @@ func (s *secretService) GenerateSecret(ctx context.Context, req GenerateSecretRe
 	return secret, nil
 }
 
+// accessibleOnly drops disabled, expired and not-yet-active secrets, matching
+// what GetSecret refuses to return. Export must not be a side door around it.
+func accessibleOnly(in []model.Secret) []model.Secret {
+	out := make([]model.Secret, 0, len(in))
+	for i := range in {
+		if in[i].IsAccessible() {
+			out = append(out, in[i])
+		}
+	}
+	return out
+}
+
 // ExportSecrets exports secrets in JSON or CSV format.
 // It retrieves secrets for the user and formats them according to the request.
 //
@@ -625,6 +637,7 @@ func (s *secretService) ExportSecrets(ctx context.Context, req ExportSecretsRequ
 		s.logger.LogAuditError(req.Scope.ActorID().String(), "export_secrets", "failed", "Failed to list secrets", err)
 		return nil, fmt.Errorf("failed to list secrets: %w", err)
 	}
+	secretsList = accessibleOnly(secretsList)
 
 	var data []byte
 	if req.Format == "json" {

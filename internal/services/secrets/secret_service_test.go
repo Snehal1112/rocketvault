@@ -686,7 +686,7 @@ func TestExportSecrets_VaultScoped_UsesListSecretsInVault(t *testing.T) {
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "s1", Value: "enc-v1"}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "s1", Value: "enc-v1", Enabled: true}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil)
 	crypto.On("DecryptSecret", "enc-v1").Return("plain-v1", nil)
 	tag.On("GetTags", ctx, stored[0].ID).Return([]string{}, nil)
@@ -713,7 +713,7 @@ func TestExportSecrets_WithPassphrase_SealsAndLeaksNoPlaintext(t *testing.T) {
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1"}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1", Enabled: true}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil)
 	crypto.On("DecryptSecret", "enc-v1").Return("hunter2", nil)
 	tag.On("GetTags", ctx, stored[0].ID).Return([]string{"production"}, nil)
@@ -753,7 +753,7 @@ func TestExportSecrets_EncryptWithoutPassphrase_FailsAndReturnsNoData(t *testing
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1"}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1", Enabled: true}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil).Maybe()
 	crypto.On("DecryptSecret", "enc-v1").Return("hunter2", nil).Maybe()
 	tag.On("GetTags", ctx, stored[0].ID).Return([]string{}, nil).Maybe()
@@ -781,7 +781,7 @@ func TestExportSecrets_CSVWithPassphrase_IsSealedEnvelope(t *testing.T) {
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1"}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1", Enabled: true}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil)
 	crypto.On("DecryptSecret", "enc-v1").Return("hunter2", nil)
 	tag.On("GetTags", ctx, stored[0].ID).Return([]string{}, nil)
@@ -816,7 +816,7 @@ func TestExportSecrets_SealedRoundTripsThroughImport(t *testing.T) {
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1"}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1", Enabled: true}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil)
 	crypto.On("DecryptSecret", "enc-v1").Return("hunter2", nil)
 	tag.On("GetTags", ctx, stored[0].ID).Return([]string{}, nil)
@@ -1231,7 +1231,7 @@ func TestExportSecretsCSV_EscapesEmbeddedQuote(t *testing.T) {
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: `d"b`, Value: "enc-v1"}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: `d"b`, Value: "enc-v1", Enabled: true}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil)
 	crypto.On("DecryptSecret", "enc-v1").Return(`a"b`, nil)
 	tag.On("GetTags", ctx, stored[0].ID).Return(nil, nil)
@@ -1303,7 +1303,7 @@ func TestExportImportCSV_RoundTripsQuoteCommaNewlineValueAndCommaTag(t *testing.
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1", Tags: tags}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1", Enabled: true, Tags: tags}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil)
 	crypto.On("DecryptSecret", "enc-v1").Return(value, nil)
 	tag.On("GetTags", ctx, stored[0].ID).Return(tags, nil)
@@ -1371,7 +1371,7 @@ func TestExportImportCSV_RoundTripsNewlineTag(t *testing.T) {
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1", Tags: tags}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "db-password", Value: "enc-v1", Enabled: true, Tags: tags}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil)
 	crypto.On("DecryptSecret", "enc-v1").Return(value, nil)
 	tag.On("GetTags", ctx, stored[0].ID).Return(tags, nil)
@@ -1580,7 +1580,7 @@ func TestExportImportCSV_RoundTripsCRLFValueAndTag(t *testing.T) {
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "crlf-secret", Value: "enc-v1", Tags: tags}}
+	stored := []model.Secret{{ID: uuid.New(), VaultID: vaultID, Name: "crlf-secret", Value: "enc-v1", Enabled: true, Tags: tags}}
 	repo.On("List", ctx, model.NewVaultScope(vaultID, userID), repositories.SecretFilter{Tags: nil}).Return(stored, nil)
 	crypto.On("DecryptSecret", "enc-v1").Return(value, nil)
 	tag.On("GetTags", ctx, stored[0].ID).Return(tags, nil)
