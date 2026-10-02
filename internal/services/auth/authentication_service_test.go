@@ -288,18 +288,21 @@ func TestAuthenticationService_AuthenticateUser_Success(t *testing.T) {
 	// Setup expectations
 	mockUserRepo.On("ReadByUsername", ctx, "testuser").Return(user, nil)
 	mockPasswordService.On("ValidatePassword", "password123", "hashedpassword").Return(nil)
-	mockTOTPService.On("ValidateCode", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(true, nil)
+	mockTOTPService.On("ValidateCodeWithStep", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(int64(100), true, nil)
 	mockSessionRepo.On("CreateSession", ctx, mock.AnythingOfType("*model.Session")).Return(nil)
+	steps := &MockTOTPStepRepository{}
+	steps.On("ClaimTOTPStep", mock.Anything, mock.Anything, int64(100)).Return(true, nil)
 	mockJWTService.On("GenerateToken", userID, "testuser", []string{model.RoleUser}, mock.AnythingOfType("uuid.UUID")).Return("jwt_token", nil)
 
 	// Create service
 	service := NewAuthenticationService(AuthenticationConfig{
-		UserRepository:    mockUserRepo,
-		SessionRepository: mockSessionRepo,
-		PasswordService:   mockPasswordService,
-		TOTPService:       mockTOTPService,
-		JWTService:        mockJWTService,
-		Logger:            logger,
+		UserRepository:     mockUserRepo,
+		SessionRepository:  mockSessionRepo,
+		PasswordService:    mockPasswordService,
+		TOTPService:        mockTOTPService,
+		JWTService:         mockJWTService,
+		TOTPStepRepository: steps,
+		Logger:             logger,
 	})
 
 	// Act
@@ -433,7 +436,7 @@ func TestAuthenticationService_AuthenticateUser_InvalidPassword(t *testing.T) {
 	mockUserRepo.AssertExpectations(t)
 	mockPasswordService.AssertExpectations(t)
 	// TOTP and JWT services should not be called
-	mockTOTPService.AssertNotCalled(t, "ValidateCode")
+	mockTOTPService.AssertNotCalled(t, "ValidateCodeWithStep")
 	mockJWTService.AssertNotCalled(t, "GenerateToken")
 }
 
@@ -464,7 +467,7 @@ func TestAuthenticationService_AuthenticateUser_InvalidTOTP(t *testing.T) {
 	// Setup expectations
 	mockUserRepo.On("ReadByUsername", ctx, "testuser").Return(user, nil)
 	mockPasswordService.On("ValidatePassword", "password123", "hashedpassword").Return(nil)
-	mockTOTPService.On("ValidateCode", "000000", "secret123", mock.AnythingOfType("time.Time")).Return(false, nil)
+	mockTOTPService.On("ValidateCodeWithStep", "000000", "secret123", mock.AnythingOfType("time.Time")).Return(int64(0), false, nil)
 
 	// Create service
 	service := NewAuthenticationService(AuthenticationConfig{
@@ -541,18 +544,21 @@ func TestAuthenticateUser_RecordsRichAuditOutcomeOnSuccessAndFailure(t *testing.
 	mockUserRepo.On("ReadByUsername", mock.Anything, "gooduser").Return(user, nil)
 	mockPasswordService.On("ValidatePassword", "goodpass", "hashedpassword").Return(nil)
 	mockPasswordService.On("ValidatePassword", "wrongpass", "hashedpassword").Return(errors.New("invalid password"))
-	mockTOTPService.On("ValidateCode", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(true, nil)
+	mockTOTPService.On("ValidateCodeWithStep", "123456", "secret123", mock.AnythingOfType("time.Time")).Return(int64(100), true, nil)
 	mockSessionRepo.On("CreateSession", mock.Anything, mock.AnythingOfType("*model.Session")).Return(nil)
+	steps := &MockTOTPStepRepository{}
+	steps.On("ClaimTOTPStep", mock.Anything, mock.Anything, int64(100)).Return(true, nil)
 	mockJWTService.On("GenerateToken", userID, "gooduser", []string{model.RoleUser}, mock.AnythingOfType("uuid.UUID")).Return("jwt_token", nil)
 
 	svc := NewAuthenticationService(AuthenticationConfig{
-		UserRepository:    mockUserRepo,
-		SessionRepository: mockSessionRepo,
-		PasswordService:   mockPasswordService,
-		TOTPService:       mockTOTPService,
-		JWTService:        mockJWTService,
-		Logger:            logger,
-		AuditService:      auditSvcInst,
+		UserRepository:     mockUserRepo,
+		SessionRepository:  mockSessionRepo,
+		PasswordService:    mockPasswordService,
+		TOTPService:        mockTOTPService,
+		JWTService:         mockJWTService,
+		TOTPStepRepository: steps,
+		Logger:             logger,
+		AuditService:       auditSvcInst,
 	})
 
 	ctx := context.Background()
@@ -621,8 +627,8 @@ func TestAuthenticateUser_FailedTOTP_DoesNotLogCode(t *testing.T) {
 
 	mockUserRepo.On("ReadByUsername", mock.Anything, "alice").Return(testUser, nil)
 	mockPasswordService.On("ValidatePassword", "password123", testUser.PasswordHash).Return(nil)
-	mockTOTPService.On("ValidateCode", "123456", testUser.TOTPSecret, mock.AnythingOfType("time.Time")).
-		Return(false, nil)
+	mockTOTPService.On("ValidateCodeWithStep", "123456", testUser.TOTPSecret, mock.AnythingOfType("time.Time")).
+		Return(int64(0), false, nil)
 
 	// Bind the service's own logger to a local buffer so we capture exactly
 	// what this service writes, with no shared global logrus state.

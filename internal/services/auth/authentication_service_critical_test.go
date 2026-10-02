@@ -59,7 +59,7 @@ func TestAuthenticateUser_UserNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	pwd.AssertNotCalled(t, "ValidatePassword")
-	totp.AssertNotCalled(t, "ValidateCode")
+	totp.AssertNotCalled(t, "ValidateCodeWithStep")
 }
 
 // --- ValidateSession ---
@@ -589,7 +589,7 @@ func TestAuthenticateUser_EmptyTOTPSecret_FailsClosed(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrMFANotEnrolled)
 	assert.Nil(t, result)
-	totp.AssertNotCalled(t, "ValidateCode", mock.Anything, mock.Anything, mock.Anything)
+	totp.AssertNotCalled(t, "ValidateCodeWithStep", mock.Anything, mock.Anything, mock.Anything)
 	sessionRepo.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
 	jwt.AssertNotCalled(t, "GenerateToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
@@ -616,7 +616,7 @@ func TestAuthenticateUser_EmptyTOTPSecret_LooksLikeWrongCode(t *testing.T) {
 	enrolled := model.User{ID: uuid.New(), Username: "carol", PasswordHash: "hashed", TOTPSecret: "JBSWY3DPEHPK3PXP", Roles: []string{model.RoleUser}}
 	enrolledRepo.On("ReadByUsername", ctx, "carol").Return(enrolled, nil)
 	enrolledPwd.On("ValidatePassword", "pass", "hashed").Return(nil)
-	enrolledTOTP.On("ValidateCode", "123456", "JBSWY3DPEHPK3PXP", mock.Anything).Return(false, nil)
+	enrolledTOTP.On("ValidateCodeWithStep", "123456", "JBSWY3DPEHPK3PXP", mock.Anything).Return(int64(0), false, nil)
 	_, wrongCodeErr := newAuthService(enrolledRepo, &MockSessionRepository{}, enrolledPwd,
 		enrolledTOTP, &MockJWTService{}, nil).AuthenticateUser(ctx, "carol", "pass", "123456")
 

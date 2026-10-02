@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,6 +51,23 @@ func (j *loginStubJWT) GenerateToken(_ uuid.UUID, _ string, _ []string, _ uuid.U
 	return "tok", nil
 }
 
+// loginStubStepRepo records the last claimed TOTP step per user in memory,
+// with the same newer-step-only rule as the real repository.
+type loginStubStepRepo struct {
+	mu   sync.Mutex
+	last map[uuid.UUID]int64
+}
+
+func (r *loginStubStepRepo) ClaimTOTPStep(_ context.Context, userID uuid.UUID, step int64) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if step <= r.last[userID] {
+		return false, nil
+	}
+	r.last[userID] = step
+	return true, nil
+}
+
 // newRealLoginAuthService builds the real authentication service with real
 // password and TOTP checks over the given users.
 func newRealLoginAuthService(t *testing.T, users ...model.User) authServices.AuthenticationService {
@@ -59,12 +77,13 @@ func newRealLoginAuthService(t *testing.T, users ...model.User) authServices.Aut
 		repo.users[u.Username] = u
 	}
 	return authServices.NewAuthenticationService(authServices.AuthenticationConfig{
-		UserRepository:    repo,
-		SessionRepository: &loginStubSessionRepo{},
-		PasswordService:   authServices.NewPasswordService(),
-		TOTPService:       authServices.NewTOTPService(),
-		JWTService:        &loginStubJWT{},
-		Logger:            logging.InitLogger(),
+		UserRepository:     repo,
+		SessionRepository:  &loginStubSessionRepo{},
+		PasswordService:    authServices.NewPasswordService(),
+		TOTPService:        authServices.NewTOTPService(),
+		JWTService:         &loginStubJWT{},
+		TOTPStepRepository: &loginStubStepRepo{last: map[uuid.UUID]int64{}},
+		Logger:             logging.InitLogger(),
 	})
 }
 

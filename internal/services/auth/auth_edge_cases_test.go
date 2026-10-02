@@ -189,8 +189,8 @@ func TestAuthenticateUser_TOTPValidationError(t *testing.T) {
 
 	userRepo.On("ReadByUsername", ctx, "dave").Return(user, nil)
 	pwd.On("ValidatePassword", "pass", "hashed").Return(nil)
-	totp.On("ValidateCode", "badcode", "secret", mock.AnythingOfType("time.Time")).
-		Return(false, errors.New("totp internal error"))
+	totp.On("ValidateCodeWithStep", "badcode", "secret", mock.AnythingOfType("time.Time")).
+		Return(int64(0), false, errors.New("totp internal error"))
 
 	svc := NewAuthenticationService(AuthenticationConfig{
 		UserRepository:    userRepo,
@@ -233,18 +233,21 @@ func TestAuthenticateUser_SessionCreationFails(t *testing.T) {
 
 	userRepo.On("ReadByUsername", ctx, "eve").Return(user, nil)
 	pwd.On("ValidatePassword", "pass", "hashed").Return(nil)
-	totp.On("ValidateCode", "123456", "secret", mock.AnythingOfType("time.Time")).
-		Return(true, nil)
+	totp.On("ValidateCodeWithStep", "123456", "secret", mock.AnythingOfType("time.Time")).
+		Return(int64(100), true, nil)
+	steps := &MockTOTPStepRepository{}
+	steps.On("ClaimTOTPStep", mock.Anything, mock.Anything, int64(100)).Return(true, nil)
 	sessionRepo.On("CreateSession", ctx, mock.AnythingOfType("*model.Session")).
 		Return(errors.New("db write error"))
 
 	svc := NewAuthenticationService(AuthenticationConfig{
-		UserRepository:    userRepo,
-		SessionRepository: sessionRepo,
-		PasswordService:   pwd,
-		TOTPService:       totp,
-		JWTService:        jwt,
-		Logger:            logging.InitLogger(),
+		UserRepository:     userRepo,
+		SessionRepository:  sessionRepo,
+		PasswordService:    pwd,
+		TOTPService:        totp,
+		JWTService:         jwt,
+		TOTPStepRepository: steps,
+		Logger:             logging.InitLogger(),
 	})
 
 	_, err := svc.AuthenticateUser(ctx, "eve", "pass", "123456")
@@ -279,19 +282,22 @@ func TestAuthenticateUser_JWTGenerationFails(t *testing.T) {
 
 	userRepo.On("ReadByUsername", ctx, "frank").Return(user, nil)
 	pwd.On("ValidatePassword", "pass", "hashed").Return(nil)
-	totp.On("ValidateCode", "123456", "secret", mock.AnythingOfType("time.Time")).
-		Return(true, nil)
+	totp.On("ValidateCodeWithStep", "123456", "secret", mock.AnythingOfType("time.Time")).
+		Return(int64(100), true, nil)
+	steps := &MockTOTPStepRepository{}
+	steps.On("ClaimTOTPStep", mock.Anything, mock.Anything, int64(100)).Return(true, nil)
 	sessionRepo.On("CreateSession", ctx, mock.AnythingOfType("*model.Session")).Return(nil)
 	jwt.On("GenerateToken", userID, "frank", []string{model.RoleUser}, mock.AnythingOfType("uuid.UUID")).
 		Return("", errors.New("signing error"))
 
 	svc := NewAuthenticationService(AuthenticationConfig{
-		UserRepository:    userRepo,
-		SessionRepository: sessionRepo,
-		PasswordService:   pwd,
-		TOTPService:       totp,
-		JWTService:        jwt,
-		Logger:            logging.InitLogger(),
+		UserRepository:     userRepo,
+		SessionRepository:  sessionRepo,
+		PasswordService:    pwd,
+		TOTPService:        totp,
+		JWTService:         jwt,
+		TOTPStepRepository: steps,
+		Logger:             logging.InitLogger(),
 	})
 
 	_, err := svc.AuthenticateUser(ctx, "frank", "pass", "123456")

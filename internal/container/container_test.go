@@ -24,6 +24,7 @@ import (
 	rvdb "rocketvault/internal/db"
 	"rocketvault/internal/keycache"
 	"rocketvault/internal/logging"
+	authServices "rocketvault/internal/services/auth"
 	userServices "rocketvault/internal/services/users"
 	vaultServices "rocketvault/internal/services/vaults"
 	"rocketvault/internal/signing"
@@ -826,4 +827,51 @@ func TestNewServiceContainer_UserServiceRevokesSessions(t *testing.T) {
 	revoked, err = sessions.IsSessionRevoked(ctx, sessionID)
 	require.NoError(t, err)
 	assert.True(t, revoked, "deleting a user must revoke their sessions")
+}
+
+// TestNewServiceContainer_LoginRejectsReplayedTOTPCode pins that the container
+// hands the authentication service a working TOTP step repository (B75).
+// Without the wiring every login fails closed; with a broken one a code could
+// be used twice.
+func TestNewServiceContainer_LoginRejectsReplayedTOTPCode(t *testing.T) {
+	dsn := "file:totpreplaytest_" + uuid.NewString() + "?mode=memory&cache=shared"
+	rawDB, err := sql.Open("sqlite3", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = rawDB.Close() })
+	require.NoError(t, rvdb.NewRepository(newTestLogger()).SetupSchema(rawDB, rvdb.SQLite))
+
+	containerViper := viper.New()
+	containerViper.Set("jwt.key_source", "os_store")
+	container, err := NewServiceContainer(Config{
+		Database:    rawDB,
+		Logger:      newTestLogger(),
+		CacheConfig: cacheConfigWithSecretsDisabled(t),
+		Viper:       containerViper,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = container.Close() })
+	require.NotNil(t, container.totpStepRepository, "the container must build a TOTP step repository")
+
+	ctx := context.Background()
+	hash, err := authServices.NewPasswordService().HashPassword("Correct-Horse-9")
+	require.NoError(t, err)
+	totp := authServices.NewTOTPService()
+	key, err := totp.GenerateSecret("PasswordManager", "replay-wiring")
+	require.NoError(t, err)
+	require.NoError(t, container.GetUserRepository().Create(ctx, &model.User{
+		ID: uuid.New(), Username: "replay-wiring", PasswordHash: hash, TOTPSecret: key.Secret(),
+		Roles: []string{model.RoleUser}, CreatedAt: time.Now(),
+	}))
+
+	code, err := totp.GenerateCode(key.Secret(), time.Now())
+	require.NoError(t, err)
+	auth := container.GetAuthenticationService()
+
+	_, err = auth.AuthenticateUser(ctx, "replay-wiring", "Correct-Horse-9", code)
+	require.NoError(t, err, "the first use of a code must succeed")
+
+	_, err = auth.AuthenticateUser(ctx, "replay-wiring", "Correct-Horse-9", code)
+	require.Error(t, err, "a replayed code must be rejected")
+	assert.Contains(t, err.Error(), "invalid TOTP code")
+	assert.NotContains(t, err.Error(), "not configured")
 }

@@ -4720,6 +4720,65 @@ keep their own client check, so they skip the user read. OIDC users have a
 
 ---
 
+### B75 — TOTP codes could be replayed inside the acceptance window
+
+**Status**: Fixed (identity and sessions hardening, 2026-09-30); GitHub #45
+**Severity**: Medium
+**Files**: `internal/services/auth/totp_service.go`,
+`internal/services/auth/authentication_service.go`,
+`internal/repositories/totp_step_repository.go`, `internal/db/db.go`,
+`internal/container/service_container.go`
+
+**Symptom**: a captured code stayed reusable for its whole acceptance window,
+about 150 seconds with a 30-second period and skew 2 (`NewTOTPService` in
+`totp_service.go`). Anyone who saw a password and a code, for example over a
+shoulder or in a proxy log, could log in again with them inside that window,
+and two logins with the same code could both succeed.
+
+**Root cause**: `ValidateCode` delegated to `totp.ValidateCustom`, which
+returns only a bool, and nothing recorded which time step a user had already
+used.
+
+**What was fixed**: new column `users.totp_last_step BIGINT NOT NULL DEFAULT 0`
+(dual-written in `createOptimizedSchema` and `migrateSchema`).
+`TOTPService.ValidateCodeWithStep` returns the step a code belongs to, and
+`AuthenticateUser` claims that step through `TOTPStepRepository.ClaimTOTPStep`,
+a single `UPDATE ... WHERE totp_last_step < ?`, so the same or an older step is
+refused even when two logins race. The order is: password, then the
+empty-secret guard (B73), then the code, then the claim, then the session. A
+wrong password or a wrong code never claims a step, so a guesser without the
+password cannot use up a real user's code. The claim fails closed: a missing
+step repository, a repository error, and a claim that matches no row (unknown
+user) all deny the login. A replay returns the same `invalid TOTP code` error
+as a wrong code, and HTTP answers the same 403 `authentication failed` body,
+so a caller cannot tell a used code from a wrong one; only the audit event
+(`replayed TOTP code`) and the server log name the replay. The step lives in
+the database, so instances that share one database share the protection. HTTP
+and CLI login both go through `AuthenticateUser`. Skew stays 2: replay
+tracking removes the reuse window, and a smaller skew would only hurt users
+with drifting clocks.
+
+**Accepted consequences**:
+- A user can log in at most once per 30-second step with TOTP, because the
+  second login in the same step has to wait for a new code. A login with a
+  code from a later slot (a clock running ahead) also refuses codes from the
+  earlier slots until the clock catches up.
+- A session-store or token error after a successful claim is marked
+  non-retryable, so the retry wrapper does not repeat the login. A repeat
+  could only fail on the step it had just claimed and would show a storage
+  error as a replay. The user tries again with the next code.
+- A wrong-length code is now audited as `invalid TOTP code` instead of
+  `TOTP validation error`, because `ValidateCodeWithStep` reports it as a
+  wrong code rather than as an error. The HTTP response is unchanged; the CLI
+  now prints `invalid TOTP code` for it instead of an `authentication failed`
+  wrapper around the library's length error.
+
+**Known limitation**: TOTP secrets are still stored in plaintext
+(`UserRepository.Create` and `Update` in `user_repository.go`); that is a
+separate finding.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

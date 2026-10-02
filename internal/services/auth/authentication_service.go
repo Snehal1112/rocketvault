@@ -15,6 +15,7 @@ import (
 
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
+	"rocketvault/internal/retry"
 	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/model"
 )
@@ -98,6 +99,7 @@ type authenticationService struct {
 	totpService      TOTPService
 	jwtService       JWTService
 	oauth2ClientRepo repositories.OAuth2ClientRepositoryInterface
+	totpStepRepo     repositories.TOTPStepRepositoryInterface
 	logger           *logging.Logger
 	auditService     auditServices.AuditServiceInterface
 }
@@ -110,8 +112,11 @@ type AuthenticationConfig struct {
 	TOTPService            TOTPService
 	JWTService             JWTService
 	OAuth2ClientRepository repositories.OAuth2ClientRepositoryInterface
-	Logger                 *logging.Logger
-	AuditService           auditServices.AuditServiceInterface
+	// TOTPStepRepository records used TOTP time steps. Login fails closed
+	// without it, because a code could otherwise be replayed.
+	TOTPStepRepository repositories.TOTPStepRepositoryInterface
+	Logger             *logging.Logger
+	AuditService       auditServices.AuditServiceInterface
 }
 
 // NewAuthenticationService creates a new AuthenticationService with the provided dependencies.
@@ -132,6 +137,7 @@ func NewAuthenticationService(config AuthenticationConfig) AuthenticationService
 		totpService:      config.TOTPService,
 		jwtService:       config.JWTService,
 		oauth2ClientRepo: config.OAuth2ClientRepository,
+		totpStepRepo:     config.TOTPStepRepository,
 		logger:           config.Logger,
 		auditService:     config.AuditService,
 	}
@@ -200,8 +206,8 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 		return nil, &concealedTOTPError{cause: ErrMFANotEnrolled}
 	}
 
-	// Validate TOTP code
-	valid, err := s.totpService.ValidateCode(totpCode, user.TOTPSecret, time.Now())
+	// Validate TOTP code and learn which time step it belongs to.
+	step, valid, err := s.totpService.ValidateCodeWithStep(totpCode, user.TOTPSecret, time.Now())
 	if err != nil {
 		if s.auditService != nil {
 			_ = s.auditService.RecordEvent(ctx, auditServices.AuditEvent{
@@ -227,9 +233,19 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 		return nil, errors.New(invalidTOTPCodeMessage)
 	}
 
+	// A code is single use: claiming its time step fails when this step or a
+	// later one was already accepted for the user. The claim runs only after
+	// the password and the code were both accepted, so a wrong guess never
+	// uses up a step.
+	if err := s.claimTOTPStep(ctx, &user, username, step); err != nil {
+		return nil, err
+	}
+
 	result, err := s.issueSession(ctx, &user, "authenticate_user")
 	if err != nil {
-		return nil, err
+		// The step is already used, so a retry of the whole login could only
+		// fail as a replay. The retry layer must not repeat it.
+		return nil, retry.NonRetryable(err)
 	}
 
 	s.logger.WithFields(logrus.Fields{
@@ -239,6 +255,45 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 	}).Info("User authenticated successfully with session")
 
 	return result, nil
+}
+
+// claimTOTPStep records step as used for user and fails closed. A missing
+// repository, a repository error and a step that is not newer all deny the
+// login. A replay returns the same error as a wrong code, so a caller cannot
+// tell that the code was right but already used.
+func (s *authenticationService) claimTOTPStep(ctx context.Context, user *model.User, username string, step int64) error {
+	if s.totpStepRepo == nil {
+		s.logger.WithField("user_id", user.ID.String()).Error("TOTP replay protection is not configured")
+		return fmt.Errorf("authentication failed: TOTP replay protection is not configured")
+	}
+
+	claimed, err := s.totpStepRepo.ClaimTOTPStep(ctx, user.ID, step)
+	if err != nil {
+		if s.auditService != nil {
+			_ = s.auditService.RecordEvent(ctx, auditServices.AuditEvent{
+				UserID: user.ID.String(), Action: "authenticate_user", Outcome: "failure", Source: "system",
+				ResourceType: "user", Details: "TOTP step claim error",
+			})
+		}
+		s.logger.WithError(err).Error("TOTP step claim error")
+		return fmt.Errorf("authentication failed: %w", err)
+	}
+
+	if !claimed {
+		if s.auditService != nil {
+			_ = s.auditService.RecordEvent(ctx, auditServices.AuditEvent{
+				UserID: user.ID.String(), Action: "authenticate_user", Outcome: "failure", Source: "system",
+				ResourceType: "user", Details: "replayed TOTP code",
+			})
+		}
+		s.logger.WithFields(logrus.Fields{
+			"username": username,
+			"user_id":  user.ID.String(),
+		}).Warn("Authentication failed: replayed TOTP code")
+		return errors.New(invalidTOTPCodeMessage)
+	}
+
+	return nil
 }
 
 // issueSession creates a session and issues an access/refresh token pair for

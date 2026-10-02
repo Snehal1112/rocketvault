@@ -166,6 +166,7 @@ type ServiceContainer struct {
 	certPolicyRepository         repositories.CertificatePolicyRepositoryInterface
 	keyRotationPolicyRepository  repositories.KeyRotationPolicyRepositoryInterface
 	sessionRepository            repositories.SessionRepositoryInterface
+	totpStepRepository           repositories.TOTPStepRepositoryInterface
 	vaultRepository              repositories.VaultRepositoryInterface
 	auditRepository              repositories.AuditRepositoryExtended
 
@@ -389,6 +390,7 @@ func (c *ServiceContainer) initializeServices() error {
 		DB:     c.conn,
 		Logger: c.logger,
 	})
+	c.totpStepRepository = repositories.NewTOTPStepRepository(c.conn)
 	c.auditRepository = repositories.NewAuditRepository(c.conn)
 	c.auditService = auditServices.NewAuditService(c.auditRepository)
 	c.complianceReportService = auditServices.NewComplianceReportService(c.auditRepository)
@@ -481,6 +483,7 @@ func (c *ServiceContainer) initializeServices() error {
 		TOTPService:            c.totpService,
 		JWTService:             c.jwtService,
 		OAuth2ClientRepository: c.oauth2ClientRepository,
+		TOTPStepRepository:     c.totpStepRepository,
 		Logger:                 c.logger,
 		AuditService:           c.auditService,
 	})
