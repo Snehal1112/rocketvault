@@ -466,3 +466,49 @@ func TestExportGroup_IsRegisteredWithOpen(t *testing.T) {
 	assert.Same(t, exportGroupCmd, cmd.Parent())
 	assert.Contains(t, rootCmd.Long, "export\nopen")
 }
+
+func TestExportOpen_PayloadStringsCannotDriveTheTerminal(t *testing.T) {
+	t.Setenv(common.ExportPassphraseEnvVar, "")
+	dir := t.TempDir()
+	p := certPayload()
+	p.Name = "client\x1b[2K\rFile: /safe\x1b]0;PWNED\x07\u009b"
+	p.Format = "pem\x1b[31m"
+	sealed, pass := sealedFixture(t, dir, p, "p")
+	out := filepath.Join(dir, "client.pem")
+
+	stdout, stderr, err := runOpen(sealed, "--file", out, "--passphrase-file", pass)
+	require.NoError(t, err)
+	for _, b := range []string{"\x1b", "\x07", "\r", "\u009b"} {
+		assert.NotContains(t, stdout+stderr, b)
+	}
+	assert.Contains(t, stdout, "Name: client[2KFile: /safe]0;PWNED\n")
+	assert.Contains(t, stdout, "Format: pem[31m\n")
+}
+
+// TestExportOpen_ExistingOutputIsRefusedBeforeAnyPassphrase pins the early
+// check: with no passphrase source at all, the refusal is the exists message,
+// not the no-passphrase one.
+func TestExportOpen_ExistingOutputIsRefusedBeforeAnyPassphrase(t *testing.T) {
+	t.Setenv(common.ExportPassphraseEnvVar, "")
+	dir := t.TempDir()
+	sealed, _ := sealedFixture(t, dir, certPayload(), "p")
+	out := filepath.Join(dir, "client.pem")
+	require.NoError(t, os.WriteFile(out, []byte("original"), 0o600))
+
+	_, _, err := runOpen(sealed, "--file", out)
+	assert.EqualError(t, err, "the output file already exists: pass --force to replace it")
+	data, err := os.ReadFile(out)
+	require.NoError(t, err)
+	assert.Equal(t, "original", string(data))
+}
+
+func TestExportOpen_UncheckableOutputPathIsRefused(t *testing.T) {
+	t.Setenv(common.ExportPassphraseEnvVar, "")
+	dir := t.TempDir()
+	sealed, pass := sealedFixture(t, dir, certPayload(), "p")
+	notADir := filepath.Join(dir, "plain-file")
+	require.NoError(t, os.WriteFile(notADir, []byte("x"), 0o600))
+
+	_, _, err := runOpen(sealed, "--file", filepath.Join(notADir, "out.pem"), "--passphrase-file", pass)
+	assert.EqualError(t, err, "failed to write the output file: the output path could not be checked")
+}

@@ -8,8 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -28,15 +31,16 @@ const exportOutputExistsMessage = "the output file already exists: pass --force 
 // Fixed messages for "export open" refusals. None of them carries file
 // content, a passphrase or a raw decryption error.
 const (
-	exportNotSealedMessage     = "not a sealed RocketVault export file"
-	exportNotItemMessage       = "this file is not a certificate or key export; read a sealed secrets export with rocketvault secrets import"
-	exportWrongPassMessage     = "failed to open export: wrong passphrase or corrupted export file"
-	exportVersionMessage       = "failed to open export: the export file was written by a newer or unknown RocketVault version"
-	exportMalformedMessage     = "failed to open export: the export file is malformed"
-	exportEmptyPassMessage     = "failed to open export: a passphrase is required"
-	exportEmptyContentMessage  = "failed to open export: the export holds no content"
-	exportStdoutRefusedMessage = "--file must name an output file: an opened export is only ever written to a file"
-	exportWriteFailedPrefix    = "failed to write the output file: "
+	exportNotSealedMessage         = "not a sealed RocketVault export file"
+	exportNotItemMessage           = "this file is not a certificate or key export; read a sealed secrets export with rocketvault secrets import"
+	exportWrongPassMessage         = "failed to open export: wrong passphrase or corrupted export file"
+	exportVersionMessage           = "failed to open export: the export file was written by a newer or unknown RocketVault version"
+	exportMalformedMessage         = "failed to open export: the export file is malformed"
+	exportEmptyPassMessage         = "failed to open export: a passphrase is required"
+	exportEmptyContentMessage      = "failed to open export: the export holds no content"
+	exportStdoutRefusedMessage     = "--file must name an output file: an opened export is only ever written to a file"
+	exportWriteFailedPrefix        = "failed to write the output file: "
+	exportOutputUncheckableMessage = "failed to write the output file: the output path could not be checked"
 )
 
 // exportGroupCmd groups the commands that work on export files offline.
@@ -109,8 +113,12 @@ func runExportOpen(cmd *cobra.Command, args []string) error {
 	// Refuse early, before any prompt. WritePrivateFile checks again
 	// atomically, so a file that appears later is still never replaced.
 	if !force {
-		if _, err := os.Lstat(out); err == nil {
+		_, err := os.Lstat(out)
+		switch {
+		case err == nil:
 			return errors.New(exportOutputExistsMessage)
+		case !errors.Is(err, fs.ErrNotExist):
+			return errors.New(exportOutputUncheckableMessage)
 		}
 	}
 
@@ -158,10 +166,22 @@ func runExportOpen(cmd *cobra.Command, args []string) error {
 		protection = "protected only by its PKCS12 password"
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %s holds the %s's private key %s. Delete it when you are done.\n", //nolint:errcheck
-		out, p.Kind, protection)
+		out, terminalSafe(p.Kind), protection)
 	fmt.Fprintf(cmd.OutOrStdout(), "Export opened\nKind: %s\nName: %s\nVersion: %d\nFormat: %s\nFile: %s\n", //nolint:errcheck
-		p.Kind, p.Name, p.Version, p.Format, out)
+		terminalSafe(p.Kind), terminalSafe(p.Name), p.Version, terminalSafe(p.Format), out)
 	return nil
+}
+
+// terminalSafe drops every control rune from s, including ESC, BEL, CR and
+// the C1 range. Payload strings come from a file that may have been crafted,
+// so they must not be able to drive the terminal.
+func terminalSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // openExportError maps an OpenItemExport failure to a fixed message, so no
