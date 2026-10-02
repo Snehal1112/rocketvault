@@ -1258,7 +1258,7 @@ func TestImportSecretsCSV_UnescapesDoubledQuote(t *testing.T) {
 	ver := &testutils.MockVersioningService{}
 	tag := &testutils.MockTagService{}
 
-	repo.On("FindByName", ctx, `d"b`, scope).Return(nil, repositories.ErrNotFound)
+	repo.On("FindByName", ctx, "d-b", scope).Return(nil, repositories.ErrNotFound)
 	crypto.On("EncryptSecret", `a"b`).Return("enc-imported", nil)
 	var created *model.Secret
 	repo.On("Create", ctx, mock.AnythingOfType("*model.Secret")).
@@ -1266,7 +1266,7 @@ func TestImportSecretsCSV_UnescapesDoubledQuote(t *testing.T) {
 		Return(nil)
 
 	svc := newService(repo, crypto, ver, tag, t)
-	data := []byte("name,value\n" + `"d""b","a""b"` + "\n")
+	data := []byte("name,value\n" + `d-b,"a""b"` + "\n")
 
 	result, err := svc.ImportSecrets(ctx, secrets.ImportSecretsRequest{
 		Scope:  scope,
@@ -1276,7 +1276,7 @@ func TestImportSecretsCSV_UnescapesDoubledQuote(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.ImportedCount)
 	require.NotNil(t, created)
-	assert.Equal(t, `d"b`, created.Name)
+	assert.Equal(t, "d-b", created.Name)
 	// CreateSecret overwrites the passed secret's Value back to plaintext
 	// before returning it (see "Return plaintext to the caller" in
 	// CreateSecret), so the mock-captured struct reflects the decoded CSV

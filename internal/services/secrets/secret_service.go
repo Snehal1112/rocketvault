@@ -18,6 +18,7 @@ import (
 	"rocketvault/internal/logging"
 	"rocketvault/internal/pwgen"
 	"rocketvault/internal/repositories"
+	vvalidation "rocketvault/internal/validation"
 	"rocketvault/model"
 )
 
@@ -853,6 +854,18 @@ func (s *secretService) ImportSecrets(ctx context.Context, req ImportSecretsRequ
 		if importSec.Name == "" || importSec.Value == "" {
 			result.Errors = append(result.Errors, "Secret missing name or value")
 			result.SkippedCount++
+			continue
+		}
+
+		// Apply the same name, value-size and tag-count rules as create, so
+		// import cannot store what create refuses.
+		if vErr := vvalidation.ValidateSecretCreate(vvalidation.SecretCreateRequest{
+			Name:  importSec.Name,
+			Value: importSec.Value,
+			Tags:  importSec.Tags,
+		}); vErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("Invalid '%s': %v", importSec.Name, vErr))
+			result.FailedCount++
 			continue
 		}
 
