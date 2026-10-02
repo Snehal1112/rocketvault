@@ -36,6 +36,10 @@ type SessionRepositoryInterface interface {
 	// RevokeSession marks a session as revoked.
 	RevokeSession(ctx context.Context, sessionID uuid.UUID, reason string) error
 
+	// RevokeUserSession marks a session as revoked only when userID owns it.
+	// A session owned by another user reports ErrNotFound, the same as a missing one.
+	RevokeUserSession(ctx context.Context, sessionID, userID uuid.UUID, reason string) error
+
 	// RevokeAllUserSessions revokes all sessions for a user.
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID, reason string) error
 
@@ -327,6 +331,38 @@ func (r *SessionRepository) RevokeSession(ctx context.Context, sessionID uuid.UU
 			return fmt.Errorf("failed to get rows affected: %w", err)
 		}
 
+		if rowsAffected == 0 {
+			return fmt.Errorf("session not found or already revoked: %w", ErrNotFound)
+		}
+
+		return nil
+	})
+}
+
+// RevokeUserSession marks a session as revoked only when userID owns it.
+func (r *SessionRepository) RevokeUserSession(ctx context.Context, sessionID, userID uuid.UUID, reason string) error {
+	return r.executeWithMetrics("revoke_user_session", func() error {
+		query := `
+			UPDATE user_sessions
+			SET revoked = TRUE, revoked_at = ?, revoked_reason = ?
+			WHERE id = ? AND user_id = ? AND revoked = FALSE
+		`
+		result, err := r.db.ExecContext(ctx, query, time.Now(), reason, sessionID.String(), userID.String())
+		if err != nil {
+			r.logger.WithFields(logrus.Fields{
+				"session_id": sessionID.String(),
+				"user_id":    userID.String(),
+			}).Errorf("Failed to revoke user session: %v", err)
+			return fmt.Errorf("failed to revoke session: %w", err)
+		}
+
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
+
+		// Zero rows means missing, already revoked, or owned by someone else.
+		// All three look the same to the caller on purpose.
 		if rowsAffected == 0 {
 			return fmt.Errorf("session not found or already revoked: %w", ErrNotFound)
 		}

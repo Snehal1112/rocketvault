@@ -225,6 +225,11 @@ func (m *MockSessionRepository) RevokeSession(ctx context.Context, sessionID uui
 	return args.Error(0)
 }
 
+func (m *MockSessionRepository) RevokeUserSession(ctx context.Context, sessionID, userID uuid.UUID, reason string) error {
+	args := m.Called(ctx, sessionID, userID, reason)
+	return args.Error(0)
+}
+
 func (m *MockSessionRepository) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID, reason string) error {
 	args := m.Called(ctx, userID, reason)
 	return args.Error(0)
