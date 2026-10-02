@@ -405,8 +405,9 @@ Certificates are versioned. Every create and every renewal produces a new
 numbered version; the certificate's ID and name never change. Version numbers
 are sequential integers starting at 1 (Azure Key Vault uses 32-hex version
 IDs; this is a deliberate divergence). Every route below also exists under
-`/api/v1/vaults/{vault_name}/certificates/...`. No response ever carries a PEM
-or a private key.
+`/api/v1/vaults/{vault_name}/certificates/...`. No certificate response carries
+a PEM or a private key, except the export endpoint described under "Export a
+Certificate with its Private Key" below.
 
 #### Renew a Certificate
 
@@ -528,11 +529,14 @@ The two export routes use their own error body:
 
 | Status | Code | When |
 |---|---|---|
-| 400 | `bad_request` | bad body, unknown `format`/`compat`, `pkcs12` without `password`, bad `version` |
+| 400 | `bad_request` | bad body, unknown `format`/`compat`, `pkcs12` without `password`, negative `version` |
 | 403 | `certificate_not_exportable` / `key_not_exportable` | flag false, HSM, `oct`, ES256K, or a key type that cannot be PKCS#8-encoded |
 | 404 | `not_found` | unknown, soft-deleted, out of vault, or unknown version |
 | 409 | `certificate_disabled` / `key_disabled` | disabled, expired or outside its window; also a revoked key |
 | 500 | `internal_error` | anything else, including an unbuildable issuer chain; the message is generic |
+
+A key that is expired or not yet valid answers `409` `key_disabled` too, the
+same as a disabled or revoked key.
 
 A 401 (no session) and a 403 for a missing role come from the middleware and
 keep their usual bodies; read the status, not the body, for those. To tell the

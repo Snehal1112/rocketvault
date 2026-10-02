@@ -313,8 +313,9 @@ non-cacheable):</p>
 numbered version; the certificate's ID and name never change. Version numbers
 are sequential integers starting at 1 (Azure Key Vault uses 32-hex version
 IDs; this is a deliberate divergence). Every route below also exists under
-<code>/api/v1/vaults/{vault_name}/certificates/...</code>. No response ever carries a PEM
-or a private key.</p>
+<code>/api/v1/vaults/{vault_name}/certificates/...</code>. No certificate response carries
+a PEM or a private key, except the export endpoint described under &quot;Export a
+Certificate with its Private Key&quot; below.</p>
 <h4 id="renew-a-certificate">Renew a Certificate</h4>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">POST /api/v1/certificates/{certificate_id}/renew
 Authorization: Bearer &lt;token&gt;
@@ -412,7 +413,7 @@ PKCS12 response carries <code>pkcs12_base64</code> instead of the two PEM fields
 <tr>
 <td>400</td>
 <td><code>bad_request</code></td>
-<td>bad body, unknown <code>format</code>/<code>compat</code>, <code>pkcs12</code> without <code>password</code>, bad <code>version</code></td>
+<td>bad body, unknown <code>format</code>/<code>compat</code>, <code>pkcs12</code> without <code>password</code>, negative <code>version</code></td>
 </tr>
 <tr>
 <td>403</td>
@@ -436,6 +437,8 @@ PKCS12 response carries <code>pkcs12_base64</code> instead of the two PEM fields
 </tr>
 </tbody>
 </table>
+<p>A key that is expired or not yet valid answers <code>409</code> <code>key_disabled</code> too, the
+same as a disabled or revoked key.</p>
 <p>A 401 (no session) and a 403 for a missing role come from the middleware and
 keep their usual bodies; read the status, not the body, for those. To tell the
 two 403s apart: a 403 whose body is the <code>{&quot;error&quot;: {&quot;code&quot;: ...}}</code> object above

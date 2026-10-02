@@ -49,7 +49,7 @@ vaults). RocketVault columns are sourced from the codebase (`api/`, `internal/`,
 | Get/Set rotation policy | ✅ | 🟡 `GET/PUT/DELETE /keys/{key_id}/rotationpolicy`, mapped to `ActionKeysRotationPolicyRead`/`Write` in `MapRouteToDataAction` (`mapKeyAction`) and granted only to Crypto Officer + Administrator, matching Azure's `keyrotationpolicies/*`. `RotationScheduler` → `RotationExecutor.Check` (`rotation.keys.*` config, started in `bootstrap.go`) sweeps `KeyRotationPolicyRepository.GetDuePolicies` — enabled, `rotate_after_days > 0`, `next_rotation_at` passed — and calls `RotateKey`, so the rotate action genuinely executes. `expiry_days` is now acted on too (fixed 2026-08-19, `.claude/known-bugs.md` § B27): `RotateKey` stamps `ExpiresAt` on every rotation when the policy is enabled and `expiry_days > 0`. `notify_before_expiry_days` is still only persisted and echoed back — verified 2026-08-20, `NotifyBeforeExpiryDays` is read nowhere outside its own model and CRUD. Azure's Notify lifetime action remains half-implemented: the expiry half executes, the notify half does not. What changed on 2026-08-20 is one layer below parity — per-vault webhook **configuration** now exists (`vault_webhook_configs`, `PUT/GET/DELETE /vaults/{name}/webhook`, `rocketvault vault-webhook`), so a notification now has somewhere to be addressed *to*. Nothing sends: there is no outbound HTTP anywhere in the vault/secret/key service packages, and delivery is specced but unbuilt (`docs/superpowers/specs/2026-08-20-webhook-delivery-primitive-design.md`) | 🟡 |
 | Release (confidential compute) | ✅ | ❌ no TEE attestation flow | ❌ |
 | HSM keys non-extractable | ✅ | ✅ HSM-backed keys are created with `CKA_EXTRACTABLE: false` (`internal/crypto/pkcs11_provider.go`) and `KeyService.ExportKey` refuses every `pkcs11:` key, including an archived version, with 403 `key_not_exportable`. `buildKeyResponse` emits only JWK public components and `model.KeyVersion` omits `Value` | ✅ |
-| Software key export (opt-in) | ❌ (keys are non-extractable on every tier) | ✅ `POST /keys/{key_id}/export` (both route shapes): unencrypted PKCS#8 PEM, optional `version`, only for software keys created or imported with `exportable: true` — an immutable, per-key flag visible in `GET key` and decided by the key's creator; existing keys stay non-exportable forever. Requires `Microsoft.KeyVault/vaults/keys/export/action` (Key Vault Key Exporter or Administrator). `oct` and ES256K keys are refused; a revoked (disabled) key gives 409 `key_disabled`. Amends `docs/superpowers/specs/2026-08-25-key-export-decision-record.md` (now "Superseded for software keys"); design: `docs/superpowers/specs/2026-10-01-certificate-and-key-export-design.md` | ➕ |
+| Software key export (opt-in) | ❌ no plain export. A key may be marked exportable only together with a release policy, and it then leaves the vault only through secure key release to an attested environment (see the "Release (confidential compute)" row, still ❌ here) | ✅ `POST /keys/{key_id}/export` (both route shapes): unencrypted PKCS#8 PEM, optional `version`, only for software keys created or imported with `exportable: true` — an immutable, per-key flag visible in `GET key` and decided by the key's creator; existing keys stay non-exportable forever. Requires `Microsoft.KeyVault/vaults/keys/export/action` (Key Vault Key Exporter or Administrator). `oct` and ES256K keys are refused; a revoked, disabled, expired or not-yet-valid key gives 409 `key_disabled`. **Caveat:** this is an unattested plaintext PKCS#8 export gated only by RBAC (Key Vault Key Exporter or Administrator) and the immutable per-key flag. That is a different security model from Azure's attested release, not a pure extra; see the intentional divergences under §4. Amends `docs/superpowers/specs/2026-08-25-key-export-decision-record.md` (now "Superseded for software keys"); design: `docs/superpowers/specs/2026-10-01-certificate-and-key-export-design.md` | ➕ |
 
 *Re-verified 2026-08-19 against `api/keys.go`, `api/key_rotation_policy.go`,
 `api/backup_item.go`, `internal/services/keys/{key_service,crypto_service,
@@ -225,7 +225,7 @@ is now wired, with a regression test.*
 | Per-version attributes (enabled, expires, not_before) | ✅ | ✅ `PUT /certificates/{id}/versions/{n}`; a disabled certificate gates every version | ✅ |
 | Version identifier format | 32-hex | sequential integers, like keys and secrets; new versions come only from renew because import and merge are unbuilt | 🟡 |
 | Backup / Restore | ✅ | ✅ `/certificates/{id}/backup`, `/certificates/restore` — the blob carries every archived version and restore replays them in one transaction; note this is an unencrypted, same-instance base64url blob (`internal/backup/item_backup.go`, `BackupCertificate`), not a portable export; see the passphrase-sealed Export row's design doc below for the distinction | ✅ |
-| Per-certificate export with private key (PEM chain + PKCS#8, or PKCS12) | ❌ (Azure exports a certificate's key only through its linked secret) | ✅ `POST /certificates/{certificate_id}/export` (both route shapes), optional `version`; chain leaf first with intermediates, root excluded; PKCS12 `modern` or `legacy`. Only certificates created with `exportable: true` over an exportable key; requires `Microsoft.KeyVault/vaults/certificates/export/action` (Key Vault Certificate Exporter or Administrator); every attempt audited; `Cache-Control: no-store`. A restore yields a non-exportable certificate, and export reflects the certificate's own key copy until renewal | ➕ |
+| Per-certificate export with private key (PEM chain + PKCS#8, or PKCS12) | ❌ no export action. Azure delivers a certificate's private key through the certificate's linked secret, `GET /secrets/{name}`, which needs the secret get permission (held by Secrets User and, per §6, Certificate User) | ✅ `POST /certificates/{certificate_id}/export` (both route shapes), optional `version`; chain leaf first with intermediates, root excluded; PKCS12 `modern` or `legacy`. Only certificates created with `exportable: true` over an exportable key; requires `Microsoft.KeyVault/vaults/certificates/export/action` (Key Vault Certificate Exporter or Administrator); every attempt audited; `Cache-Control: no-store`. A restore yields a non-exportable certificate, and export reflects the certificate's own key copy until renewal. RocketVault intentionally does **not** mirror the linked-secret path: a certificate has no linked secret, and export is a dedicated action, so a Secrets User (or a Certificate User, which holds only `ActionCertificatesRead`) cannot pull the key; only Certificate Exporter or Administrator can | ➕ |
 | Import certificate (PFX/PEM) | ✅ | ❌ no import route at all — not previously tracked in this table. Design specified, not yet built: `docs/superpowers/specs/2026-08-25-certificate-import-merge-design.md` | ❌ |
 | Merge CSR (pending certificate) | ✅ (full pending-operation lifecycle: create CSR via the vault, get it signed externally, merge later with no resupplied state) | ❌ no merge route at all — not previously tracked in this table. Design specified, not yet built, and deliberately scoped to a single-call merge (caller resupplies the CSR + signed cert together; no persisted pending-operation state) rather than Azure's full lifecycle: `docs/superpowers/specs/2026-08-25-certificate-import-merge-design.md` § 2.1 | ❌ |
 | Public-CA integration (DigiCert/GlobalSign) | ✅ | ❌ self-signed / internal only | ❌ |
@@ -238,6 +238,31 @@ and is not a row in this table — see `docs/superpowers/specs/
 `ActionCertificatesExportItem`) and `.claude/roadmap-azure-parity-and-beyond.md`
 Phase 3. Design specified, not yet built. Per-certificate export shipped
 2026-10-01 (row above).*
+
+**Intentional export divergences from Azure** (keys in §3 and certificates
+above; verified against `api/export.go`, `api/keys_export.go`,
+`internal/services/keys/key_export.go` and
+`internal/services/certificates/certificate_export.go`):
+
+- `exportable` is a flat top-level field on keys and certificates. Azure nests
+  it in the key attributes and in the certificate policy's `key_props`, and
+  RocketVault does not model `reuse_key`.
+- `version` is an integer in the request body, where 0 or omitted means the
+  current version; it is not a path segment. Versions are sequential
+  integers, not 32-hex identifiers.
+- Refusing a non-exportable item is 403 `key_not_exportable` or
+  `certificate_not_exportable`. Azure reserves 403 for a missing permission.
+  It is kept because the status has shipped and Rocket codes against it; a
+  client tells the two 403s apart by the body.
+- A disabled, expired, not-yet-valid or revoked key, and a disabled or
+  out-of-window certificate or version, answer 409 `key_disabled` or
+  `certificate_disabled`. Azure answers 403 Forbidden. This is not uniform
+  inside RocketVault either: `writeKeyError` and `writeCertificateError`
+  answer the same lifecycle denial with 403 on the other key and certificate
+  routes, and only certificate renew also uses 409.
+- Error codes are snake_case in the R6 body
+  `{"error":{"code","message"}}`, used only by the two export routes. Azure
+  uses CamelCase codes such as `KeyNotFound`.
 
 ## 5. Multi-vault / namespacing
 

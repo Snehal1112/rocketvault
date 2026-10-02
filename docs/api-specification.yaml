@@ -6687,6 +6687,8 @@ components:
         - revoked
         - created_at
         - enabled
+        - exportable
+        - key_algorithm
       properties:
         exportable:
           type: boolean
@@ -7157,6 +7159,8 @@ components:
         - renewal_days
         - enabled
         - version
+        - exportable
+        - key_algorithm
       properties:
         exportable:
           type: boolean
@@ -7499,7 +7503,7 @@ components:
           example: "EC-P256"
     ExportCertificateResponse:
       type: object
-      required: [id, name, version, format, key_algorithm]
+      required: [id, name, version, format, not_before, expires_at, key_algorithm]
       properties:
         id:
           type: string
@@ -7523,9 +7527,11 @@ components:
         not_before:
           type: string
           format: date-time
+          description: The exported leaf's NotBefore. Always present.
         expires_at:
           type: string
           format: date-time
+          description: The exported leaf's NotAfter. Always present.
         key_algorithm:
           type: string
           example: "EC-P256"
