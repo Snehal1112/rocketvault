@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>v4.11.0 — Certificate restore and renewal isolation — RocketVault Docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="../assets/doc-theme.css"/>
+</head>
+<body>
+<header class="doc-header">
+  <a class="doc-back" href="../admin-manual.html">&larr; Admin Manual</a>
+  <div class="doc-brand">
+    <div class="doc-mark" aria-hidden="true"></div>
+    <span class="doc-kicker">RocketVault Docs</span>
+  </div>
+  <h1 class="doc-title">v4.11.0 — Certificate restore and renewal isolation</h1>
+  <div class="doc-meta"><span class="doc-chip">docs/release-notes/v4.11.0-certificate-restore-renewal-isolation.md</span></div>
+  <hr/>
+</header>
+<nav class="doc-toc"><div class="doc-toc-label">On this page</div><ol><li><a href="#breaking-changes">Breaking changes</a></li><li><a href="#upgrade-procedure">Upgrade procedure</a></li><li><a href="#what-did-not-change">What did not change</a></li><li><a href="#known-issues">Known issues</a></li></ol></nav>
+<main class="doc">
+<blockquote>
+<p>The version number is provisional and may change before tagging.</p>
+</blockquote>
+<p>This release closes a High-severity cross-vault path through certificate
+backup and auto-renewal (<code>.claude/known-bugs.md</code> § B76, GitHub #65), makes
+certificate issuance and renewal respect the signing key's lifecycle and the
+<code>keys/sign</code> data action on every entry point (§ B77, GitHub #43), and fixes
+two certificate status-code and input defects (§ B78, GitHub #67).</p>
+<h2 id="breaking-changes">Breaking changes</h2>
+<ol>
+<li>
+<p><strong>Per-item backup blobs are sealed, and old blobs no longer restore.</strong>
+<code>POST .../secrets/{id}/backup</code>, <code>.../keys/{id}/backup</code> and
+<code>.../certificates/{id}/backup</code> now return a blob that starts with <code>rvb2.</code>
+and is encrypted and authenticated with AES-256-GCM under a key derived
+from the master key with HKDF-SHA256. The blob still carries the item's
+full version history. <code>.../restore</code> refuses, with 400, any blob taken
+before this upgrade, any modified blob, and any blob sealed under a
+different master key. There is no switch to accept old blobs: an old blob
+and a hand-forged one look identical, and accepting either is the
+vulnerability this release closes. Like database backup files, blobs do
+not survive a master-key rotation (the values inside them were already
+master-key ciphertext, and rotation does not rewrite blobs you hold).</p>
+</li>
+<li>
+<p><strong>Issuing or renewing a certificate needs <code>keys/sign</code>.</strong> Besides
+<code>Microsoft.KeyVault/vaults/certificates/create</code>, the caller must hold
+<code>Microsoft.KeyVault/vaults/keys/sign/action</code> in the vault, and an explicit
+deny policy on <code>(keys, sign)</code> blocks it. This applies to
+<code>POST .../certificates</code> and <code>POST .../certificates/{id}/renew</code> (both route
+shapes), the MCP <code>create_certificate</code> and <code>renew_certificate</code> tools,
+<code>rocketvault certificate create</code> and <code>rocketvault certificate renew</code>. The
+roles that hold <code>keys/sign</code> are Key Vault Administrator, Key Vault Crypto
+Officer and Key Vault Crypto User. <strong>Key Vault Certificates Officer alone
+is no longer enough.</strong> Issuance still also requires the principal to own
+an enabled, usable key in the vault (§ B32), and Crypto User cannot create
+keys, so a principal that only holds Crypto User must already own a usable
+key. This mostly affects principals who own keys but no longer hold a key
+role. It is a deliberate divergence from Azure, where a certificate creates
+its own key.</p>
+</li>
+<li>
+<p><strong>Auto-renewal re-checks the owner and stays in the vault.</strong> The
+scheduler renews a certificate under its own vault's scope, skips a
+certificate with no vault, and renews only while the certificate's owner
+still holds <code>keys/sign</code> in that vault with no explicit deny. A refusal
+skips the row and writes a <code>cert_auto_renew</code> audit row with status
+<code>denied</code>; a fault in the check, or a scheduler built without the check,
+writes <code>failed</code>. A skipped row emits no expiry warning and is not counted
+in the scheduler's totals; the audit row, repeated at each scheduler run
+(daily by default, with no deduplication), is the only signal. A global
+admin who owns a certificate but holds no role granting <code>keys/sign</code> in its
+vault stops renewing: data-plane checks have no admin bypass. Granting the
+owner a role that holds <code>keys/sign</code> resumes renewal on the next run.</p>
+</li>
+<li>
+<p><strong>Unusable keys cannot sign.</strong> A revoked, disabled, expired or
+not-yet-active key can no longer issue or renew a certificate, as a leaf
+key or as a CA's own key, and auto-renewal of the certificates that use it
+stops too. A key whose rotation policy sets an expiry (<code>ExpiryDays</code>) and is
+not rotated in time lapses the same way. Certificates already issued are
+not revoked, disabled or deleted, and an exportable certificate still
+exports under its own rules; export does not look at the linked key's
+state.</p>
+</li>
+<li>
+<p><strong>A CA is refused as a signer when its own key is not usable.</strong> On create
+and on renew, a CA certificate cannot sign when its linked key is:</p>
+<ul>
+<li>soft-deleted (recovering the key brings the CA back);</li>
+<li>purged (permanent: certificates it signed can never renew until the CA is
+re-issued and they are re-issued under it);</li>
+<li>expired, not yet active, revoked or disabled;</li>
+<li>or when the CA's key link was cleared at restore (see item 6). A CA
+restored while its key sat in the recycle bin loses the link and stays
+stranded even after the key is recovered.</li>
+</ul>
+<p>Rotating a CA's key does not stop the CA from signing, because rotation
+updates the same key row.</p>
+</li>
+<li>
+<p><strong>Cross-vault restores lose foreign links.</strong> A certificate restored into a
+vault where its key or signing CA does not exist (or sits in the recycle
+bin) keeps its body, key copy and full version history, but loses those
+links, also on its archived versions. The loss is permanent for that
+row, so it will not renew there, and a restored CA cannot sign. The
+restore answers 200 and gives no signal that a link was dropped. A
+same-vault restore keeps every link, except when a transient read error
+makes the existence check fail, in which case the link is also cleared.
+Restore still never grants exportability.</p>
+</li>
+<li>
+<p><strong><code>validity_days</code> is capped at 36500</strong> on create and renew (HTTP 400; the
+CLI reports the service error). A renewal that keeps the current period,
+including auto-renewal and the default period of <code>certificate renew</code>, is
+clamped to 36500 days, so certificates issued before the cap with a longer
+period keep renewing at the capped period.</p>
+</li>
+<li>
+<p><strong>Status codes.</strong> Certificate creation now answers 403 for a signing key or
+CA owned by someone else, or for an unusable signing key, and 404 for a
+key or CA that is not in the vault, instead of 500. The renew route
+answers 409 for an unusable key or a missing signing CA, instead of 500.
+A database fault while reading a signing key or CA answers 500 on both
+routes. That includes the renew route's key read, which used to answer 409
+in that case. Some refusals still answer 500, see &quot;Known issues&quot;.</p>
+</li>
+</ol>
+<h2 id="upgrade-procedure">Upgrade procedure</h2>
+<ol>
+<li>Before upgrading, note which items you rely on per-item backups for. After
+upgrading, take fresh backups of them. Restoring a blob taken before the
+upgrade fails with 400; keep old blobs only as a record. Full-database
+backups (<code>rocketvault backup</code>) are unaffected: they do not use the item
+blob seal.</li>
+<li>List who holds roles in each vault:
+<code>rocketvault vault-access list --vault &lt;name&gt;</code>. Grant every principal that
+issues or renews certificates, and every owner of an auto-renewing
+certificate, a role that holds <code>keys/sign</code> if they have none yet, for
+example:
+<code>rocketvault vault-access grant &lt;user&gt; --role &quot;Key Vault Crypto User&quot; --vault &lt;name&gt;</code>
+(add <code>--principal-type service_account</code> for a service account). The
+principal must also own a usable key.</li>
+<li>After the first scheduler run, query the audit log for the skipped rows
+(admin only):
+<code>rocketvault audit logs --action cert_auto_renew --from &lt;date&gt;</code>.
+Rows with outcome <code>denied</code> or <code>failed</code> name the certificate (and its
+owner) that stopped renewing. <code>--outcome</code> cannot select <code>denied</code> rows
+(§ B98), so filter by action.</li>
+<li>A CA certificate that now refuses to sign because it records no signing
+key, or whose key is purged, cannot be repaired. Re-issue it with
+<code>rocketvault certificate create --is-ca --key-id &lt;key-id&gt; ...</code> over a key
+in the same vault, then re-issue the certificates it signed.</li>
+</ol>
+<p>No schema migration runs.</p>
+<h2 id="what-did-not-change">What did not change</h2>
+<ul>
+<li>Existing certificates, keys, secrets and their versions are not modified by
+the upgrade.</li>
+<li>The owner comparison on the signing key and CA certificate (§ B32) is
+unchanged.</li>
+<li>Restore never grants exportability.</li>
+<li>Certificate and key export and the exporter roles are unchanged.</li>
+<li>Full-database backup and restore (<code>rocketvault backup</code>) are unchanged.</li>
+<li>No route was added, and no repository or database schema changed.</li>
+</ul>
+<h2 id="known-issues">Known issues</h2>
+<ul>
+<li><strong>B99 (GitHub #66)</strong>: deleted users and service accounts keep their
+<code>role_assignments</code>, so the <code>keys/sign</code> check keeps passing for an owner
+that no longer exists, and the scheduler keeps re-signing certificates that
+outlive their owner (on SQLite, where foreign keys are not enforced). Not
+fixed here.</li>
+<li><strong>GitHub #43</strong> was written before the final design and its text does not
+match it: the shipped rule is that issuing needs a role grant that holds
+<code>keys/sign</code> and no explicit deny on <code>(keys, sign)</code>, and key rotation does
+not stop a CA from signing. The issue text was not edited; § B77 is
+authoritative.</li>
+<li>A refusal for lacking <code>keys/sign</code> is audited as <code>denied</code> over HTTP and as
+<code>failed</code> over the CLI, and the HTTP row does not say whether an explicit
+deny or a missing grant refused it.</li>
+<li><code>POST .../certificates</code> checks <code>keys/sign</code> before it parses <code>ca_cert_id</code>, so
+a caller without <code>keys/sign</code> gets 403 where a malformed <code>ca_cert_id</code> would
+otherwise give 400.</li>
+<li>Still answering 500 (§ B78): &quot;signing CA cannot sign certificates; reissue
+it with --is-ca&quot; and CA inspection failures on both routes, and a CA that
+vanishes between two reads during create. A disabled or expired CA on
+renew reports the renewed certificate as disabled in its 409 message, and
+a disabled or expired CA certificate still issues on create (pre-existing).</li>
+<li>Item-backup restore gives no signal when it drops a key or CA link (§ B76).</li>
+</ul>
+
+</main>
+<footer class="doc-footer"><a href="../admin-manual.html">&larr; Back to the Admin Manual</a></footer>
+<script src="../assets/doc-theme.js"></script>
+</body>
+</html>
