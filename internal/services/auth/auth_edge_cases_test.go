@@ -375,21 +375,20 @@ func TestRevokeSession_RepoError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	sessionID := uuid.New()
+	callerID := uuid.New()
 
-	userRepo := &MockUserRepository{}
 	sessionRepo := &MockSessionRepository{}
-	pwd := &MockPasswordService{}
-	totp := &MockTOTPService{}
-	jwt := &MockJWTService{}
-
-	sessionRepo.On("RevokeSession", ctx, sessionID, "logout").
+	sessionRepo.On("RevokeUserSession", ctx, sessionID, callerID, "logout").
 		Return(errors.New("db error"))
 
-	svc := newAuthService(userRepo, sessionRepo, pwd, totp, jwt, nil)
-	err := svc.RevokeSession(ctx, sessionID.String(), "logout")
+	svc := newAuthService(&MockUserRepository{}, sessionRepo, &MockPasswordService{}, &MockTOTPService{}, &MockJWTService{}, nil)
+	err := svc.RevokeSession(ctx, RevokeSessionRequest{
+		SessionID: sessionID.String(), CallerID: callerID, CallerRoles: []string{model.RoleUser}, Reason: "logout",
+	})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to revoke session")
+	assert.NotErrorIs(t, err, ErrSessionNotFound)
 }
 
 // ---------------------------------------------------------------------------

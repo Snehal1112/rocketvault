@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"rocketvault/internal/logging"
+	"rocketvault/internal/repositories"
 	"rocketvault/model"
 )
 
@@ -190,42 +192,83 @@ func TestRefreshAccessToken_InvalidRefreshToken(t *testing.T) {
 
 // --- RevokeSession ---
 
-func TestRevokeSession_HappyPath(t *testing.T) {
+func TestRevokeSession_OwnSession_Revoked(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	sessionID := uuid.New()
+	callerID := uuid.New()
+
+	sessionRepo := &MockSessionRepository{}
+	sessionRepo.On("RevokeUserSession", ctx, sessionID, callerID, "logout").Return(nil)
+
+	svc := newAuthService(&MockUserRepository{}, sessionRepo, &MockPasswordService{}, &MockTOTPService{}, &MockJWTService{}, nil)
+	err := svc.RevokeSession(ctx, RevokeSessionRequest{
+		SessionID:   sessionID.String(),
+		CallerID:    callerID,
+		CallerRoles: []string{model.RoleUser},
+		Reason:      "logout",
+	})
+
+	require.NoError(t, err)
+	sessionRepo.AssertExpectations(t)
+	sessionRepo.AssertNotCalled(t, "RevokeSession", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRevokeSession_OtherUsersSession_NotFound(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	sessionID := uuid.New()
+	callerID := uuid.New()
+
+	sessionRepo := &MockSessionRepository{}
+	sessionRepo.On("RevokeUserSession", ctx, sessionID, callerID, "logout").
+		Return(fmt.Errorf("session not found or already revoked: %w", repositories.ErrNotFound))
+
+	svc := newAuthService(&MockUserRepository{}, sessionRepo, &MockPasswordService{}, &MockTOTPService{}, &MockJWTService{}, nil)
+	err := svc.RevokeSession(ctx, RevokeSessionRequest{
+		SessionID:   sessionID.String(),
+		CallerID:    callerID,
+		CallerRoles: []string{model.RoleUser},
+		Reason:      "logout",
+	})
+
+	require.ErrorIs(t, err, ErrSessionNotFound)
+	sessionRepo.AssertNotCalled(t, "RevokeSession", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRevokeSession_AdminBypassesOwnership(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	sessionID := uuid.New()
 
-	userRepo := &MockUserRepository{}
 	sessionRepo := &MockSessionRepository{}
-	pwd := &MockPasswordService{}
-	totp := &MockTOTPService{}
-	jwt := &MockJWTService{}
+	sessionRepo.On("RevokeSession", ctx, sessionID, "admin action").Return(nil)
 
-	sessionRepo.On("RevokeSession", ctx, sessionID, "logout").Return(nil)
-
-	svc := newAuthService(userRepo, sessionRepo, pwd, totp, jwt, nil)
-	err := svc.RevokeSession(ctx, sessionID.String(), "logout")
+	svc := newAuthService(&MockUserRepository{}, sessionRepo, &MockPasswordService{}, &MockTOTPService{}, &MockJWTService{}, nil)
+	err := svc.RevokeSession(ctx, RevokeSessionRequest{
+		SessionID:   sessionID.String(),
+		CallerID:    uuid.New(),
+		CallerRoles: []string{model.RoleAdmin},
+		Reason:      "admin action",
+	})
 
 	require.NoError(t, err)
 	sessionRepo.AssertExpectations(t)
+	sessionRepo.AssertNotCalled(t, "RevokeUserSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestRevokeSession_InvalidSessionIDFormat(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-
-	userRepo := &MockUserRepository{}
 	sessionRepo := &MockSessionRepository{}
-	pwd := &MockPasswordService{}
-	totp := &MockTOTPService{}
-	jwt := &MockJWTService{}
 
-	svc := newAuthService(userRepo, sessionRepo, pwd, totp, jwt, nil)
-	err := svc.RevokeSession(ctx, "not-a-uuid", "logout")
+	svc := newAuthService(&MockUserRepository{}, sessionRepo, &MockPasswordService{}, &MockTOTPService{}, &MockJWTService{}, nil)
+	err := svc.RevokeSession(ctx, RevokeSessionRequest{SessionID: "not-a-uuid", CallerID: uuid.New(), Reason: "logout"})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid session ID format")
-	sessionRepo.AssertNotCalled(t, "RevokeSession")
+	sessionRepo.AssertNotCalled(t, "RevokeSession", mock.Anything, mock.Anything, mock.Anything)
+	sessionRepo.AssertNotCalled(t, "RevokeUserSession", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestValidateSession_RevokedSession(t *testing.T) {

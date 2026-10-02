@@ -56,10 +56,10 @@ func (s *retryAuthenticationService) RefreshAccessToken(ctx context.Context, ref
 	})
 }
 
-// RevokeSession revokes a session with retry logic for database operations
-func (s *retryAuthenticationService) RevokeSession(ctx context.Context, sessionID string, reason string) error {
+// RevokeSession revokes a session with retry logic for database operations.
+func (s *retryAuthenticationService) RevokeSession(ctx context.Context, req auth.RevokeSessionRequest) error {
 	return s.retryService.ExecuteDatabaseOperation(ctx, func() error {
-		return s.baseService.RevokeSession(ctx, sessionID, reason)
+		return s.baseService.RevokeSession(ctx, req)
 	})
 }
 

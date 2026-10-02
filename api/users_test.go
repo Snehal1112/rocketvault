@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -152,8 +153,8 @@ func (m *mockAuthService) RefreshAccessToken(ctx context.Context, refreshToken s
 	return args.Get(0).(*authServices.RefreshTokenResult), args.Error(1)
 }
 
-func (m *mockAuthService) RevokeSession(ctx context.Context, sessionID string, reason string) error {
-	args := m.Called(ctx, sessionID, reason)
+func (m *mockAuthService) RevokeSession(ctx context.Context, req authServices.RevokeSessionRequest) error {
+	args := m.Called(ctx, req)
 	return args.Error(0)
 }
 
@@ -1248,12 +1249,15 @@ func TestListUserSessions_Success_Returns200(t *testing.T) {
 func TestRevokeSession_Success_Returns200(t *testing.T) {
 	authSvc := &mockAuthService{}
 	sessionID := uuid.New().String()
-	authSvc.On("RevokeSession", mock.Anything, sessionID, "User requested revocation").Return(nil)
+	callerID := uuid.New()
+	authSvc.On("RevokeSession", mock.Anything, authServices.RevokeSessionRequest{
+		SessionID: sessionID, CallerID: callerID, CallerRoles: []string{model.RoleUser}, Reason: "User requested revocation",
+	}).Return(nil)
 
-	c := newUserCtx(nil, authSvc, RequestClaims{UserID: "aaa"})
+	c := newUserCtx(nil, authSvc, uViewerClaims(callerID.String()))
 	c.Params = &ApiParams{SessionID: sessionID, PerPage: 60}
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodDelete, "/users/sessions/"+sessionID, nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/users/sessions/"+sessionID, nil)
 
 	revokeSession(c, w, r)
 	if c.Err != nil {
@@ -1264,16 +1268,78 @@ func TestRevokeSession_Success_Returns200(t *testing.T) {
 	authSvc.AssertExpectations(t)
 }
 
+// An admin caller's roles reach the service so it can apply the admin bypass.
+func TestRevokeSession_Admin_PassesRoles(t *testing.T) {
+	authSvc := &mockAuthService{}
+	sessionID := uuid.New().String()
+	callerID := uuid.New()
+	authSvc.On("RevokeSession", mock.Anything, authServices.RevokeSessionRequest{
+		SessionID: sessionID, CallerID: callerID, CallerRoles: []string{model.RoleAdmin}, Reason: "User requested revocation",
+	}).Return(nil)
+
+	c := newUserCtx(nil, authSvc, RequestClaims{UserID: callerID.String(), Roles: []string{model.RoleAdmin}})
+	c.Params = &ApiParams{SessionID: sessionID, PerPage: 60}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/users/sessions/"+sessionID, nil)
+
+	revokeSession(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	authSvc.AssertExpectations(t)
+}
+
+// Revoking another user's session must look exactly like revoking a missing one.
+func TestRevokeSession_OtherUsersSession_Returns404(t *testing.T) {
+	authSvc := &mockAuthService{}
+	sessionID := uuid.New().String()
+	callerID := uuid.New()
+	authSvc.On("RevokeSession", mock.Anything, mock.Anything).
+		Return(fmt.Errorf("revoke session %s: %w", sessionID, authServices.ErrSessionNotFound))
+
+	c := newUserCtx(nil, authSvc, uViewerClaims(callerID.String()))
+	c.Params = &ApiParams{SessionID: sessionID, PerPage: 60}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/users/sessions/"+sessionID, nil)
+
+	revokeSession(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+	authSvc.AssertExpectations(t)
+}
+
+func TestRevokeSession_InvalidCallerID_Returns400(t *testing.T) {
+	authSvc := &mockAuthService{}
+	sessionID := uuid.New().String()
+
+	c := newUserCtx(nil, authSvc, RequestClaims{UserID: "not-a-uuid"})
+	c.Params = &ApiParams{SessionID: sessionID, PerPage: 60}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/users/sessions/"+sessionID, nil)
+
+	revokeSession(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	authSvc.AssertNotCalled(t, "RevokeSession", mock.Anything, mock.Anything)
+}
+
 func TestRevokeSession_Error_Returns500(t *testing.T) {
 	authSvc := &mockAuthService{}
 	sessionID := uuid.New().String()
-	authSvc.On("RevokeSession", mock.Anything, sessionID, "User requested revocation").
-		Return(errors.New("db error"))
+	authSvc.On("RevokeSession", mock.Anything, mock.Anything).Return(errors.New("db error"))
 
-	c := newUserCtx(nil, authSvc, RequestClaims{UserID: "aaa"})
+	c := newUserCtx(nil, authSvc, uViewerClaims(uuid.New().String()))
 	c.Params = &ApiParams{SessionID: sessionID, PerPage: 60}
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodDelete, "/users/sessions/"+sessionID, nil)
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/users/sessions/"+sessionID, nil)
 
 	revokeSession(c, w, r)
 	if c.Err != nil {

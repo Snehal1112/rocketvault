@@ -23,6 +23,7 @@ THE SOFTWARE.
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -31,6 +32,7 @@ import (
 
 	"rocketvault/common"
 	"rocketvault/internal/container"
+	authServices "rocketvault/internal/services/auth"
 	userService "rocketvault/internal/services/users"
 	"rocketvault/model"
 )
@@ -530,15 +532,30 @@ func listUserSessions(c *Context, w http.ResponseWriter, r *http.Request) {
 }
 
 // revokeSession handles the HTTP request to revoke a specific session.
+// Admins may revoke any session; other callers may revoke only their own.
 func revokeSession(c *Context, w http.ResponseWriter, r *http.Request) {
 	sessionID := c.Params.SessionID
 
-	// Use service container for session revocation.
+	callerID, err := uuid.Parse(c.Claims.UserID)
+	if err != nil {
+		c.SetInvalidParam("user_id")
+		return
+	}
+
 	authSvc, svcOK := svc(c, container.ServiceContainerInterface.GetAuthenticationService)
 	if !svcOK {
 		return
 	}
-	if err := authSvc.RevokeSession(r.Context(), sessionID, "User requested revocation"); err != nil {
+	if err := authSvc.RevokeSession(r.Context(), authServices.RevokeSessionRequest{
+		SessionID:   sessionID,
+		CallerID:    callerID,
+		CallerRoles: c.Claims.Roles,
+		Reason:      "User requested revocation",
+	}); err != nil {
+		if errors.Is(err, authServices.ErrSessionNotFound) {
+			c.SetNotFound("session")
+			return
+		}
 		c.SetInternalError(err)
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -37,6 +38,18 @@ type RefreshTokenResult struct {
 	ExpiresAt    time.Time
 }
 
+// ErrSessionNotFound reports a session that does not exist, is already revoked,
+// or belongs to a user other than the caller.
+var ErrSessionNotFound = errors.New("session not found")
+
+// RevokeSessionRequest identifies a session and the caller who revokes it.
+type RevokeSessionRequest struct {
+	SessionID   string
+	CallerID    uuid.UUID
+	CallerRoles []string
+	Reason      string
+}
+
 // AuthenticationService orchestrates the user authentication workflow.
 // It coordinates password validation, TOTP verification, and token generation
 // while maintaining separation of concerns between different auth components.
@@ -50,7 +63,7 @@ type AuthenticationService interface {
 	IssueSessionForUser(ctx context.Context, user *model.User) (*AuthenticationResult, error)
 	ValidateSession(ctx context.Context, token string) (*JWTClaims, error)
 	RefreshAccessToken(ctx context.Context, refreshToken string) (*RefreshTokenResult, error)
-	RevokeSession(ctx context.Context, sessionID string, reason string) error
+	RevokeSession(ctx context.Context, req RevokeSessionRequest) error
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID, reason string) error
 	// ListActiveSessions returns every active (non-revoked, non-expired)
 	// session for userID.
@@ -399,34 +412,36 @@ func (s *authenticationService) RefreshAccessToken(ctx context.Context, refreshT
 	}, nil
 }
 
-// RevokeSession revokes a specific user session.
-//
-// Parameters:
-//
-//	ctx: The context for the revocation operation.
-//	sessionID: The ID of the session to revoke.
-//	reason: The reason for revocation.
-//
-// Returns:
-//
-//	An error if revocation fails.
-func (s *authenticationService) RevokeSession(ctx context.Context, sessionID string, reason string) error {
-	sessionIDUUID, err := uuid.Parse(sessionID)
+// RevokeSession revokes one session. Admins may revoke any session; every
+// other caller may revoke only a session they own. A session the caller may
+// not revoke reports ErrSessionNotFound, so its existence is not disclosed.
+func (s *authenticationService) RevokeSession(ctx context.Context, req RevokeSessionRequest) error {
+	sessionIDUUID, err := uuid.Parse(req.SessionID)
 	if err != nil {
-		s.logger.LogAuditError("", "revoke_session", "failed", "Invalid session ID format", err)
+		s.logger.LogAuditError(req.CallerID.String(), "revoke_session", "failed", "Invalid session ID format", err)
 		return fmt.Errorf("invalid session ID format: %w", err)
 	}
 
-	if err := s.sessionRepo.RevokeSession(ctx, sessionIDUUID, reason); err != nil {
-		s.logger.LogAuditError(sessionID, "revoke_session", "failed", "Failed to revoke session", err)
+	if slices.Contains(req.CallerRoles, model.RoleAdmin) {
+		err = s.sessionRepo.RevokeSession(ctx, sessionIDUUID, req.Reason)
+	} else {
+		err = s.sessionRepo.RevokeUserSession(ctx, sessionIDUUID, req.CallerID, req.Reason)
+	}
+	if err != nil {
+		if errors.Is(err, repositories.ErrNotFound) {
+			s.logger.LogAuditError(req.CallerID.String(), "revoke_session", "failed", "Session not found or not owned by caller", nil)
+			return fmt.Errorf("revoke session %s: %w", req.SessionID, ErrSessionNotFound)
+		}
+		s.logger.LogAuditError(req.CallerID.String(), "revoke_session", "failed", "Failed to revoke session", err)
 		s.logger.WithError(err).Error("Failed to revoke session")
 		return fmt.Errorf("failed to revoke session: %w", err)
 	}
 
-	s.logger.LogAuditInfo(sessionID, "revoke_session", "success", fmt.Sprintf("Session revoked: %s", reason))
+	s.logger.LogAuditInfo(req.CallerID.String(), "revoke_session", "success", fmt.Sprintf("Session %s revoked: %s", req.SessionID, req.Reason))
 	s.logger.WithFields(logrus.Fields{
-		"session_id": sessionID,
-		"reason":     reason,
+		"session_id": req.SessionID,
+		"caller_id":  req.CallerID.String(),
+		"reason":     req.Reason,
 	}).Info("Session revoked successfully")
 
 	return nil

@@ -829,8 +829,8 @@ func (m *MockAuthenticationService) RefreshAccessToken(ctx context.Context, refr
 	return args.Get(0).(*authServices.RefreshTokenResult), args.Error(1)
 }
 
-func (m *MockAuthenticationService) RevokeSession(ctx context.Context, sessionID string, reason string) error {
-	args := m.Called(ctx, sessionID, reason)
+func (m *MockAuthenticationService) RevokeSession(ctx context.Context, req authServices.RevokeSessionRequest) error {
+	args := m.Called(ctx, req)
 	return args.Error(0)
 }
 

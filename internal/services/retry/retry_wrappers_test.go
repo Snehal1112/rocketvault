@@ -93,8 +93,8 @@ func (m *MockAuthService) RefreshAccessToken(ctx context.Context, refreshToken s
 	return args.Get(0).(*auth.RefreshTokenResult), args.Error(1)
 }
 
-func (m *MockAuthService) RevokeSession(ctx context.Context, sessionID string, reason string) error {
-	args := m.Called(ctx, sessionID, reason)
+func (m *MockAuthService) RevokeSession(ctx context.Context, req auth.RevokeSessionRequest) error {
+	args := m.Called(ctx, req)
 	return args.Error(0)
 }
 
@@ -811,20 +811,22 @@ func TestRetryAuth_RefreshAccessToken_Error(t *testing.T) {
 
 func TestRetryAuth_RevokeSession_Success(t *testing.T) {
 	base := &MockAuthService{}
-	base.On("RevokeSession", mock.Anything, "sess-1", "logout").Return(nil)
+	req := auth.RevokeSessionRequest{SessionID: "sess-1", CallerID: uuid.New(), Reason: "logout"}
+	base.On("RevokeSession", mock.Anything, req).Return(nil)
 
 	svc := NewRetryAuthenticationService(base, newNoop())
-	err := svc.RevokeSession(ctx, "sess-1", "logout")
+	err := svc.RevokeSession(ctx, req)
 	assert.NoError(t, err)
 	base.AssertExpectations(t)
 }
 
 func TestRetryAuth_RevokeSession_Error(t *testing.T) {
 	base := &MockAuthService{}
-	base.On("RevokeSession", mock.Anything, "sess-1", "logout").Return(fmt.Errorf("revoke failed"))
+	req := auth.RevokeSessionRequest{SessionID: "sess-1", CallerID: uuid.New(), Reason: "logout"}
+	base.On("RevokeSession", mock.Anything, req).Return(fmt.Errorf("revoke failed"))
 
 	svc := NewRetryAuthenticationService(base, newNoop())
-	err := svc.RevokeSession(ctx, "sess-1", "logout")
+	err := svc.RevokeSession(ctx, req)
 	assert.Error(t, err)
 	base.AssertExpectations(t)
 }

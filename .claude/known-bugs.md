@@ -4548,6 +4548,34 @@ that a 400 on `content_type` leaves the version count unchanged. Making
 
 ---
 
+### B72 — Any authenticated caller could revoke any session
+
+**Status**: Fixed (identity and sessions hardening, 2026-09-30); GitHub #40
+**Severity**: Medium — defense in depth today, because `DELETE /users/*` maps
+to the admin-only `users:delete` permission
+(`internal/services/authorization/rbac_service.go:262-275`), so only admins
+reach the handler; loosening that mapping for self-service would have made
+this a full IDOR
+**Files**: `api/users.go`, `internal/services/auth/authentication_service.go`,
+`internal/repositories/session_repository.go`
+
+**Symptom**: `revokeSession` passed only the session ID to
+`AuthenticationService.RevokeSession`, and the repository ran
+`UPDATE user_sessions ... WHERE id = ?` with no `user_id` condition. The
+session ID is the JWT `jti`, readable in cleartext from any token.
+
+**Root cause**: ownership was never part of the revoke contract; the caller's
+identity did not reach the service or the query.
+
+**What was fixed**: `RevokeSession` now takes a `RevokeSessionRequest` carrying
+the caller's ID and roles. Admins keep the unscoped
+`SessionRepository.RevokeSession`; everyone else goes through the new
+`RevokeUserSession`, whose `UPDATE` adds `AND user_id = ?`. A session the caller
+may not revoke returns `ErrSessionNotFound`, which the handler maps to 404, the
+same answer as for a missing session.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and
