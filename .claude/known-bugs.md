@@ -4589,7 +4589,8 @@ abuse; the research first rated it High, corrected in the research doc
 
 **Symptom**: `FindOrCreateExternalUser` creates OIDC users with
 `PasswordHash: ""` and `TOTPSecret: ""`. Setting a password afterwards
-(`rocketvault users update --new-password`, or `PUT /api/v1/users/{self}`)
+(`rocketvault users update --new-password`, or an admin's
+`PUT /api/v1/users/{id}`)
 produced a local login that still asked for a TOTP code, but an empty secret
 makes that code computable by anyone. The password was the only real factor.
 `TestLoginUser_EmptyTOTPSecret_FailsClosedLikeWrongCode` reproduced it: with
@@ -4605,7 +4606,13 @@ secret when a password is set on an account whose secret is empty (existing
 secrets are kept), `UserRepository.Update` persists `totp_secret`, the
 `otpauth://` URL is returned once in the `totp_secret` field of the
 `PUT /users/{id}` response and printed once by `users update`, and
-`AuthenticateUser` rejects an empty secret after the password check. The
+`AuthenticateUser` rejects an empty secret after the password check. A secret
+of only whitespace or base32 padding counts as empty, in that guard and in
+`TOTPService.ValidateCodeWithStep` (`totpSecretIsEmpty` in
+`totp_service.go`). The otp library trims whitespace, so a blank secret
+decodes to the same empty HMAC key as `""`; a padding-only secret fails to
+decode, and is now reported as not enrolled instead of as a validation
+error. The
 returned error wraps `auth.ErrMFANotEnrolled` for `errors.Is`, but its message
 is `invalid TOTP code`, the same as a wrong code, and the HTTP response is the
 same generic 403, so nothing tells a caller that the account has no second
@@ -4624,9 +4631,38 @@ SELECT id, username, auth_provider FROM users
 WHERE (totp_secret IS NULL OR totp_secret = '') AND password_hash <> '';
 ```
 
-Each such OIDC user recovers by signing in with `rocketvault users login --oidc`
-and setting the password again with `rocketvault users update <id>
---new-password <password>`, which now enrolls a secret and prints it once.
+The upgrade does not revoke these accounts' existing sessions, and no API
+route or CLI command lets an admin list or revoke another user's sessions.
+Operators with direct database access revoke them once, after taking a
+backup (SQLite and Postgres; column names checked against `user_sessions` in
+`internal/db/db.go` and the `UPDATE`s in `session_repository.go`):
+
+```sql
+UPDATE user_sessions
+SET revoked = TRUE, revoked_at = CURRENT_TIMESTAMP,
+    revoked_reason = 'v4.8.0 upgrade'
+WHERE revoked = FALSE AND user_id IN (
+  SELECT id FROM users
+  WHERE (totp_secret IS NULL OR totp_secret = '') AND password_hash <> ''
+);
+```
+
+This is documentation only and must not become a migration in
+`migrateSchema`, which runs on every start: it would revoke these users'
+sessions, OIDC ones included, again at every restart until they enroll.
+
+Recovery means setting the password again, which now enrolls a secret and
+prints it once, and only two kinds of caller can do that. An admin can, with
+`PUT /api/v1/users/{id}` or `rocketvault users update <id> --new-password
+<password>`, and then learns the secret and must hand it to the user over a
+secure channel. Someone with shell access to the server host can, by running
+`rocketvault users update` in local mode against the server's configuration
+and database. A non-admin cannot self-recover on a remote deployment:
+`PUT /users/*` maps to `users:update`
+(`internal/services/authorization/rbac_service.go`, `mapEndpointToPermission`),
+which only the admin role holds (`getDefaultRolePermissions`), and
+`rocketvault users update` has no remote mode (only `users login` and
+`users logout` do).
 
 **Still open**:
 - There is no TOTP reset path anywhere (no API route, CLI command or service
@@ -4636,16 +4672,21 @@ and setting the password again with `rocketvault users update <id>
   clears `totp_secret` followed by setting the password again. OIDC login is
   unaffected.
 - If `GetUser` fails after `UpdateUser` committed the new secret, the handler
-  returns 500 and the one-time enrollment URL is lost. The account then has a
-  secret its owner never saw, which leads to the database-edit recovery above.
+  no longer returns 500: it answers 200 with the enrollment URL and an `id`,
+  `username` and `roles` taken from the request (`created_at` empty), keeps
+  `Cache-Control: no-store`, and logs the read error server-side without the
+  URL (`TestUpdateUser_PasswordEnrollment_GetUserFails_StillReturnsURL`).
 - If the update commits and the retry wrapper then sees a retryable error, the
   re-run finds a secret already present and returns success without the URL,
   with the same outcome.
 - Research step 5 (fresh IdP login before setting a password) and step 6
   (pending enrollment) are deferred on open questions 2 and 3 of
   `.claude/research-oidc-user-mfa-enrollment.md`. Until step 5 lands, an
-  attacker holding a stolen OIDC session token can set a password and receives
-  the enrollment URL, which gives them a complete password-plus-TOTP login.
+  attacker holding a stolen session token of an OIDC user who has the admin
+  role can set that user's password over HTTP and receives the enrollment
+  URL, which gives them a complete password-plus-TOTP login. For a non-admin
+  OIDC user the same needs shell access to the server host, because the HTTP
+  route is admin-only and `users update` has no remote mode.
 - An admin who sets an OIDC user's password receives that user's TOTP
   enrollment URL and so learns the secret. This mirrors `CreateUser`, where the
   creating admin also sees the new user's secret.
@@ -4685,7 +4726,11 @@ tokens, and the HTTP middleware answers 401 `Unauthorized: invalid token` as
 before, so a caller cannot tell a deleted user from a database error. The
 reason is only in the audit log. A failed read denies; it never allows.
 Service-account (OAuth2 client-credentials) tokens have no `users` row and
-keep their own client check, so they skip the user read. OIDC users have a
+keep their own client check, so they skip the user read. That check now fails
+closed too: with no OAuth2 client repository wired, a service-account token is
+denied with `invalid session` instead of skipping every client check
+(`TestValidateSession_ServiceAccount_NilClientRepository_Denies`); the
+container always wires it. OIDC users have a
 `users` row and are unaffected.
 
 **Accepted consequences**:
@@ -4707,6 +4752,9 @@ keep their own client check, so they skip the user read. OIDC users have a
 - The user update and the revoke are not one transaction, so there is a
   window of milliseconds in which the new password or role is stored and the
   old sessions still work.
+- `DeleteUser` revokes before it deletes, so if the delete then fails the
+  user is logged out but not deleted. This is fail-safe; repeating the delete
+  finishes it.
 - A login that completes between the delete path's revoke and the delete
   creates a session that was never revoked. Since `ValidateSession` now
   rejects tokens of a missing user, and `RefreshAccessToken` already read the
@@ -4763,6 +4811,10 @@ with drifting clocks.
   second login in the same step has to wait for a new code. A login with a
   code from a later slot (a clock running ahead) also refuses codes from the
   earlier slots until the clock catches up.
+- A forward jump of the server clock is the extreme case: a login during the
+  jump claims a far-future step, and every TOTP login of that user then fails
+  as a replay until real time reaches that step. OIDC login is unaffected.
+  Keeping the server clock synchronized avoids it.
 - A session-store or token error after a successful claim is marked
   non-retryable, so the retry wrapper does not repeat the login. A repeat
   could only fail on the step it had just claimed and would show a storage
@@ -4776,6 +4828,55 @@ with drifting clocks.
 **Known limitation**: TOTP secrets are still stored in plaintext
 (`UserRepository.Create` and `Update` in `user_repository.go`); that is a
 separate finding.
+
+---
+
+### B90 — Invalid bearer tokens and failed logins can open the shared database circuit breaker
+
+**Status**: Open (GitHub issue #56; found 2026-10-02 during the final review
+of the identity-sessions-hardening plan; not caused by that work).
+**Severity**: Medium-High — an unauthenticated client can deny service to
+every database-backed operation, authenticated requests included, with a
+handful of requests per breaker timeout; no data is exposed or changed
+**Files**: `internal/services/retry/retry_service.go` (`NewRetryService`,
+`ExecuteDatabaseOperation`), `internal/services/retry/retried.go`
+(`retried`), `internal/services/retry/retry_auth_service.go`
+(`ValidateSession`, `AuthenticateUser`), `internal/retry/retry.go`
+(`CircuitBreaker.executeClosed`, `recordFailure`),
+`internal/middleware/middleware.go` (authentication middleware),
+`internal/container/service_container.go`
+
+**Symptom**: a few requests in a row with any bad bearer token (for example
+`Authorization: Bearer x`), or a few failed logins, open the database
+circuit breaker. While it is open (30s by default, 60s in the production
+preset), `ValidateSession` returns `ErrCircuitBreakerOpen`, so the
+middleware answers 401 `Unauthorized: invalid token` to every request,
+valid tokens included, and every other retry-wrapped user, secret, key and
+certificate call fails fast with 503. One burst per timeout keeps the
+service down.
+
+**Root cause**: the container builds one `RetryService`, and its single
+`databaseBreaker` guards every retry wrapper (`retried` and
+`ExecuteDatabaseOperation`). `ValidateSession` and `AuthenticateUser` run
+through it. `executeClosed` calls `recordFailure` for any non-nil error, so
+an invalid-token or wrong-password result counts as a database failure, not
+only a real storage fault. `FailureThreshold` is 3 by default
+(`.rocketvault.yaml.example`, `.rocketvault.docker.yaml.tmpl`,
+`DefaultConfig`) and 5 in `ProductionConfig`, and only a success resets the
+counter. The middleware calls `ValidateSession` for every bearer token before
+any authorization, so the input is unauthenticated, and the per-IP rate limit
+allows far more than three requests per 30 seconds. Ordinary business errors
+on the other wrapped calls (not found, validation) count the same way.
+
+**Fix recipe**: count only infrastructure failures toward the breaker. For
+example, have `executeClosed` record a failure only when the error is
+retryable under the policy (or not marked `NonRetryable`), and make
+authentication results (invalid token, invalid credentials, invalid TOTP
+code, revoked session) and other business errors non-counting.
+Alternatively give authentication its own breaker, or validate the token
+signature outside the breaker so only the database reads are wrapped. Add a
+test that several invalid tokens in a row leave the breaker closed and a
+valid token still validates.
 
 ---
 
