@@ -4345,8 +4345,17 @@ body no longer carries an `error` key. `writeJSON`, `writeJSONStatus` and
 `ApiSessionRequired` call `setNoStore`, which sets `Cache-Control: no-store`
 unless the handler already chose a value (the JWKS `public, max-age=3600` is
 kept). `docs/api-specification.yaml` now documents `detailed_error` as empty
-or a fixed non-diagnostic string. Tests: `api/error_bypass_test.go` and the
-context and respond tests added with each commit.
+or a fixed non-diagnostic string. Tests: `api/context_test.go`,
+`api/cache_control_test.go` and `api/error_bypass_test.go`.
+
+Not covered by `no-store`: responses written by middleware with `http.Error`
+(401, 403 and 429 in `internal/middleware`), the per-vault rate-limit 429,
+and the plain-text OIDC error bodies.
+
+**Accepted behavior change**: 500 responses now carry a fixed
+`detailed_error` instead of the error text, `/health/ready` lost its `error`
+key, and the OIDC error bodies changed text (`authentication failed`,
+`internal error`, `invalid cli_redirect_uri`).
 
 ---
 

@@ -1005,12 +1005,15 @@ type ExportRequest struct {
 }
 
 type ImportResponse struct {
-    Success       bool   `json:"success"`
-    Message       string `json:"message"`
-    ImportedCount int    `json:"imported_count"`
-    TotalCount    int    `json:"total_count"`
-    Format        string `json:"format"`
-    ImportedAt    string `json:"imported_at"`
+    Success       bool     `json:"success"`
+    Message       string   `json:"message"`
+    ImportedCount int      `json:"imported_count"`
+    SkippedCount  int      `json:"skipped_count"`
+    FailedCount   int      `json:"failed_count"`
+    TotalCount    int      `json:"total_count"`
+    Format        string   `json:"format"`
+    ImportedAt    string   `json:"imported_at"`
+    Errors        []string `json:"errors,omitempty"`
 }
 
 func NewPasswordManagerAPI(baseURL, token string) *PasswordManagerAPI {
