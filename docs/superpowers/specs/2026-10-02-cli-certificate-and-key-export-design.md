@@ -42,11 +42,13 @@ no CLI equivalent.
   file permissions and warnings.
 - Every security rule of the HTTP export kept: the exporter data actions, the
   explicit-deny override, the service-side refusals, fixed error messages, one
-  structured audit event per attempt, and no material or password in any log,
+  structured audit event per attempt that reaches the command's own checks (a
+  failed login or a missing service container records nothing), and no material or password in any log,
   error or audit record.
 - A sealed export that a user can actually open, offline, with the same binary.
-- No partial file on any failure, no silent overwrite, and nothing secret on
-  stdout or stderr.
+- No partial output file on any failure, no silent overwrite, and nothing secret
+  on stdout or stderr. A killed process can still leave the temporary file (see
+  the writer section).
 
 ## Non-goals
 
@@ -148,10 +150,12 @@ read it as is.
    existing path is never replaced and a symlink is never followed; with
    `--force`, renames it over the target, replacing the target itself (a symlink
    is replaced, not followed);
-4. always removes the temporary name.
+4. removes the temporary name.
 
-A failure at any step leaves the target as it was and no temporary file
-behind. The command also checks for an existing target before authorizing, so
+On any failure the process survives and the target is left as it was, with the
+temporary file removed. A killed process (SIGINT or SIGKILL) can leave the 0600
+temporary file, which holds plaintext with `--encrypt=false`. The parent
+directory is not fsynced, so a power loss right after success can lose the file. The command also checks for an existing target before authorizing, so
 the common mistake fails before any material leaves the vault; the link in
 step 3 closes the race.
 
@@ -336,7 +340,7 @@ the proof.
 
 **CLI side: `vaultcli.ExportAttempt`.** Created right after `Caller`, it holds an
 `exportaudit.Attempt` with `Source: "cli"` and records exactly one event per
-attempt whatever the outcome; a second outcome is ignored. Its methods:
+attempt that reaches it, whatever the outcome; a second outcome is ignored. Its methods:
 
 - `Fail(f)`: validation failures, before or after authorization.
 - `Denied(err)`: authorization failures; reason `vault authorization failed`,
@@ -528,8 +532,7 @@ Test-first, per layer, with the existing fakes (`testutils.NewTestContext`,
 ## Delivery
 
 On `v-4.0.0`, one commit per plan task through the
-`dev-workflow-skills:1-git-commit` skill, GPG signed; the plan is
-`docs/superpowers/plans/2026-10-02-cli-certificate-and-key-export.md`.
+`dev-workflow-skills:1-git-commit` skill, GPG signed.
 
 ## Open questions
 

@@ -887,7 +887,7 @@ To see which versions a key has, use the REST endpoint `GET /api/v1/keys/{id}/ve
 
 ### Export a key
 
-A key created or imported with `--exportable` can be exported as an unencrypted PKCS#8 private key in PEM. You need a role assignment that grants the key export permission — `Key Vault Key Exporter` or `Key Vault Administrator`, which only a global admin can grant. No account role is needed. HSM-backed, `oct` and ES256K keys can never be exported.
+A key created or imported with `--exportable` can be exported as an unencrypted PKCS#8 private key in PEM. You need a role assignment that grants the key export permission — `Key Vault Key Exporter` (grantable only by a global admin) or `Key Vault Administrator` (which a delegated Data Access Administrator can also grant). No account role is needed. HSM-backed, `oct` and ES256K keys can never be exported.
 
 ```
 go run main.go keys export KEY-ID-HERE --file ./signer.pem.sealed
@@ -895,7 +895,7 @@ go run main.go keys export KEY-ID-HERE --file ./signer.pem.sealed
 
 The file is sealed by default, exactly like `secrets export`: the passphrase comes from `--passphrase-file`, then `ROCKETVAULT_EXPORT_PASSPHRASE`, then a prompt asked twice. Add `--version 2` for an older version, and `--vault <name>` for another vault. An existing file is never replaced unless you add `--force`. Turn the sealed file into the PEM file with `export open` (see "Open a sealed export file" below).
 
-To write the PEM file directly, add `--encrypt=false`; the command prints a warning, because the file then holds the private key in the clear. Every attempt, allowed or refused, is recorded in the audit log.
+To write the PEM file directly, add `--encrypt=false`; the command prints a warning, because the file then holds the private key in the clear. Every attempt that reaches the export command's own checks, allowed or refused, is recorded in the audit log; a failed login or a missing service container records nothing.
 
 For scripts, give the passphrase through `--passphrase-file` or `ROCKETVAULT_EXPORT_PASSPHRASE` so nothing prompts. See "How export files are written" below for the file-writing rules.
 
@@ -990,7 +990,7 @@ go run main.go certificate renew CERT-ID-HERE \
 
 ### Export a certificate and its private key
 
-A certificate created with `--exportable` can be exported with its private key, as one PEM file (the certificate, any intermediate CA certificates, then the private key) or as a PKCS12 bundle. You need `Key Vault Certificate Exporter` or `Key Vault Administrator` on the vault; no account role is needed.
+A certificate created with `--exportable` can be exported with its private key, as one PEM file (the certificate, any intermediate CA certificates, then the private key) or as a PKCS12 bundle. You need `Key Vault Certificate Exporter` (grantable only by a global admin) or `Key Vault Administrator` (which a delegated Data Access Administrator can also grant) on the vault; no account role is needed.
 
 ```
 go run main.go certificates export CERT-ID-HERE --file ./client.pem.sealed
@@ -1020,7 +1020,7 @@ Both export commands, and `export open`, write the file the same way:
 - It is written to a temporary file named `.rocketvault-export-*` in the same directory, synced, then moved into place, so a failure normally leaves no partial output. If the process is killed (SIGINT or SIGKILL) during the write, that temporary file can survive. It is mode 0600 and, with `--encrypt=false`, holds plaintext, so delete any leftover `.rocketvault-export-*` file. The parent directory is not synced, so a power loss right after the command returns can still lose the file.
 - An existing file is never replaced unless you add `--force`. Without `--force` the file is created with a hard link, so the output filesystem must support hard links. Otherwise the command fails with "the output filesystem does not support hard links; choose another location or use --force".
 - `--file -` is refused: an export is only ever written to a file.
-- Nothing secret is printed. Stdout carries only a status block (name, version, format, encryption, file path).
+- Nothing secret is printed. Stdout carries only a status block: name, version, format, encryption mode and file path for the two export commands; kind, name, version, format and file path for `export open`.
 
 ### Open a sealed export file
 

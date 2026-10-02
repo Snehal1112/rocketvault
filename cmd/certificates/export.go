@@ -47,8 +47,9 @@ names the reason and writes no file.
 Requires the Microsoft.KeyVault/vaults/certificates/export/action data
 action in the target vault, held by the Key Vault Certificate Exporter and
 Key Vault Administrator roles. No account role is required. Acts on the
-vault named by --vault, defaulting to "default". Every attempt, allowed or
-denied, is written to the audit log.
+vault named by --vault, defaulting to "default". Every attempt that reaches
+this command's own checks, allowed or denied, is written to the audit log; a
+failed login or a missing service container records nothing.
 
 The file is sealed by default, as with "secrets export": --encrypt (default
 true) seals it under a passphrase read from --passphrase-file, then the

@@ -245,7 +245,7 @@ full design.
 - Certificates are versioned (2026-10-01): the `certificates` row is always the current version and `certificate_versions` holds every earlier one. `RenewCertificate` archives and bumps in one `CertificateVersionRepository.ArchiveAndRenew` transaction guarded by the version number, so a lost race is a 409. `CertificateRepository.Update` writes metadata only; never write a certificate body or key through it. Design: `docs/superpowers/specs/2026-10-01-certificate-versioning-design.md`.
 - Soft-delete (list/restore/purge) is vault-scoped for both keys and certificates, mirroring the pre-existing secrets soft-delete pattern (`internal/services/secrets/secret_service.go`'s `ListDeletedSecrets`/`RecoverSecret`/`PurgeSecret`) — see `KeyService.ListDeletedKeys`/`RecoverKey`/`PurgeKey` and the `CertificateService` equivalents.
 - Certificates created with `exportable: true` (which requires an exportable key, else 409) export as a leaf-first chain plus PKCS#8, or PKCS12, via `POST .../certificates/{certificate_id}/export` (`CertificateService.ExportCertificate`, reads the repository never `certcache`, never retried). The export routes alone use the R6 `{"error":{"code","message"}}` body (`api/export.go`), set `Cache-Control: no-store`, and audit every attempt through `AuditService.RecordEvent`.
-- The CLI counterpart is `rocketvault certificates export <id>` (`cmd/certificates/export.go`, `--format pem|pkcs12`, PKCS12 password never a flag value). Both CLI export commands audit every attempt through `internal/services/exportaudit`, the package the HTTP export handlers now share for their fixed reasons and event shape.
+- The CLI counterpart is `rocketvault certificates export <id>` (`cmd/certificates/export.go`, `--format pem|pkcs12`, PKCS12 password never a flag value). Both CLI export commands audit every attempt that reaches their own checks (a failed login or missing service container records nothing) through `internal/services/exportaudit`, the package the HTTP export handlers now share for their fixed reasons and event shape.
 
 ### Authorization (`internal/services/authorization/`)
 - **RBACService**: global role permissions for vault and user management only
@@ -537,8 +537,8 @@ npm run typecheck # If available
 - **2026-10-02**: CLI certificate and key export — `rocketvault certificates
   export`, `rocketvault keys export` and the offline `rocketvault export open`,
   sealed by default like `secrets export`; shared `internal/services/exportaudit`
-  for the HTTP and CLI audit events. Plan:
-  `docs/superpowers/plans/2026-10-02-cli-certificate-and-key-export.md`.
+  for the HTTP and CLI audit events. Spec:
+  `docs/superpowers/specs/2026-10-02-cli-certificate-and-key-export-design.md`.
 - **2026-10-01**: Certificate and key export — `POST .../certificates/{id}/export`
   (PEM chain + PKCS#8 or PKCS12) and `POST .../keys/{id}/export` (software keys,
   PKCS#8) on both route shapes, the immutable `exportable` flag on every
