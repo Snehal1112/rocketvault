@@ -1168,7 +1168,10 @@ Two RocketVault-only roles were added 2026-10-01 for per-item export
 (`docs/superpowers/specs/2026-10-01-certificate-and-key-export-design.md`).
 Azure has no counterpart, so they are extras, not parity rows. Neither is in
 `nonAdminGrantableRoles`: only a global admin can grant them. Administrator
-also holds both actions; no other built-in role holds either.
+also holds both actions and, as before, remains grantable by a delegated
+non-admin Data Access Administrator (accepted by the user on 2026-10-02), so
+such a delegate can confer export through Administrator; no other built-in
+role holds either action.
 
 | Role | Azure grants | RocketVault grants | Status |
 |---|---|---|---|
@@ -1209,9 +1212,9 @@ deployment-dependent change to the "keys never leave the vault" trust model.
 The amendment answers that directly: exportability is an explicit, immutable,
 per-key `exportable` flag, set only by the key's creator at creation or import,
 visible in `GET key`, and false for every key that existed before the change.
-Export further requires the narrow Key Vault Key Exporter role (or
-Administrator), which only a global admin can grant, and every attempt is
-audited.
+Export further requires the narrow Key Vault Key Exporter role (which only a
+global admin can grant) or Administrator (which a delegated Data Access
+Administrator can also grant), and every attempt is audited.
 
 What does not change: HSM-backed keys remain non-extractable
 (`CKA_EXTRACTABLE: false`) and `ExportKey` refuses every `pkcs11:` key; `oct`

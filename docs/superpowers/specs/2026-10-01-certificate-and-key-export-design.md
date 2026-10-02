@@ -172,7 +172,11 @@ Administrator gets both. No other existing role gets either (not Reader, Secrets
 User, Certificate User, Officer or Crypto roles). Role count goes from eleven to
 thirteen and the hard-coded "eleven" mentions in comments and tests are updated.
 Neither role is in `nonAdminGrantableRoles`, so only a global admin can grant
-them. `mapCertificateAction` and `mapKeyAction` map `POST .../export`; vault-scoped
+them. `Key Vault Administrator` stays a required, unchanged role and stays on
+that list, so a delegated non-admin Data Access Administrator can still grant
+it, and it now holds both export actions; the user accepted this on 2026-10-02
+(delegation of Administrator is existing behavior, and removing it is out of
+scope). It is documented as a caveat. `mapCertificateAction` and `mapKeyAction` map `POST .../export`; vault-scoped
 role assignments apply. The legacy access-policy path classifies export as a
 create, so a legacy deny-create policy also blocks export (fails closed).
 
