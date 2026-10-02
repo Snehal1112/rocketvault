@@ -356,6 +356,12 @@ func resolveAuthentication(cmd *cobra.Command, authSvc authServices.Authenticati
 	if username != "" && password != "" {
 		result, err := authSvc.AuthenticateUser(cmd.Context(), username, password, totpCode)
 		if err != nil {
+			// The retry layer prefixes a throttled login with its own text.
+			// Show the user only the wait.
+			var throttled *authServices.ThrottledError
+			if errors.As(err, &throttled) {
+				return nil, throttled
+			}
 			return nil, err
 		}
 		if saveErr := common.SaveSession(&common.SessionCache{

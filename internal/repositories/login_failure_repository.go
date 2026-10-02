@@ -13,7 +13,8 @@ import (
 
 // LoginFailureRepositoryInterface defines data access for failed-login
 // counters. Repositories handle only data access; the backoff policy lives in
-// the auth service layer.
+// the auth service layer. The username argument is the opaque key the caller
+// stores, which the auth layer always hashes.
 type LoginFailureRepositoryInterface interface {
 	// Get returns the counter for username, or ErrNotFound.
 	Get(ctx context.Context, username string) (*model.LoginFailure, error)

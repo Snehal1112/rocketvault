@@ -14,6 +14,7 @@ import (
 	"rocketvault/cmd/testutils"
 	"rocketvault/common"
 	authServices "rocketvault/internal/services/auth"
+	retryServices "rocketvault/internal/services/retry"
 )
 
 func TestPerformPasswordLogin_Success_SavesSession(t *testing.T) {
@@ -88,4 +89,22 @@ func TestPerformPasswordLogin_Throttled_SurfacesRetryHint(t *testing.T) {
 	cached, loadErr := common.LoadSession("admin")
 	require.NoError(t, loadErr)
 	assert.Nil(t, cached)
+}
+
+// Through the real retry wrapper a throttled login arrives prefixed with
+// "error is not retryable". The CLI must print only the throttle message.
+func TestPerformPasswordLogin_ThrottledThroughRetryWrapper_StripsPrefix(t *testing.T) {
+	common.SessionBaseDir = t.TempDir()
+	tc := testutils.NewTestContext(t)
+	tc.MockAuthService.On("AuthenticateUser", mock.Anything, "admin", "wrong", "123456").
+		Return(nil, &authServices.ThrottledError{RetryAfter: 90 * time.Second})
+	rs, err := retryServices.NewRetryService(viper.New())
+	require.NoError(t, err)
+	wrapped := retryServices.NewRetryAuthenticationService(tc.MockAuthService, rs)
+
+	_, err = performPasswordLogin(context.Background(), wrapped, "admin", "wrong", "123456")
+
+	require.ErrorIs(t, err, authServices.ErrLoginThrottled)
+	assert.Equal(t, "too many failed login attempts; retry in 1m30s", err.Error())
+	tc.MockAuthService.AssertNumberOfCalls(t, "AuthenticateUser", 1)
 }

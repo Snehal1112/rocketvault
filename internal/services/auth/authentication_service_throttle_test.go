@@ -68,7 +68,7 @@ func (f *throttleFixture) service(withSteps bool) AuthenticationService {
 // failures returns the recorded failure count for username, or 0.
 func (f *throttleFixture) failures(t *testing.T, username string) int {
 	t.Helper()
-	row, err := f.repo.Get(context.Background(), username)
+	row, err := f.repo.Get(context.Background(), throttleKey(username))
 	if errors.Is(err, repositories.ErrNotFound) {
 		return 0
 	}

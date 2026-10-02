@@ -3,7 +3,6 @@ package common
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,9 +110,4 @@ func T(translationID string, args ...interface{}) string {
 		return ""
 	}
 	return msg
-}
-
-// GetIPAddress return the remote IP address.
-func GetIPAddress(r *http.Request) string {
-	return r.RemoteAddr
 }

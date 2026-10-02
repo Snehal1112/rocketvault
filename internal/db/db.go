@@ -768,9 +768,10 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_oauth2_clients_name ON oauth2_clients(name);
 
-		-- Per-account failed-login backoff, keyed by the normalized username.
-		-- Unknown usernames get rows too, so a throttle response never reveals
-		-- whether an account exists.
+		-- Per-account failed-login backoff. The username column holds
+		-- "sha256:" plus a hash of the exact attempted username, never the raw
+		-- name. Unknown usernames get rows too, so a throttle response never
+		-- reveals whether an account exists.
 		CREATE TABLE IF NOT EXISTS login_failures (
 			username        TEXT PRIMARY KEY,
 			failures        INTEGER NOT NULL,

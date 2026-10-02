@@ -24,6 +24,7 @@ package users
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -142,6 +143,12 @@ func runRemoteLogin(cmd *cobra.Command, target *cliclient.Target) error {
 func performPasswordLogin(ctx context.Context, authSvc authServices.AuthenticationService, username, password, totpCode string) (*common.SessionCache, error) {
 	result, err := authSvc.AuthenticateUser(ctx, username, password, totpCode)
 	if err != nil {
+		// The retry layer prefixes a throttled login with its own text.
+		// Show the user only the wait.
+		var throttled *authServices.ThrottledError
+		if errors.As(err, &throttled) {
+			return nil, throttled
+		}
 		return nil, err
 	}
 

@@ -208,13 +208,22 @@ func TestLoggingMiddleware_LogsResolvedClientIP(t *testing.T) {
 	}
 }
 
-func TestNewMiddleware_LoadsTrustedProxies(t *testing.T) {
-	viper.Reset()
+// setTrustedProxiesForTest sets server.trusted_proxies on the global viper
+// and restores the previous value when the test ends, so other tests keep
+// their configuration.
+func setTrustedProxiesForTest(t *testing.T, value []string) {
+	t.Helper()
+	const key = "server.trusted_proxies"
+	previous := viper.Get(key)
 	t.Cleanup(func() {
-		viper.Reset()
+		viper.Set(key, previous)
 		SetClientIPResolver(nil)
 	})
-	viper.Set("server.trusted_proxies", []string{"10.0.0.0/8"})
+	viper.Set(key, value)
+}
+
+func TestNewMiddleware_LoadsTrustedProxies(t *testing.T) {
+	setTrustedProxiesForTest(t, []string{"10.0.0.0/8"})
 	mw := NewMiddleware(&MockServiceContainer{logger: &logging.Logger{Logger: logrus.New()}})
 
 	r := reqFrom("10.0.0.2:1", map[string]string{"X-Forwarded-For": "198.51.100.7"})
@@ -223,12 +232,7 @@ func TestNewMiddleware_LoadsTrustedProxies(t *testing.T) {
 }
 
 func TestNewMiddleware_InvalidTrustedProxiesTrustsNothing(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(func() {
-		viper.Reset()
-		SetClientIPResolver(nil)
-	})
-	viper.Set("server.trusted_proxies", []string{"10.0.0.0/8", "not-an-ip"})
+	setTrustedProxiesForTest(t, []string{"10.0.0.0/8", "not-an-ip"})
 	base := logrus.New()
 	hook := logtest.NewLocal(base)
 	mw := NewMiddleware(&MockServiceContainer{logger: &logging.Logger{Logger: base}})

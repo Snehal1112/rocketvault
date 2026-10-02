@@ -276,8 +276,9 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 	// later one was already accepted for the user. The claim runs only after
 	// the password and the code were both accepted, so a wrong guess never
 	// uses up a step.
-	// Every claim failure counts, a replay as well as a server fault, so no
-	// exit of a login that did not finish leaves the counter untouched.
+	// Every claim failure counts, a replay as well as a server fault. Only a
+	// session-issue failure after this point is left uncounted: the
+	// credentials were valid, so it neither counts nor clears the counter.
 	if err := s.claimTOTPStep(ctx, &user, username, step); err != nil {
 		s.recordLoginFailure(ctx, username)
 		return nil, err

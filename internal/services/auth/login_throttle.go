@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -25,10 +24,7 @@ const (
 	loginMaxDelay = 15 * time.Minute
 	// loginResetAfter forgets a counter whose last failure is this old.
 	loginResetAfter = 24 * time.Hour
-	// maxThrottleKeyLen bounds stored keys in bytes, so spraying long names
-	// cannot grow rows without limit.
-	maxThrottleKeyLen = 64
-	// throttleKeyHashPrefix marks a key that is a hash of the username.
+	// throttleKeyHashPrefix marks a key as a hash of the username.
 	throttleKeyHashPrefix = "sha256:"
 	// throttleWriteTimeout bounds each counter write, which is detached from
 	// the request so a client cannot cancel it.
@@ -95,15 +91,13 @@ func NewLoginThrottle(repo repositories.LoginFailureRepositoryInterface, logger 
 	return &LoginThrottle{repo: repo, logger: logger, now: now}
 }
 
-// throttleKey maps a username to its counter key. Usernames are case and
-// whitespace sensitive, so the key is the exact name. A name longer than
-// maxThrottleKeyLen, or one that starts with the hash prefix, becomes a
-// fixed-size hash of the whole name. Long names therefore never collide, and
-// a short name can never forge the key of a long one.
+// throttleKey maps a username to its counter key. The key is always a
+// SHA-256 hash of the exact name, so the attempted username is never stored.
+// People sometimes type a password into the username field, and the table is
+// kept for a day and copied into backups. Usernames are case and whitespace
+// sensitive, so the name is hashed as typed, with no folding. Every key has
+// the same fixed size, and no name can forge the key of another.
 func throttleKey(username string) string {
-	if len(username) <= maxThrottleKeyLen && !strings.HasPrefix(username, throttleKeyHashPrefix) {
-		return username
-	}
 	sum := sha256.Sum256([]byte(username))
 	return throttleKeyHashPrefix + base64.RawURLEncoding.EncodeToString(sum[:])
 }

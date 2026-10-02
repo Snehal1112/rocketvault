@@ -331,3 +331,42 @@ func TestPostgres_TOTPStepClaim(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, claimed, "a step below a large stored step must be rejected")
 }
+
+// The ON CONFLICT upsert behind RecordFailure must count, restart a stale
+// counter and be cleared by Delete on Postgres, through the real
+// login_failures schema.
+func TestPostgres_LoginFailureUpsert(t *testing.T) {
+	conn, cleanup := newPostgresConn(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	repo := repositories.NewLoginFailureRepository(conn)
+	key := "sha256:pg-integration-key"
+	t0 := time.Now().UTC().Truncate(time.Second)
+
+	_, err := repo.Get(ctx, key)
+	require.ErrorIs(t, err, repositories.ErrNotFound)
+
+	// The first write inserts, the next ones take the ON CONFLICT branch.
+	for i := 0; i < 3; i++ {
+		require.NoError(t, repo.RecordFailure(ctx, key, t0.Add(time.Duration(i)*time.Second), t0.Add(-24*time.Hour)))
+	}
+	got, err := repo.Get(ctx, key)
+	require.NoError(t, err)
+	require.Equal(t, 3, got.Failures)
+	require.True(t, got.LastFailureAt.Equal(t0.Add(2*time.Second)), "got %s", got.LastFailureAt)
+
+	// A row older than staleBefore restarts at one in the same statement.
+	later := t0.Add(25 * time.Hour)
+	require.NoError(t, repo.RecordFailure(ctx, key, later, later.Add(-24*time.Hour)))
+	got, err = repo.Get(ctx, key)
+	require.NoError(t, err)
+	require.Equal(t, 1, got.Failures, "a stale counter must restart, not continue at 4")
+	require.True(t, got.LastFailureAt.Equal(later), "got %s", got.LastFailureAt)
+
+	// Reset deletes the row, and a missing row is not an error.
+	require.NoError(t, repo.Delete(ctx, key))
+	_, err = repo.Get(ctx, key)
+	require.ErrorIs(t, err, repositories.ErrNotFound)
+	require.NoError(t, repo.Delete(ctx, key))
+}

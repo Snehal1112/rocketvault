@@ -2,8 +2,6 @@ package common
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -337,40 +335,6 @@ func TestResolveVaultName_FlagSetToEmpty_FallsThrough(t *testing.T) {
 	got := ResolveVaultName(cmd)
 	if got != "default" {
 		t.Errorf("ResolveVaultName = %q, want default", got)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// GetIPAddress
-// ---------------------------------------------------------------------------
-
-func TestGetIPAddress_UsesRemoteAddr(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "192.168.1.1:1234"
-
-	got := GetIPAddress(req)
-	if got != "192.168.1.1:1234" {
-		t.Errorf("GetIPAddress = %q, want 192.168.1.1:1234", got)
-	}
-}
-
-func TestGetIPAddress_EmptyRemoteAddr(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = ""
-
-	got := GetIPAddress(req)
-	if got != "" {
-		t.Errorf("GetIPAddress = %q, want empty", got)
-	}
-}
-
-func TestGetIPAddress_IPv6Addr(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "[::1]:8080"
-
-	got := GetIPAddress(req)
-	if got != "[::1]:8080" {
-		t.Errorf("GetIPAddress = %q, want [::1]:8080", got)
 	}
 }
 

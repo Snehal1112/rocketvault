@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -98,6 +99,37 @@ func TestResolveAuthentication_UsernamePassword_Throttled_SurfacesRetryHint(t *t
 	cached, err := common.LoadSession("admin")
 	require.NoError(t, err)
 	assert.Nil(t, cached, "a throttled login must not cache a session")
+}
+
+// The retry layer wraps a throttled login as "error is not retryable: ...".
+// The CLI must print only the throttle message.
+func TestResolveAuthentication_Throttled_StripsRetryPrefix(t *testing.T) {
+	common.SessionBaseDir = t.TempDir()
+	tc := testutils.NewTestContext(t)
+	wrapped := fmt.Errorf("%w: %w", retry.ErrNonRetryable, &authServices.ThrottledError{RetryAfter: 90 * time.Second})
+	tc.MockAuthService.On("AuthenticateUser", mock.Anything, "admin", "wrong", "123456").
+		Return(nil, wrapped)
+
+	c := newAuthTestCmd("admin", "wrong", "123456")
+	_, err := resolveAuthentication(c, tc.MockAuthService)
+
+	require.ErrorIs(t, err, authServices.ErrLoginThrottled)
+	assert.Equal(t, "too many failed login attempts; retry in 1m30s", err.Error())
+}
+
+// Any other error keeps its full text.
+func TestResolveAuthentication_OtherError_KeepsText(t *testing.T) {
+	common.SessionBaseDir = t.TempDir()
+	tc := testutils.NewTestContext(t)
+	wrapped := fmt.Errorf("%w: %w", retry.ErrNonRetryable, errors.New("invalid credentials"))
+	tc.MockAuthService.On("AuthenticateUser", mock.Anything, "admin", "wrong", "123456").
+		Return(nil, wrapped)
+
+	c := newAuthTestCmd("admin", "wrong", "123456")
+	_, err := resolveAuthentication(c, tc.MockAuthService)
+
+	require.Error(t, err)
+	assert.Equal(t, wrapped.Error(), err.Error())
 }
 
 func TestResolveAuthentication_UsernameOnly_LoadsNamedCachedSession(t *testing.T) {
