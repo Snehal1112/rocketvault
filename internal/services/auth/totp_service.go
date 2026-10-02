@@ -1,10 +1,13 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/hotp"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -14,6 +17,9 @@ import (
 type TOTPService interface {
 	GenerateSecret(issuer, accountName string) (*otp.Key, error)
 	ValidateCode(code, secret string, currentTime time.Time) (bool, error)
+	// ValidateCodeWithStep validates code and returns the time step it belongs to,
+	// so callers can refuse a step that was already used.
+	ValidateCodeWithStep(code, secret string, currentTime time.Time) (int64, bool, error)
 	GenerateCode(secret string, currentTime time.Time) (string, error)
 }
 
@@ -96,6 +102,66 @@ func (s *totpService) ValidateCode(code, secret string, currentTime time.Time) (
 	}
 
 	return valid, nil
+}
+
+// ValidateCodeWithStep verifies a TOTP code and returns the time step it matched.
+// The step is the counter of the window slot that matched, which is Unix time
+// divided by the period. It is not the current step. Callers record it to refuse
+// a replay of the same code.
+//
+// It uses the same period, skew, digits and algorithm as ValidateCode. Like the
+// library, it trims surrounding whitespace from the code.
+//
+// Timing: the library's totp.ValidateCustom stops at the first matching slot,
+// which reveals through timing which slot matched. This method instead computes
+// and compares every slot in the window with subtle.ConstantTimeCompare and picks
+// the result with subtle.ConstantTimeSelect, so the work does not depend on which
+// slot matched. A wrong length still returns early, as it does in the library;
+// the length of a code is not secret.
+//
+// When several slots match, the latest step wins.
+//
+// Returns:
+//
+//	The matched step and true for a valid code. Zero and false with a nil error
+//	for a wrong code or a wrong length. An error for an empty or malformed secret.
+func (s *totpService) ValidateCodeWithStep(code, secret string, currentTime time.Time) (int64, bool, error) {
+	// An empty secret decodes to an empty HMAC key that still yields codes, so
+	// it must never validate.
+	if secret == "" {
+		return 0, false, fmt.Errorf("TOTP validation error: empty secret")
+	}
+
+	code = strings.TrimSpace(code)
+	if len(code) != s.digits.Length() {
+		return 0, false, nil
+	}
+
+	period := int64(s.period)
+	skew := int64(s.skew)
+	current := currentTime.Unix() / period
+	opts := hotp.ValidateOpts{Digits: s.digits, Algorithm: s.algorithm}
+
+	matched := 0
+	found := 0
+	for step := current - skew; step <= current+skew; step++ {
+		// A step before the Unix epoch cannot be a real code.
+		if step < 0 {
+			continue
+		}
+		expected, err := hotp.GenerateCodeCustom(secret, uint64(step), opts)
+		if err != nil {
+			return 0, false, fmt.Errorf("TOTP validation error: %w", err)
+		}
+		eq := subtle.ConstantTimeCompare([]byte(expected), []byte(code))
+		matched = subtle.ConstantTimeSelect(eq, int(step), matched)
+		found |= eq
+	}
+
+	if found != 1 {
+		return 0, false, nil
+	}
+	return int64(matched), true, nil
 }
 
 // GenerateCode creates a TOTP code for a secret at a specific time.

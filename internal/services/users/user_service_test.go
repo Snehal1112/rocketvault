@@ -116,6 +116,11 @@ func (m *mockTOTPService) ValidateCode(code, secret string, currentTime time.Tim
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *mockTOTPService) ValidateCodeWithStep(code, secret string, currentTime time.Time) (int64, bool, error) {
+	args := m.Called(code, secret, currentTime)
+	return args.Get(0).(int64), args.Bool(1), args.Error(2)
+}
+
 func (m *mockTOTPService) GenerateCode(secret string, currentTime time.Time) (string, error) {
 	args := m.Called(secret, currentTime)
 	return args.String(0), args.Error(1)
