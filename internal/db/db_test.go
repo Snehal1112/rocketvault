@@ -201,6 +201,51 @@ func TestMigrateSchema_CreatesVaultProvisioningGrants(t *testing.T) {
 	require.NoError(t, err, "migrateSchema must create idx_vaults_created_by")
 }
 
+// TestMigrateSchema_CreatesLoginFailures verifies that migrateSchema creates
+// the login_failures table and its pruning index on a pre-existing database.
+func TestMigrateSchema_CreatesLoginFailures(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo := newTestDBRepository(t, db)
+	require.NoError(t, repo.migrateSchema(db))
+
+	var name string
+	err = db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='login_failures'`,
+	).Scan(&name)
+	require.NoError(t, err, "migrateSchema must create login_failures")
+
+	err = db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_login_failures_last_failure_at'`,
+	).Scan(&name)
+	require.NoError(t, err, "migrateSchema must create idx_login_failures_last_failure_at")
+}
+
+// TestCreateOptimizedSchema_CreatesLoginFailures verifies that a fresh
+// database gets the login_failures table from the initial schema block.
+func TestCreateOptimizedSchema_CreatesLoginFailures(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	repo := NewRepository(logging.InitLogger())
+	require.NoError(t, repo.createOptimizedSchema(db))
+
+	var name string
+	err = db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='login_failures'`,
+	).Scan(&name)
+	require.NoError(t, err, "createOptimizedSchema must create login_failures")
+
+	err = db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_login_failures_last_failure_at'`,
+	).Scan(&name)
+	require.NoError(t, err, "createOptimizedSchema must create idx_login_failures_last_failure_at")
+}
+
 // TestWarnGlobalVaultManageGrants_LogsEachHolder verifies that a global
 // (vault_id IS NULL) vaults:manage allow is reported, and that a
 // vault-scoped one is not -- the latter is unaffected by the coming

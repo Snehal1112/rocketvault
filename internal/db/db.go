@@ -768,6 +768,16 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_oauth2_clients_name ON oauth2_clients(name);
 
+		-- Per-account failed-login backoff, keyed by the normalized username.
+		-- Unknown usernames get rows too, so a throttle response never reveals
+		-- whether an account exists.
+		CREATE TABLE IF NOT EXISTS login_failures (
+			username        TEXT PRIMARY KEY,
+			failures        INTEGER NOT NULL,
+			last_failure_at TIMESTAMP NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_login_failures_last_failure_at ON login_failures(last_failure_at);
+
 		CREATE TABLE IF NOT EXISTS audit_config (
 			key   TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -941,6 +951,14 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 			created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			created_by   TEXT NOT NULL
 		)`,
+		// Feature: per-account failed-login backoff (idempotent; the table did
+		// not exist before this migration on any pre-existing database).
+		`CREATE TABLE IF NOT EXISTS login_failures (
+			username        TEXT PRIMARY KEY,
+			failures        INTEGER NOT NULL,
+			last_failure_at TIMESTAMP NOT NULL
+		)`,
+		"CREATE INDEX IF NOT EXISTS idx_login_failures_last_failure_at ON login_failures(last_failure_at)",
 		// idx_vaults_created_by is created further down, after the vaults
 		// table itself is created (a legacy database being migrated has no
 		// vaults table yet at this point in the list).
