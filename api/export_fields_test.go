@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -72,7 +73,7 @@ func TestCreateCertificateHandler_PassesExportable(t *testing.T) {
 	c := newCertCtx(svc, certAdminClaims())
 	w := httptest.NewRecorder()
 	body := fmt.Sprintf(`{"name":"c","key_id":"%s","validity_days":30,"exportable":true}`, uuid.New())
-	createCertificate(c, w, httptest.NewRequest(http.MethodPost, "/certificates", bytes.NewBufferString(body)))
+	createCertificate(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/certificates", bytes.NewBufferString(body)))
 	require.Nil(t, c.Err)
 	require.Equal(t, http.StatusCreated, w.Code)
 
@@ -91,7 +92,7 @@ func TestCreateCertificateHandler_ExportableOverNonExportableKeyIs409(t *testing
 	c := newCertCtx(svc, certAdminClaims())
 	w := httptest.NewRecorder()
 	body := fmt.Sprintf(`{"name":"c","key_id":"%s","validity_days":30,"exportable":true}`, uuid.New())
-	createCertificate(c, w, httptest.NewRequest(http.MethodPost, "/certificates", bytes.NewBufferString(body)))
+	createCertificate(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/certificates", bytes.NewBufferString(body)))
 	require.NotNil(t, c.Err)
 	writeError(w, c)
 	assert.Equal(t, http.StatusConflict, w.Code)
@@ -104,7 +105,7 @@ func TestCreateCertificateHandler_OtherErrorsKeepTheir500(t *testing.T) {
 	c := newCertCtx(svc, certAdminClaims())
 	w := httptest.NewRecorder()
 	body := fmt.Sprintf(`{"name":"c","key_id":"%s","validity_days":30}`, uuid.New())
-	createCertificate(c, w, httptest.NewRequest(http.MethodPost, "/certificates", bytes.NewBufferString(body)))
+	createCertificate(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/certificates", bytes.NewBufferString(body)))
 	require.NotNil(t, c.Err)
 	assert.Equal(t, http.StatusInternalServerError, c.Err.StatusCode, "no existing status changes")
 }
@@ -126,13 +127,13 @@ func TestCreateAndImportKeyHandlers_PassExportable(t *testing.T) {
 		"create": func(svc *mockKeyService, c *Context, w *httptest.ResponseRecorder) {
 			svc.On("CreateRSAKey", mock.Anything, mock.MatchedBy(func(r keyServices.CreateKeyRequest) bool { return wantsExportable(r.Exportable) })).
 				Return(&keyServices.CreateKeyResult{KeyID: keyID, Name: "k", Type: "RSA"}, nil)
-			createKey(c, w, httptest.NewRequest(http.MethodPost, "/keys",
+			createKey(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/keys",
 				bytes.NewBufferString(`{"name":"k","type":"RSA","bits":2048,"exportable":true}`)))
 		},
 		"import": func(svc *mockKeyService, c *Context, w *httptest.ResponseRecorder) {
 			svc.On("ImportKey", mock.Anything, mock.MatchedBy(func(r keyServices.ImportKeyRequest) bool { return wantsExportable(r.Exportable) })).
 				Return(&keyServices.CreateKeyResult{KeyID: keyID, Name: "k", Type: "RSA"}, nil)
-			importKey(c, w, httptest.NewRequest(http.MethodPost, "/keys/import",
+			importKey(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/keys/import",
 				bytes.NewBufferString(`{"name":"k","jwk":{"kty":"RSA"},"exportable":true}`)))
 		},
 	} {

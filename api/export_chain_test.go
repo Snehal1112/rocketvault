@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -57,8 +58,8 @@ func newExportChain(t *testing.T, certSvc certServices.CertificateService, keySv
 
 	tc := testutils.NewTestContext(t)
 	logs := &bytes.Buffer{}
-	tc.Logger.Logger.SetOutput(logs)
-	tc.Logger.Logger.SetLevel(logrus.DebugLevel)
+	tc.Logger.SetOutput(logs)
+	tc.Logger.SetLevel(logrus.DebugLevel)
 	previousOut := logrus.StandardLogger().Out
 	logrus.SetOutput(logs)
 	t.Cleanup(func() { logrus.SetOutput(previousOut) })
@@ -90,7 +91,7 @@ func newExportChain(t *testing.T, certSvc certServices.CertificateService, keySv
 }
 
 func postExport(router *mux.Router, path, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer chain-test-token")
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -117,13 +118,13 @@ func TestExportThroughRealChain_NoSecretsInLogsOrAudit(t *testing.T) {
 	router, audit, logs := newExportChain(t, svc, nil, "")
 	body, _ := json.Marshal(map[string]any{"format": "pkcs12", "password": password})
 	w := postExport(router, "/api/v1/certificates/"+certID.String()+"/export", string(body))
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "the export succeeds; the body is not printed because it holds key material")
 	w = postExport(router, "/api/v1/vaults/default/certificates/"+certID.String()+"/export", `{"format":"pem"}`)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "the export succeeds; the body is not printed because it holds key material")
 
 	everything := logs.String() + audit.dump()
 	for _, secret := range []string{password, "BEGIN PRIVATE KEY", "MIGHAgEAMBMG", "leaked", string(pfx)} {
-		assert.NotContains(t, everything, secret)
+		assert.False(t, strings.Contains(everything, secret), "a password, key or PKCS#12 fragment reached the logs or audit trail")
 	}
 	assert.Contains(t, audit.dump(), "export_certificate", "the attempt was audited")
 

@@ -2,12 +2,14 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -38,7 +40,7 @@ func runKeyExport(t *testing.T, svc keyServices.KeyService, audit *captureAudit,
 	} else {
 		reqBody = bytes.NewBufferString(body)
 	}
-	exportKey(c, w, httptest.NewRequest(http.MethodPost, "/keys/"+keyID+"/export", reqBody))
+	exportKey(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/keys/"+keyID+"/export", reqBody))
 	require.Nil(t, c.Err, "export handlers never set c.Err")
 	return w
 }
@@ -73,7 +75,13 @@ func TestExportKeyHandler_Success(t *testing.T) {
 		assert.Equal(t, sha256.Sum256([]byte(keyText)), sha256.Sum256([]byte(gotPEM)), "private_key_pem round-trips unchanged")
 		assert.Equal(t, "RSA-2048", resp["key_algorithm"])
 		assert.Equal(t, "RSA", resp["type"])
-		assert.Len(t, resp, 7, "the success body has exactly the documented fields")
+		fields := make([]string, 0, len(resp))
+		for k := range resp {
+			fields = append(fields, k)
+		}
+		sort.Strings(fields)
+		assert.Equal(t, []string{"format", "id", "key_algorithm", "name", "private_key_pem", "type", "version"}, fields,
+			"the success body has exactly the documented fields")
 
 		require.Len(t, audit.events, 1)
 		ev := audit.events[0]
@@ -182,9 +190,9 @@ func TestExportKeyHandler_UnknownFormatIsNotCopiedToAudit(t *testing.T) {
 	audit := &captureAudit{}
 	w := runKeyExport(t, &mockKeyService{}, audit, uuid.NewString(), `{"format":"hunter2-pasted-here"}`)
 	require.Equal(t, http.StatusBadRequest, w.Code)
-	assert.NotContains(t, w.Body.String(), "hunter2-pasted-here")
+	assert.False(t, strings.Contains(w.Body.String(), "hunter2-pasted-here"), "client format text reached the error body")
 	require.Len(t, audit.events, 1)
-	assert.NotContains(t, audit.dump(), "hunter2-pasted-here")
+	assert.False(t, strings.Contains(audit.dump(), "hunter2-pasted-here"), "client format text reached the audit trail")
 	assert.Contains(t, audit.events[0].Details, `"format":"invalid"`)
 }
 
@@ -211,7 +219,7 @@ func TestExportKeyRoutes_BothShapes(t *testing.T) {
 		rec := &recordingKeyService{}
 		api, _ := newVaultScopedKeyCertTestAPI(rec, nil, nil)
 		w := doVaultRequest(api, http.MethodPost, "/api/v1/keys/"+keyID+"/export", nil)
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(t, http.StatusOK, w.Code, "the export succeeds; the body is not printed because it holds key material")
 		assert.Equal(t, uuid.MustParse(model.DefaultVaultID), rec.exportScope.VaultID())
 		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 	})
@@ -222,7 +230,7 @@ func TestExportKeyRoutes_BothShapes(t *testing.T) {
 		repo.byName["prod"] = &model.Vault{ID: id, Name: "prod", Enabled: true}
 		repo.byID[id.String()] = repo.byName["prod"]
 		w := doVaultRequest(api, http.MethodPost, "/api/v1/vaults/prod/keys/"+keyID+"/export", []byte(`{"format":"pem"}`))
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(t, http.StatusOK, w.Code, "the export succeeds; the body is not printed because it holds key material")
 		assert.Equal(t, id, rec.exportScope.VaultID())
 	})
 }

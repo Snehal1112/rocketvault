@@ -38,7 +38,8 @@ type exportErrorDetail struct {
 
 // exportFailure is one mapped export failure: the HTTP status, the R6 code
 // and message, and what the audit event should record. Reason is a fixed
-// phrase for the audit trail; it never carries raw error text.
+// phrase for the audit trail; it never carries raw error text. cause is the
+// underlying error of a 500; it goes to the server log only.
 type exportFailure struct {
 	Status       int
 	Code         string
@@ -46,6 +47,22 @@ type exportFailure struct {
 	KeyAlgorithm string
 	Name         string
 	Reason       string
+	cause        error
+}
+
+// logExportFailure writes the cause of an export 500 to the server log, so
+// an operator can diagnose it. It logs only the fixed reason and the error
+// text, never the request body or any exported material. Other statuses are
+// not logged here, because the audit event already explains them.
+func logExportFailure(c *Context, resource string, f exportFailure) {
+	if f.Status != http.StatusInternalServerError || c == nil || c.Logger == nil {
+		return
+	}
+	entry := c.Logger.WithField("operation", "export_"+resource).WithField("step", f.Reason)
+	if f.cause != nil {
+		entry = entry.WithError(f.cause)
+	}
+	entry.Error("export failed")
 }
 
 // setExportHeaders forbids every cache between the vault and the client.
@@ -67,9 +84,10 @@ func badExportRequest(message string) exportFailure {
 }
 
 // exportInternalFailure is the generic 500. reason goes to the audit trail
-// only; the client always sees the same fixed message.
-func exportInternalFailure(reason string) exportFailure {
-	return exportFailure{Status: http.StatusInternalServerError, Code: "internal_error", Message: "internal server error", Reason: reason}
+// and the server log, cause to the server log only; the client always sees
+// the same fixed message.
+func exportInternalFailure(reason string, cause error) exportFailure {
+	return exportFailure{Status: http.StatusInternalServerError, Code: "internal_error", Message: "internal server error", Reason: reason, cause: cause}
 }
 
 // exportFailureFor maps a certificate or key service error onto an export
@@ -101,11 +119,11 @@ func exportFailureFor(err error, resource string) exportFailure {
 		return exportFailure{Status: http.StatusConflict, Code: "key_disabled",
 			Message: "the key is disabled or outside its valid time window", Reason: "key disabled"}
 	case errors.Is(err, certServices.ErrCertificateChainUnavailable):
-		return exportInternalFailure("certificate chain unavailable")
+		return exportInternalFailure("certificate chain unavailable", err)
 	case errors.Is(err, certServices.ErrCertVersioningUnavailable):
-		return exportInternalFailure("certificate versioning unavailable")
+		return exportInternalFailure("certificate versioning unavailable", err)
 	}
-	return exportInternalFailure("internal failure")
+	return exportInternalFailure("internal failure", err)
 }
 
 // decodeExportBody decodes a bounded JSON body into dst. An empty body is an
@@ -229,6 +247,7 @@ func exportCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 			audit.Name = f.Name
 		}
 		recordExportAudit(c, r, audit)
+		logExportFailure(c, "certificate", f)
 		writeExportError(w, f)
 	}
 
@@ -253,7 +272,7 @@ func exportCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 	certService, svcOK := svc(c, container.ServiceContainerInterface.GetCertificateService)
 	if !svcOK {
 		c.Err = nil
-		fail(exportInternalFailure("certificate service unavailable"))
+		fail(exportInternalFailure("certificate service unavailable", nil))
 		return
 	}
 

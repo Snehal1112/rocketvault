@@ -51,6 +51,7 @@ func exportKey(c *Context, w http.ResponseWriter, r *http.Request) {
 			audit.Name = f.Name
 		}
 		recordExportAudit(c, r, audit)
+		logExportFailure(c, "key", f)
 		writeExportError(w, f)
 	}
 
@@ -79,7 +80,7 @@ func exportKey(c *Context, w http.ResponseWriter, r *http.Request) {
 	keyService, svcOK := svc(c, container.ServiceContainerInterface.GetKeyService)
 	if !svcOK {
 		c.Err = nil
-		fail(exportInternalFailure("key service unavailable"))
+		fail(exportInternalFailure("key service unavailable", nil))
 		return
 	}
 

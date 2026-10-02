@@ -15,11 +15,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"rocketvault/app"
+	"rocketvault/internal/logging"
 	auditServices "rocketvault/internal/services/audit"
 	authzServices "rocketvault/internal/services/authorization"
 	certServices "rocketvault/internal/services/certificates"
@@ -68,9 +70,27 @@ func (c *exportTestContainer) GetAuditService() auditServices.AuditServiceInterf
 	return c.audit
 }
 
+// newExportCtx builds a handler context whose logger writes to a buffer and
+// persists legacy audit rows into audit, so a test can assert that the
+// handler writes no legacy row and can read what it logged.
 func newExportCtx(certSvc certServices.CertificateService, keySvc keyservices.KeyService, audit *captureAudit) *Context {
 	a := &app.App{ServiceContainer: &exportTestContainer{certSvcContainer: &certSvcContainer{certSvc: certSvc}, keySvc: keySvc, audit: audit}}
-	return &Context{App: a, Claims: certAdminClaims(), Params: &ApiParams{PerPage: 60}}
+	l := logrus.New()
+	l.SetOutput(&bytes.Buffer{})
+	l.SetLevel(logrus.DebugLevel)
+	logger := logging.WrapLogrus(l)
+	if audit != nil {
+		logger.SetAuditPersister(audit)
+	}
+	return &Context{App: a, Claims: certAdminClaims(), Params: &ApiParams{PerPage: 60}, Logger: logger}
+}
+
+// exportLogs returns everything the handler logged through c.Logger.
+func exportLogs(t *testing.T, c *Context) string {
+	t.Helper()
+	buf, ok := c.Logger.Out.(*bytes.Buffer)
+	require.True(t, ok, "newExportCtx logs to a buffer")
+	return buf.String()
 }
 
 func decodeExportError(t *testing.T, body []byte) exportErrorDetail {
@@ -86,7 +106,7 @@ func runCertExport(t *testing.T, svc certServices.CertificateService, audit *cap
 	c := newExportCtx(svc, nil, audit)
 	c.Params.CertificateID = certID
 	w := httptest.NewRecorder()
-	exportCertificate(c, w, httptest.NewRequest(http.MethodPost, "/certificates/"+certID+"/export", bytes.NewBufferString(body)))
+	exportCertificate(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/certificates/"+certID+"/export", bytes.NewBufferString(body)))
 	require.Nil(t, c.Err, "export handlers never set c.Err; they write the R6 body themselves")
 	return w
 }
@@ -100,7 +120,7 @@ func TestExportCertificateHandler_PEMSuccess(t *testing.T) {
 	audit := &captureAudit{}
 
 	w := runCertExport(t, svc, audit, certID.String(), `{"format":"pem"}`)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "the export succeeds; the body is not printed because it holds key material")
 	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 	assert.Equal(t, "no-cache", w.Header().Get("Pragma"))
 	assert.Empty(t, w.Header().Get("Content-Disposition"))
@@ -112,7 +132,8 @@ func TestExportCertificateHandler_PEMSuccess(t *testing.T) {
 	assert.Equal(t, "CHAIN", body["certificate_pem"])
 	assert.Equal(t, "EC-P256", body["key_algorithm"])
 	assert.EqualValues(t, 2, body["version"])
-	assert.NotContains(t, body, "pkcs12_base64")
+	_, hasPKCS12 := body["pkcs12_base64"]
+	assert.False(t, hasPKCS12, "a pem export has no pkcs12_base64 field")
 
 	require.Len(t, audit.events, 1)
 	ev := audit.events[0]
@@ -125,7 +146,7 @@ func TestExportCertificateHandler_PEMSuccess(t *testing.T) {
 	assert.Contains(t, ev.Details, `"name":"client"`)
 	assert.Contains(t, ev.Details, `"version":2`)
 	assert.Contains(t, ev.Details, model.DefaultVaultID)
-	assert.NotContains(t, audit.dump(), "PRIVATE KEY")
+	assert.False(t, strings.Contains(audit.dump(), "PRIVATE KEY"), "key material reached the audit trail")
 }
 
 func TestExportCertificateHandler_PKCS12Success(t *testing.T) {
@@ -138,12 +159,13 @@ func TestExportCertificateHandler_PKCS12Success(t *testing.T) {
 	audit := &captureAudit{}
 
 	w := runCertExport(t, svc, audit, certID.String(), `{"format":"pkcs12","password":"hunter2-export","compat":"legacy"}`)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "the export succeeds; the body is not printed because it holds key material")
 	var body map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte{1, 2, 3}), body["pkcs12_base64"])
-	assert.NotContains(t, body, "private_key_pem")
-	assert.NotContains(t, audit.dump(), password)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), "the success body is JSON")
+	assert.True(t, body["pkcs12_base64"] == base64.StdEncoding.EncodeToString([]byte{1, 2, 3}), "pkcs12_base64 carries the service's bytes")
+	_, hasKey := body["private_key_pem"]
+	assert.False(t, hasKey, "a pkcs12 export has no private_key_pem field")
+	assert.False(t, strings.Contains(audit.dump(), password), "the pkcs12 password reached the audit trail")
 }
 
 // TestExportCertificateHandler_ErrorBodiesAreR6AndGeneric pins Review Focus
@@ -206,7 +228,7 @@ func TestExportCertificateRoutes_BothShapes(t *testing.T) {
 		rec := &recordingCertService{}
 		api, _ := newVaultScopedKeyCertTestAPI(nil, rec, nil)
 		w := doVaultRequest(api, http.MethodPost, "/api/v1/certificates/"+certID+"/export", []byte(`{"format":"pem"}`))
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(t, http.StatusOK, w.Code, "the export succeeds; the body is not printed because it holds key material")
 		assert.Equal(t, uuid.MustParse(model.DefaultVaultID), rec.versionScope.VaultID())
 		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 	})
@@ -217,7 +239,7 @@ func TestExportCertificateRoutes_BothShapes(t *testing.T) {
 		repo.byName["prod"] = &model.Vault{ID: id, Name: "prod", Enabled: true}
 		repo.byID[id.String()] = repo.byName["prod"]
 		w := doVaultRequest(api, http.MethodPost, "/api/v1/vaults/prod/certificates/"+certID+"/export", []byte(`{"format":"pem"}`))
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		require.Equal(t, http.StatusOK, w.Code, "the export succeeds; the body is not printed because it holds key material")
 		assert.Equal(t, id, rec.versionScope.VaultID())
 	})
 }
@@ -313,8 +335,8 @@ func TestExportCertificateHandler_PasswordNeverInFailureAudit(t *testing.T) {
 	audit := &captureAudit{}
 	w := runCertExport(t, svc, audit, certID.String(), `{"format":"pkcs12","password":"s3cret-pass-xyz"}`)
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.NotContains(t, w.Body.String(), "s3cret-pass-xyz")
-	assert.NotContains(t, audit.dump(), "s3cret-pass-xyz")
+	assert.False(t, strings.Contains(w.Body.String(), "s3cret-pass-xyz"), "the pkcs12 password reached the error body")
+	assert.False(t, strings.Contains(audit.dump(), "s3cret-pass-xyz"), "the pkcs12 password reached the audit trail")
 	require.Len(t, audit.events, 1)
 }
 
@@ -354,6 +376,67 @@ func TestExportCertificateHandler_UnknownFormatIsNotCopiedToAudit(t *testing.T) 
 	w := runCertExport(t, svc, audit, uuid.New().String(), `{"format":"hunter2-pasted-here"}`)
 	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Len(t, audit.events, 1)
-	assert.NotContains(t, audit.dump(), "hunter2-pasted-here")
+	assert.False(t, strings.Contains(audit.dump(), "hunter2-pasted-here"), "client format text reached the audit trail")
 	assert.Contains(t, audit.events[0].Details, `"format":"invalid"`)
+}
+
+// TestExportHandlers_Log500CauseServerSideOnly pins that an export 500
+// leaves the underlying error and a fixed step label in the server log,
+// while the client body stays generic and a 4xx logs nothing. The pkcs12
+// password and key material never reach the log.
+func TestExportHandlers_Log500CauseServerSideOnly(t *testing.T) {
+	password := "s3cret-pass-in-500"
+	t.Run("certificate 500", func(t *testing.T) {
+		svc := &mockCertService{}
+		svc.On("ExportCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Return(nil, fmt.Errorf("%w: issuer x did not sign the certificate below it", certServices.ErrCertificateChainUnavailable))
+		c := newExportCtx(svc, nil, &captureAudit{})
+		c.Params.CertificateID = uuid.NewString()
+		w := httptest.NewRecorder()
+		exportCertificate(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/export",
+			bytes.NewBufferString(`{"format":"pkcs12","password":"`+password+`"}`)))
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, "internal server error", decodeExportError(t, w.Body.Bytes()).Message)
+		logs := exportLogs(t, c)
+		assert.Contains(t, logs, "export_certificate")
+		assert.Contains(t, logs, "certificate chain unavailable", "the fixed step label is logged")
+		assert.Contains(t, logs, "did not sign the certificate below it", "the cause is logged")
+		assert.False(t, strings.Contains(logs, password), "the pkcs12 password reached the log")
+	})
+	t.Run("key 500", func(t *testing.T) {
+		svc := &mockKeyService{}
+		svc.On("ExportKey", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Return(nil, errors.New("decrypt key material: cipher: message authentication failed"))
+		c := newExportCtx(nil, svc, &captureAudit{})
+		c.Params.KeyID = uuid.NewString()
+		w := httptest.NewRecorder()
+		exportKey(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/export", &bytes.Buffer{}))
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+		logs := exportLogs(t, c)
+		assert.Contains(t, logs, "export_key")
+		assert.Contains(t, logs, "internal failure")
+		assert.Contains(t, logs, "message authentication failed")
+		assert.False(t, strings.Contains(logs, "PRIVATE KEY"), "key material reached the log")
+	})
+	t.Run("4xx is not logged", func(t *testing.T) {
+		svc := &mockCertService{}
+		svc.On("ExportCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Return(nil, fmt.Errorf("%w: x", certServices.ErrCertNotFound))
+		c := newExportCtx(svc, nil, &captureAudit{})
+		c.Params.CertificateID = uuid.NewString()
+		w := httptest.NewRecorder()
+		exportCertificate(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/export", bytes.NewBufferString(`{"format":"pem"}`)))
+		require.Equal(t, http.StatusNotFound, w.Code)
+		assert.NotContains(t, exportLogs(t, c), "export failed")
+	})
+	t.Run("nil logger is tolerated", func(t *testing.T) {
+		svc := &mockCertService{}
+		svc.On("ExportCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, errors.New("boom"))
+		c := newExportCtx(svc, nil, &captureAudit{})
+		c.Logger = nil
+		c.Params.CertificateID = uuid.NewString()
+		w := httptest.NewRecorder()
+		exportCertificate(c, w, httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/export", bytes.NewBufferString(`{"format":"pem"}`)))
+		require.Equal(t, http.StatusInternalServerError, w.Code)
+	})
 }
