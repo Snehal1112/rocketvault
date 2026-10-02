@@ -12,9 +12,8 @@ import (
 
 	"rocketvault/internal/container"
 	"rocketvault/internal/middleware"
-	auditSvc "rocketvault/internal/services/audit"
 	certServices "rocketvault/internal/services/certificates"
-	keyservices "rocketvault/internal/services/keys"
+	"rocketvault/internal/services/exportaudit"
 	"rocketvault/model"
 )
 
@@ -91,39 +90,34 @@ func exportInternalFailure(reason string, cause error) exportFailure {
 }
 
 // exportFailureFor maps a certificate or key service error onto an export
-// failure. resource is "certificate" or "key". Unknown errors become a
-// generic 500 whose message carries no detail. A chain failure is also a
-// generic 500, because its error text names a CA id that may belong to
-// another vault.
+// failure. resource is "certificate" or "key". The classification, with its
+// fixed messages and reasons, lives in exportaudit so the CLI export
+// commands share it; this adds the HTTP status and keeps the cause of a 500
+// for the server log.
 func exportFailureFor(err error, resource string) exportFailure {
-	var refusal *model.ExportRefusedError
-	switch {
-	case errors.As(err, &refusal):
-		return exportFailure{Status: http.StatusForbidden, Code: resource + "_not_exportable",
-			Message: refusal.Error(), KeyAlgorithm: refusal.KeyAlgorithm, Name: refusal.Name, Reason: refusal.Reason}
-	case errors.Is(err, model.ErrInvalidExportRequest):
-		f := badExportRequest(err.Error())
-		f.Reason = "invalid export request"
-		return f
-	case errors.Is(err, certServices.ErrCertNotFound), errors.Is(err, model.ErrCertificateVersionNotFound):
-		return exportFailure{Status: http.StatusNotFound, Code: "not_found", Message: "certificate or version not found",
-			Reason: "certificate or version not found"}
-	case errors.Is(err, keyservices.ErrKeyNotFound), errors.Is(err, model.ErrKeyVersionNotFound):
-		return exportFailure{Status: http.StatusNotFound, Code: "not_found", Message: "key or version not found",
-			Reason: "key or version not found"}
-	case errors.Is(err, certServices.ErrCertLifecycleDenied):
-		return exportFailure{Status: http.StatusConflict, Code: "certificate_disabled",
-			Message: "the certificate or this version is disabled or outside its valid time window",
-			Reason:  "certificate or version disabled"}
-	case errors.Is(err, keyservices.ErrKeyLifecycleDenied):
-		return exportFailure{Status: http.StatusConflict, Code: "key_disabled",
-			Message: "the key is disabled or outside its valid time window", Reason: "key disabled"}
-	case errors.Is(err, certServices.ErrCertificateChainUnavailable):
-		return exportInternalFailure("certificate chain unavailable", err)
-	case errors.Is(err, certServices.ErrCertVersioningUnavailable):
-		return exportInternalFailure("certificate versioning unavailable", err)
+	f := exportaudit.Classify(err, resource)
+	out := exportFailure{Status: exportStatus(f.Kind), Code: f.Code, Message: f.Message,
+		KeyAlgorithm: f.KeyAlgorithm, Name: f.Name, Reason: f.Reason}
+	if f.Kind == exportaudit.KindInternal {
+		out.cause = err
 	}
-	return exportInternalFailure("internal failure", err)
+	return out
+}
+
+// exportStatus maps a classified export failure onto its HTTP status.
+func exportStatus(kind exportaudit.Kind) int {
+	switch kind {
+	case exportaudit.KindBadRequest:
+		return http.StatusBadRequest
+	case exportaudit.KindForbidden, exportaudit.KindNotExportable:
+		return http.StatusForbidden
+	case exportaudit.KindNotFound:
+		return http.StatusNotFound
+	case exportaudit.KindDisabled:
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // decodeExportBody decodes a bounded JSON body into dst. An empty body is an
@@ -163,11 +157,7 @@ func exportCaller(c *Context, r *http.Request) (model.Scope, string, bool) {
 // auditableExportFormat returns format when it is a known export format and
 // "invalid" otherwise, so arbitrary client text never reaches the audit trail.
 func auditableExportFormat(format string) string {
-	switch format {
-	case model.ExportFormatPEM, model.ExportFormatPKCS12:
-		return format
-	}
-	return "invalid"
+	return exportaudit.AuditableFormat(format)
 }
 
 // exportAudit is one export attempt as the audit trail records it. It holds
@@ -185,28 +175,17 @@ type exportAudit struct {
 	Reason       string
 }
 
-// recordExportAudit writes one structured audit event per export attempt. A
-// nil audit service is tolerated: audit failures never block the request.
+// recordExportAudit writes one structured audit event per export attempt
+// through exportaudit, which the CLI export commands share. A nil audit
+// service is tolerated: audit failures never block the request.
 func recordExportAudit(c *Context, r *http.Request, a exportAudit) {
 	if c.App == nil || c.App.ServiceContainer == nil {
 		return
 	}
-	svc := c.App.ServiceContainer.GetAuditService()
-	if svc == nil {
-		return
-	}
-	details, _ := json.Marshal(map[string]any{
-		"vault_id": a.VaultID, "name": a.Name, "version": a.Version, "format": a.Format, "code": a.Code, "reason": a.Reason,
-	})
-	_ = svc.RecordEvent(r.Context(), auditSvc.AuditEvent{
-		UserID:       c.Claims.UserID,
-		Action:       "export_" + a.ResourceType,
-		Details:      string(details),
-		ResourceType: a.ResourceType,
-		ResourceID:   a.ResourceID,
-		IPAddress:    middleware.ExtractClientIP(r),
-		Outcome:      a.Outcome,
-		Source:       "api",
+	exportaudit.Record(r.Context(), c.App.ServiceContainer.GetAuditService(), exportaudit.Attempt{
+		UserID: c.Claims.UserID, ResourceType: a.ResourceType, ResourceID: a.ResourceID, VaultID: a.VaultID,
+		Name: a.Name, Version: a.Version, Format: a.Format, Outcome: a.Outcome, Code: a.Code, Reason: a.Reason,
+		IPAddress: middleware.ExtractClientIP(r), Source: "api",
 	})
 }
 
