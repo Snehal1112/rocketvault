@@ -23,6 +23,9 @@ type CreateKeyRequest struct {
 	Enabled   *bool      `json:"enabled,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	NotBefore *time.Time `json:"not_before,omitempty"`
+	// Exportable requests an exportable key. The server refuses it for HSM
+	// and OCT keys, and it can never be changed later.
+	Exportable bool `json:"exportable,omitempty"`
 }
 
 // CreateKey creates a key in vault.

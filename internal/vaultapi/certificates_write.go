@@ -27,6 +27,9 @@ type CreateCertificateRequest struct {
 	CACertName string
 	Enabled    *bool
 	NotBefore  *time.Time
+	// Exportable requests an exportable certificate. It needs a key created
+	// exportable and can never be changed later.
+	Exportable bool
 }
 
 // createCertificateBody mirrors model.CreateCertificateRequest
@@ -42,6 +45,7 @@ type createCertificateBody struct {
 	CACertID     string     `json:"ca_cert_id,omitempty"`
 	Enabled      *bool      `json:"enabled,omitempty"`
 	NotBefore    *time.Time `json:"not_before,omitempty"`
+	Exportable   bool       `json:"exportable,omitempty"`
 }
 
 // CreateCertificate issues a certificate against an existing key.
@@ -76,6 +80,7 @@ func (c *Client) CreateCertificate(ctx context.Context, vault string, req Create
 		RenewalDays:  req.RenewalDays,
 		Enabled:      req.Enabled,
 		NotBefore:    req.NotBefore,
+		Exportable:   req.Exportable,
 	}
 
 	if req.CAKeyName != "" {

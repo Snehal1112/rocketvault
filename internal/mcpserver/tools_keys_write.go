@@ -10,12 +10,13 @@ import (
 )
 
 type createKeyArgs struct {
-	Name  string   `json:"name" jsonschema:"the new key's name"`
-	Type  string   `json:"type" jsonschema:"RSA, ECDSA or OCT"`
-	Bits  int      `json:"bits,omitempty" jsonschema:"key size for RSA (2048, 3072, 4096) or OCT (128, 192, 256)"`
-	Curve string   `json:"curve,omitempty" jsonschema:"curve for ECDSA, such as P-256, P-384 or P-521"`
-	Tags  []string `json:"tags,omitempty" jsonschema:"tags to attach to the key"`
-	Vault string   `json:"vault,omitempty" jsonschema:"the vault to create in; defaults to the server's configured vault"`
+	Name       string   `json:"name" jsonschema:"the new key's name"`
+	Type       string   `json:"type" jsonschema:"RSA, ECDSA or OCT"`
+	Bits       int      `json:"bits,omitempty" jsonschema:"key size for RSA (2048, 3072, 4096) or OCT (128, 192, 256)"`
+	Curve      string   `json:"curve,omitempty" jsonschema:"curve for ECDSA, such as P-256, P-384 or P-521"`
+	Tags       []string `json:"tags,omitempty" jsonschema:"tags to attach to the key"`
+	Exportable bool     `json:"exportable,omitempty" jsonschema:"allow the key to be exported later; refused for HSM and OCT keys; cannot be changed after creation"`
+	Vault      string   `json:"vault,omitempty" jsonschema:"the vault to create in; defaults to the server's configured vault"`
 }
 
 // createKeyResult describes the created key. It has no field for private
@@ -107,11 +108,12 @@ func (s *Server) handleCreateKey(ctx context.Context, _ *mcp.CallToolRequest, ar
 	}
 
 	key, err := s.client.CreateKey(ctx, vault, vaultapi.CreateKeyRequest{
-		Name:  args.Name,
-		Type:  args.Type,
-		Bits:  args.Bits,
-		Curve: args.Curve,
-		Tags:  args.Tags,
+		Name:       args.Name,
+		Type:       args.Type,
+		Bits:       args.Bits,
+		Curve:      args.Curve,
+		Tags:       args.Tags,
+		Exportable: args.Exportable,
 	})
 	if err != nil {
 		return errorResult("could not create key %q in vault %q: %s", args.Name, vault, err), createKeyResult{}, nil

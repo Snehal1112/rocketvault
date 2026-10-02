@@ -18,6 +18,7 @@ type createCertificateArgs struct {
 	Tags         []string `json:"tags,omitempty" jsonschema:"tags to attach to the certificate"`
 	CAKeyName    string   `json:"ca_key_name,omitempty" jsonschema:"the name of an issuing CA key, if this is not self-signed"`
 	CACertName   string   `json:"ca_cert_name,omitempty" jsonschema:"the name of an issuing CA certificate"`
+	Exportable   bool     `json:"exportable,omitempty" jsonschema:"allow the certificate to be exported later; needs a key created exportable; cannot be changed after creation"`
 	Vault        string   `json:"vault,omitempty" jsonschema:"the vault to create in; defaults to the server's configured vault"`
 }
 
@@ -129,6 +130,7 @@ func (s *Server) handleCreateCertificate(ctx context.Context, _ *mcp.CallToolReq
 		Tags:         args.Tags,
 		AutoRenew:    args.AutoRenew,
 		RenewalDays:  args.RenewalDays,
+		Exportable:   args.Exportable,
 		CAKeyName:    args.CAKeyName,
 		CACertName:   args.CACertName,
 	})
