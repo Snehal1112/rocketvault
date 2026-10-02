@@ -34,8 +34,9 @@ var keysCmd = &cobra.Command{
 	Short: "Manage keys",
 	Long: `Manage the cryptographic keys held in a vault: create RSA and ECDSA keys,
 inspect and list them, update their metadata, rotate them, delete them, and
-use them to sign, verify, wrap, and unwrap. Private key material never leaves
-the vault; crypto operations run inside it and return only the result.
+use them to sign, verify, wrap, and unwrap. Crypto operations run inside the
+vault and return only the result. Private key material leaves the vault only
+through "keys export", and only for a key created with --exportable.
 
 Creating, updating, rotating, deleting, and every crypto operation require the
 admin or crypto_manager role plus the matching data action (keys/create,
@@ -79,6 +80,7 @@ func init() {
 	keys.InitKeysUnwrap(keysCmd)
 	keys.InitKeysSign(keysCmd)
 	keys.InitKeysVerify(keysCmd)
+	keys.InitKeysExport(keysCmd)
 
 	// Here you will define your flags and configuration settings.
 
