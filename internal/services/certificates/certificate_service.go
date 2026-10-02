@@ -65,6 +65,10 @@ var ErrCACertForbidden = errors.New("forbidden: cannot access other users' certi
 // so a missing CA is never reported as the certificate being acted on.
 var ErrCACertNotFound = errors.New("certificate not found")
 
+// ErrInvalidValidityDays is returned when a validity period exceeds
+// model.MaxCertificateValidityDays (B78).
+var ErrInvalidValidityDays = errors.New("invalid validity days")
+
 // renewError carries a fixed message while still matching a renew sentinel
 // through errors.Is, so the text callers already see does not change.
 type renewError struct {
@@ -322,6 +326,10 @@ func (s *certificateService) CreateSelfSignedCertificate(ctx context.Context, re
 		s.logger.LogAuditError(req.UserID.String(), "create_self_signed_cert", "failed", "validity days must be positive", nil)
 		return nil, fmt.Errorf("validity days must be positive")
 	}
+	if req.ValidityDays > model.MaxCertificateValidityDays {
+		s.logger.LogAuditError(req.UserID.String(), "create_self_signed_cert", "failed", "validity days exceed the maximum", nil)
+		return nil, fmt.Errorf("%w: must not exceed %d", ErrInvalidValidityDays, model.MaxCertificateValidityDays)
+	}
 
 	// Authorize the signing key against the vault this certificate is being
 	// created in, never against the key's own vault (B32).
@@ -474,6 +482,10 @@ func (s *certificateService) CreateCASignedCertificate(ctx context.Context, req 
 	if req.ValidityDays <= 0 {
 		s.logger.LogAuditError(req.UserID.String(), "create_ca_signed_cert", "failed", "validity days must be positive", nil)
 		return nil, fmt.Errorf("validity days must be positive")
+	}
+	if req.ValidityDays > model.MaxCertificateValidityDays {
+		s.logger.LogAuditError(req.UserID.String(), "create_ca_signed_cert", "failed", "validity days exceed the maximum", nil)
+		return nil, fmt.Errorf("%w: must not exceed %d", ErrInvalidValidityDays, model.MaxCertificateValidityDays)
 	}
 
 	// A CA-signed certificate is always a leaf here: issuing an intermediate
@@ -1032,6 +1044,10 @@ func (s *certificateService) RenewCertificate(ctx context.Context, certID uuid.U
 	if validityDays <= 0 {
 		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "validity days must be positive", nil)
 		return nil, fmt.Errorf("validity days must be positive")
+	}
+	if validityDays > model.MaxCertificateValidityDays {
+		s.logger.LogAuditError(userID.String(), "renew_certificate", "failed", "validity days exceed the maximum", nil)
+		return nil, fmt.Errorf("%w: must not exceed %d", ErrInvalidValidityDays, model.MaxCertificateValidityDays)
 	}
 
 	// The row keeps its name and ID: the current version is archived and the

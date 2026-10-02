@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -926,4 +927,130 @@ func TestIsRepositoryNotFound_RealRepositories(t *testing.T) {
 	err = svc.ValidateCertificateAccess(ctx, uuid.New(), h.scope())
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrCACertNotFound)
+}
+
+// TestValidityDaysUpperBound_ServiceSide covers the CLI, which calls the
+// service directly and never sees the HTTP validation (B78).
+func TestValidityDaysUpperBound_ServiceSide(t *testing.T) {
+	t.Parallel()
+
+	userID, vaultID, certID := uuid.New(), uuid.New(), uuid.New()
+	svc := newCertSvc(&mockCertRepository{}, &mockKeyRepo{})
+	_, err := svc.CreateSelfSignedCertificate(context.Background(), CreateCertificateRequest{
+		Name: "c", KeyID: uuid.New(), ValidityDays: model.MaxCertificateValidityDays + 1, UserID: userID, VaultID: vaultID,
+	})
+	require.ErrorIs(t, err, ErrInvalidValidityDays)
+
+	caID := uuid.New()
+	_, err = svc.CreateCASignedCertificate(context.Background(), CreateCertificateRequest{
+		Name: "c", KeyID: uuid.New(), ValidityDays: model.MaxCertificateValidityDays + 1, UserID: userID, VaultID: vaultID, CACertID: &caID,
+	})
+	require.ErrorIs(t, err, ErrInvalidValidityDays)
+
+	scope := model.NewVaultScope(vaultID, userID)
+	certRepo := &mockCertRepository{}
+	certRepo.On("Read", mock.Anything, certID, scope).Return(&model.Certificate{
+		ID: certID, UserID: userID, VaultID: vaultID, KeyID: uuid.New(), Name: "c", Enabled: true,
+	}, nil)
+	svc = newCertSvc(certRepo, &mockKeyRepo{})
+	_, err = svc.RenewCertificate(context.Background(), certID, scope, model.MaxCertificateValidityDays+1)
+	require.ErrorIs(t, err, ErrInvalidValidityDays)
+}
+
+// TestValidityDaysBoundaries_ServiceSide runs every service entry point the
+// CLI uses over the boundary values. A refused value never reaches a key
+// read; an accepted one passes the guard and fails later on the missing key.
+func TestValidityDaysBoundaries_ServiceSide(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		days     int
+		tooLong  bool
+		positive bool
+	}{
+		{days: math.MinInt, positive: false},
+		{days: -1, positive: false},
+		{days: 0, positive: false},
+		{days: 1, positive: true},
+		{days: model.MaxCertificateValidityDays, positive: true},
+		{days: model.MaxCertificateValidityDays + 1, positive: true, tooLong: true},
+		{days: math.MaxInt32, positive: true, tooLong: true},
+		{days: math.MaxInt, positive: true, tooLong: true},
+	}
+	type entry func(svc CertificateService, days int) error
+	userID, vaultID, certID := uuid.New(), uuid.New(), uuid.New()
+	scope := model.NewVaultScope(vaultID, userID)
+	caID := uuid.New()
+	entries := map[string]entry{
+		"self-signed": func(svc CertificateService, days int) error {
+			_, err := svc.CreateSelfSignedCertificate(context.Background(), CreateCertificateRequest{
+				Name: "c", KeyID: uuid.New(), ValidityDays: days, UserID: userID, VaultID: vaultID,
+			})
+			return err
+		},
+		"ca-signed": func(svc CertificateService, days int) error {
+			_, err := svc.CreateCASignedCertificate(context.Background(), CreateCertificateRequest{
+				Name: "c", KeyID: uuid.New(), ValidityDays: days, UserID: userID, VaultID: vaultID, CACertID: &caID,
+			})
+			return err
+		},
+		"renew": func(svc CertificateService, days int) error {
+			_, err := svc.RenewCertificate(context.Background(), certID, scope, days)
+			return err
+		},
+	}
+	for name, run := range entries {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("%s/%d", name, tc.days), func(t *testing.T) {
+				t.Parallel()
+				certRepo := &mockCertRepository{}
+				certRepo.On("Read", mock.Anything, certID, scope).Return(&model.Certificate{
+					ID: certID, UserID: userID, VaultID: vaultID, KeyID: uuid.New(), Name: "c", Enabled: true,
+				}, nil).Maybe()
+				certRepo.On("Read", mock.Anything, caID, mock.Anything).Return(nil, errors.New("not found")).Maybe()
+				keyRepo := &mockKeyRepo{}
+				keyRepo.On("Read", mock.Anything, mock.Anything, mock.Anything).Return(nil, errors.New("not found")).Maybe()
+
+				err := run(newCertSvc(certRepo, keyRepo), tc.days)
+				require.Error(t, err, "no case here can succeed: the key is missing")
+				switch {
+				case !tc.positive:
+					assert.Equal(t, "validity days must be positive", err.Error())
+					keyRepo.AssertNotCalled(t, "Read", mock.Anything, mock.Anything, mock.Anything)
+				case tc.tooLong:
+					require.ErrorIs(t, err, ErrInvalidValidityDays)
+					keyRepo.AssertNotCalled(t, "Read", mock.Anything, mock.Anything, mock.Anything)
+				default:
+					assert.NotErrorIs(t, err, ErrInvalidValidityDays)
+					assert.NotEqual(t, "validity days must be positive", err.Error())
+				}
+			})
+		}
+	}
+}
+
+// TestCurrentValidityDays_ClampedToMaximum keeps auto-renewal working for a
+// certificate issued with a longer period before the cap existed (B78).
+func TestCurrentValidityDays_ClampedToMaximum(t *testing.T) {
+	t.Parallel()
+
+	created := time.Now().Add(-24 * time.Hour)
+	expires := created.AddDate(0, 0, model.MaxCertificateValidityDays+500)
+	require.Equal(t, model.MaxCertificateValidityDays,
+		CurrentValidityDays(&model.Certificate{CreatedAt: created, ExpiresAt: &expires}))
+
+	atCap := created.AddDate(0, 0, model.MaxCertificateValidityDays)
+	assert.Equal(t, model.MaxCertificateValidityDays,
+		CurrentValidityDays(&model.Certificate{CreatedAt: created, ExpiresAt: &atCap}))
+
+	// time.Time.Sub saturates at about 292 years, so even the widest span
+	// stays positive and lands on the cap rather than overflowing.
+	ancient := time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC)
+	farFuture := time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, model.MaxCertificateValidityDays,
+		CurrentValidityDays(&model.Certificate{CreatedAt: ancient, ExpiresAt: &farFuture}))
+
+	// Reversed beyond saturation still falls back to 365, never a negative.
+	assert.Equal(t, 365,
+		CurrentValidityDays(&model.Certificate{CreatedAt: farFuture, ExpiresAt: &ancient}))
 }

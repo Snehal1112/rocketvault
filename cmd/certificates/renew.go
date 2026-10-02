@@ -40,10 +40,10 @@ be owned by the calling user, and be enabled, not revoked, and inside its
 validity window. A CA's own key must be usable in the same way.
 
 Acts on the vault named by --vault, defaulting to "default".
---validity-days must be positive; when omitted, the current version's
-validity period is kept. A certificate that is disabled, not yet valid
-or already expired reads as inaccessible and cannot be renewed, so renew
-before it lapses rather than after.`,
+--validity-days must be between 1 and 36500; when omitted, the current
+version's validity period is kept, capped at 36500. A certificate that is
+disabled, not yet valid or already expired reads as inaccessible and cannot
+be renewed, so renew before it lapses rather than after.`,
 	Example: `  # Renew for the same period as the current version
   rocketvault certificate renew <id>
 

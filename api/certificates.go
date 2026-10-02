@@ -173,8 +173,9 @@ func createCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	// Validate name format and tag limits.
 	if err := vvalidation.ValidateCertificateCreate(vvalidation.CertificateCreateRequest{
-		Name: req.Name,
-		Tags: req.Tags,
+		Name:         req.Name,
+		Tags:         req.Tags,
+		ValidityDays: req.ValidityDays,
 	}); err != nil {
 		c.SetInvalidParam(err.Error())
 		return

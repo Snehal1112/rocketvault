@@ -186,3 +186,46 @@ func TestCertRenewCmd_OmittedValidityKeepsCurrentPeriod(t *testing.T) {
 	assert.Contains(t, buf.String(), "Validity: 90 days")
 	svc.AssertExpectations(t)
 }
+
+// An omitted --validity-days on a certificate issued before the cap renews
+// at the capped period rather than failing the service bound (B78, D5).
+func TestCertRenewCmd_OmittedValidityClampedToMaximum(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+	svc := &certCmdCertService{}
+	certID := uuid.New()
+	scope := model.NewVaultScope(tc.TestVaultID, tc.TestUserID)
+	created := time.Now().Add(-24 * time.Hour)
+	expires := created.AddDate(0, 0, model.MaxCertificateValidityDays+1000)
+	svc.On("GetCertificate", mock.Anything, certID, scope).
+		Return(&model.Certificate{ID: certID, CreatedAt: created, ExpiresAt: &expires}, nil)
+	svc.On("RenewCertificate", mock.Anything, certID, scope, model.MaxCertificateValidityDays).
+		Return(&certServices.CreateCertificateResult{CertID: certID, Version: 2}, nil)
+
+	cmd, buf := newCertCmd(renewCmd.RunE, []string{certID.String()})
+	cmd.Args = cobra.ExactArgs(1)
+	cmd.Flags().AddFlagSet(renewCmd.Flags())
+	cmd.SetContext(versionsTestCtx(tc, svc))
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, buf.String(), fmt.Sprintf("Validity: %d days", model.MaxCertificateValidityDays))
+	svc.AssertExpectations(t)
+}
+
+// An explicit --validity-days above the cap reaches the service, whose
+// ErrInvalidValidityDays the command reports as a renewal failure (B78).
+func TestCertRenewCmd_ValidityAboveMaximumReported(t *testing.T) {
+	tc := testutils.NewTestContext(t)
+	svc := &certCmdCertService{}
+	certID := uuid.New()
+	tooLong := model.MaxCertificateValidityDays + 1
+	svc.On("RenewCertificate", mock.Anything, certID, model.NewVaultScope(tc.TestVaultID, tc.TestUserID), tooLong).
+		Return(nil, fmt.Errorf("%w: must not exceed %d", certServices.ErrInvalidValidityDays, model.MaxCertificateValidityDays))
+
+	cmd, _ := newCertCmd(renewCmd.RunE, []string{certID.String()})
+	cmd.Args = cobra.ExactArgs(1)
+	setFlags(cmd, map[string]any{"validity-days": tooLong})
+	cmd.SetContext(versionsTestCtx(tc, svc))
+	err := cmd.Execute()
+	require.ErrorIs(t, err, certServices.ErrInvalidValidityDays)
+	assert.ErrorContains(t, err, "failed to renew certificate")
+	svc.AssertExpectations(t)
+}

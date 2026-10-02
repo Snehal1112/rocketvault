@@ -43,6 +43,11 @@ type Certificate struct {
 	Exportable bool `json:"exportable"`
 }
 
+// MaxCertificateValidityDays caps a certificate's validity period. It is 100
+// years: longer than any real root CA, and short enough that NotAfter stays
+// far inside X.509's four-digit-year GeneralizedTime range (B78).
+const MaxCertificateValidityDays = 36500
+
 // Clone returns a copy of c that shares no mutable state with the original:
 // the struct itself, its tag slice, its CACertID pointer, and every time
 // pointer are all independently copied. Used by internal/certcache so a

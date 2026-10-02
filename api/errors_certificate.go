@@ -53,6 +53,8 @@ func writeCertificateError(c *Context, err error) {
 		c.SetNotFound("key")
 	case errors.Is(err, certServices.ErrCACertNotFound):
 		c.SetNotFound("CA certificate")
+	case errors.Is(err, certServices.ErrInvalidValidityDays):
+		c.SetInvalidParam("validity_days")
 	default:
 		c.SetInternalError(err)
 	}

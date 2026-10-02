@@ -172,9 +172,11 @@ func (s *certRenewalService) ownerMaySign(ctx context.Context, cert *model.Certi
 
 // CurrentValidityDays returns the validity period of cert's current version
 // in whole days: expires_at minus created_at. It falls back to 365 when
-// either is missing or the difference is not positive. The auto-renew
-// scheduler and the renew route both use it, so a renewal without an
-// explicit validity keeps the period the certificate already had.
+// either is missing or the difference is not positive, and is clamped to
+// model.MaxCertificateValidityDays, so a certificate issued before the cap
+// still renews (B78). The auto-renew scheduler and the renew route both use
+// it, so a renewal without an explicit validity keeps the period the
+// certificate already had.
 func CurrentValidityDays(cert *model.Certificate) int {
 	if cert == nil || cert.CreatedAt.IsZero() || cert.ExpiresAt == nil {
 		return 365
@@ -183,5 +185,5 @@ func CurrentValidityDays(cert *model.Certificate) int {
 	if days <= 0 {
 		return 365
 	}
-	return days
+	return min(days, model.MaxCertificateValidityDays)
 }

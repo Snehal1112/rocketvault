@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -157,8 +158,8 @@ func renewCertificate(c *Context, w http.ResponseWriter, r *http.Request) {
 	if !bodyOK {
 		return
 	}
-	if req.ValidityDays != nil && *req.ValidityDays <= 0 {
-		c.SetInvalidParam("validity_days: must be positive")
+	if req.ValidityDays != nil && (*req.ValidityDays <= 0 || *req.ValidityDays > model.MaxCertificateValidityDays) {
+		c.SetInvalidParam(fmt.Sprintf("validity_days: must be between 1 and %d", model.MaxCertificateValidityDays))
 		return
 	}
 	certService, svcOK := svc(c, container.ServiceContainerInterface.GetCertificateService)

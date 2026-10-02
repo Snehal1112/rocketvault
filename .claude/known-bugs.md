@@ -5817,6 +5817,114 @@ does not cover.
 
 ---
 
+### B78 — Certificate signing-key and CA refusals answered 500, and `validity_days` had no upper bound
+
+**Status**: Fixed 2026-10-03 (GitHub #67)
+**Severity**: Low — wrong status codes, and a server fault or a meaningless
+expiry for bad input; no access was granted
+**Files**: `internal/services/certificates/certificate_service.go`,
+`internal/services/certificates/renewal_service.go`,
+`api/errors_certificate.go`, `api/certificates.go`,
+`api/certificates_versions.go`,
+`internal/validation/certificate_validation.go`, `model/certificate.go`,
+`cmd/certificates/create.go`, `cmd/certificates/renew.go`,
+`internal/vaultapi/errors.go`
+
+**Symptom**: B86 had already routed `createCertificate`'s errors through
+`writeCertificateError`, but `ValidateKeyOwnership` and
+`ValidateCertificateAccess` returned plain strings, so a key or CA owned by
+someone else, or missing from the vault, still reached `default:` and
+answered 500 on create; on the renew route a missing signing CA answered 500
+too. `validity_days` had a lower bound only, on create and renew, over HTTP
+and the CLI. A large value such as 3000000 pushed NotAfter past year 9999,
+which X.509's GeneralizedTime cannot encode, so certificate generation
+failed as a 500. `math.MaxInt` did not fail at all: `time.AddDate`
+overflowed and produced a NotAfter on the previous day, which
+`x509.CreateCertificate` accepts (checked in a scratch program, not through
+the API).
+
+**Root cause**: nothing to map by identity, and nothing capped the period.
+
+**What was fixed**:
+
+- `ErrSigningKeyForbidden`, `ErrSigningKeyNotFound`, `ErrCACertForbidden`
+  and `ErrCACertNotFound` carry the exact messages those refusals always
+  had. On create, `writeCertificateError` maps the two forbidden sentinels
+  and `ErrSigningKeyUnusable` (B77) to 403 and the two not-found sentinels
+  to 404, each with fixed text, so no key ID or repository text reaches the
+  response. On renew, `writeCertificateRenewError` maps
+  `ErrSigningKeyUnusable` and `ErrCACertNotFound` to 409, like the route's
+  other state refusals; a foreign CA falls through to the 403 arm.
+- `model.MaxCertificateValidityDays` (36500, 100 years) is enforced by
+  `ValidateCertificateCreate` and the renew body check for HTTP (400), and
+  by `CreateSelfSignedCertificate`, `CreateCASignedCertificate` and
+  `RenewCertificate` for the CLI and every other caller, as
+  `ErrInvalidValidityDays`, which `writeCertificateError` maps to 400. The
+  CLI reports it as `failed to create certificate: ...` /
+  `failed to renew certificate: ...`.
+- `CurrentValidityDays` clamps to the cap (Decision D5), so a certificate
+  issued before it with a longer period keeps auto-renewing, at the capped
+  period, and the renew route's and `certificate renew`'s default period
+  never exceed it. Its input cannot overflow: `time.Time.Sub` saturates at
+  about 292 years, so the day count stays far inside `int`, and a
+  non-positive span still falls back to 365.
+
+**Not-found versus database fault**: the repositories export no not-found
+sentinel and this fix does not change them, so `isRepositoryNotFound`
+decides by error shape: a not-found is a fresh error wrapping nothing, while
+every fault wraps its cause with `%w` (and a bad scope wraps
+`repositories.ErrInvalidScope`). Only a not-found gets a sentinel, so a
+database fault reading a signing key, a CA, or a CA's own key answers 500,
+not 403, 404 or 409. A fault a repository returned unwrapped would be
+misreported as not-found; that is still a refusal, only with the wrong
+status. One behaviour changed on the way: a database fault on
+`RenewCertificate`'s key read is now 500, where it used to be the 409
+`ErrRenewKeyNotFound`.
+
+**Known limitations** (pre-existing, not fixed here):
+
+- `renewCASignedBody` reads the signing CA through `GetCertificate`, so a
+  disabled or expired CA comes back as `ErrCertLifecycleDenied`, whose 409
+  message says the certificate being renewed is disabled or outside its
+  window; it names the wrong certificate. A CA that vanishes between
+  `ValidateCertificateAccess` and that read is reported as `ErrCertNotFound`
+  (404 "certificate"), again as if the renewed certificate were missing.
+- `CreateCASignedCertificate` re-reads the CA after
+  `ValidateCertificateAccess`; if it is gone by then (a race), the plain
+  `failed to read CA certificate` error answers 500.
+- "signing CA ... cannot sign certificates ...; reissue it with --is-ca" and
+  `inspectCertificateCA` failures are plain errors on both create and renew,
+  so a CA without keyCertSign still answers 500 on both routes. Same class
+  as this entry.
+
+**Pinned by**: `TestValidators_ReturnSentinels`,
+`TestReadFaults_AreNotRefusals`,
+`TestRenewCertificate_KeyReadFaultIsNotRefusal`,
+`TestIsRepositoryNotFound_RealRepositories`,
+`TestValidityDaysUpperBound_ServiceSide`,
+`TestValidityDaysBoundaries_ServiceSide`,
+`TestCurrentValidityDays_ClampedToMaximum`
+(`internal/services/certificates/signing_key_lifecycle_test.go`);
+`TestCheckAndRenewCertificates_ClampsPreCapValidity`
+(`internal/services/certificates/renewal_service_test.go`);
+`TestCreateCertificate_MapsSigningKeyErrors`,
+`TestRenewCertificate_MapsUnusableSigningMaterialTo409`,
+`TestSigningKeyUnusable_NotA500OnBothRouteShapes`,
+`TestCreateCertificate_ValidityAboveMaximum_Returns400`,
+`TestCreateCertificate_ValidityBoundaries`,
+`TestRenewCertificate_ValidityAboveMaximum_Returns400`,
+`TestRenewCertificate_ValidityBoundaries`,
+`TestRenewCertificate_DefaultValidityClampedToMaximum`,
+`TestWriteCertificateError_InvalidValidityDaysIs400`
+(`api/certificates_error_mapping_test.go`);
+`TestCertRenewCmd_OmittedValidityClampedToMaximum`,
+`TestCertRenewCmd_ValidityAboveMaximumReported`
+(`cmd/certificates/versions_test.go`);
+`TestValidateCertificateCreate_ValidityDaysUpperBound`
+(`internal/validation/validation_test.go`).
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and

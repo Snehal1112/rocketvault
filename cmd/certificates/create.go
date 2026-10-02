@@ -41,10 +41,10 @@ by --ca-cert-id must be owned by the calling user, and its own key must be
 usable in the same way.
 
 Acts on the vault named by --vault, defaulting to "default". --name and
---key-id are required and --validity-days must be positive. --auto-renew and
---renewal-days only arm the background renewal scheduler for later; they
-change nothing about the certificate being issued now. --purge-protection is
-sent only when the flag is passed explicitly.
+--key-id are required and --validity-days must be between 1 and 36500.
+--auto-renew and --renewal-days only arm the background renewal scheduler
+for later; they change nothing about the certificate being issued now.
+--purge-protection is sent only when the flag is passed explicitly.
 
 --exportable marks the certificate exportable. It can only be set here, never
 later, and needs a key that was itself created with --exportable (otherwise

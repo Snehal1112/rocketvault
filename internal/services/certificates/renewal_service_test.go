@@ -602,3 +602,40 @@ func TestNewKeySignAuthorizer_Outcomes(t *testing.T) {
 	require.ErrorIs(t, err, authorization.ErrAuthorizationUnavailable)
 	require.NotErrorIs(t, err, authorization.ErrDataPlaneDenied)
 }
+
+// TestCheckAndRenewCertificates_ClampsPreCapValidity pins Decision D5 of B78:
+// a certificate issued before the cap with a longer period still auto-renews,
+// at the capped period, instead of failing ErrInvalidValidityDays every run.
+func TestCheckAndRenewCertificates_ClampsPreCapValidity(t *testing.T) {
+	expires := time.Now().Add(10 * 24 * time.Hour)
+	certID, userID, vaultID := uuid.New(), uuid.New(), uuid.New()
+	cert := model.Certificate{
+		ID:          certID,
+		UserID:      userID,
+		VaultID:     vaultID,
+		Name:        "long-lived",
+		CreatedAt:   expires.AddDate(0, 0, -(model.MaxCertificateValidityDays + 1000)),
+		ExpiresAt:   &expires,
+		AutoRenew:   true,
+		RenewalDays: 30,
+	}
+
+	repo := &mockCertRepoForRenewal{}
+	repo.On("ListAll", mock.Anything).Return([]model.Certificate{cert}, nil)
+
+	certSvc := &mockCertSvcForRenewal{}
+	certSvc.On("RenewCertificate", mock.Anything, certID, model.NewVaultScope(vaultID, userID), model.MaxCertificateValidityDays).
+		Return(&certificates.CreateCertificateResult{CertID: uuid.New()}, nil)
+
+	svc := certificates.NewCertificateRenewalService(certificates.RenewalServiceConfig{
+		CertRepository:     repo,
+		CertificateService: certSvc,
+		Logger:             newTestLogger(),
+		SignAuthorizer:     allowSign,
+	})
+
+	renewed, _, err := svc.CheckAndRenewCertificates(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, renewed)
+	certSvc.AssertExpectations(t)
+}

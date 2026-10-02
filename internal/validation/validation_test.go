@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -347,4 +348,23 @@ func TestValidateKey(t *testing.T) {
 	}
 
 	assert.Error(t, ValidateKey(invalidKey))
+}
+
+// TestValidateCertificateCreate_ValidityDaysUpperBound pins B78. Without a
+// cap, a huge value pushes NotAfter past X.509's four-digit year and the
+// request fails deep inside certificate generation as a 500.
+func TestValidateCertificateCreate_ValidityDaysUpperBound(t *testing.T) {
+	t.Parallel()
+
+	ok := ValidateCertificateCreate(CertificateCreateRequest{Name: "cert", ValidityDays: model.MaxCertificateValidityDays})
+	assert.NoError(t, ok, "the maximum itself is allowed")
+
+	tooLong := ValidateCertificateCreate(CertificateCreateRequest{Name: "cert", ValidityDays: model.MaxCertificateValidityDays + 1})
+	assert.Error(t, tooLong)
+
+	// The lower bound belongs to the caller, so only the cap applies here.
+	for _, days := range []int{1, 365} {
+		assert.NoError(t, ValidateCertificateCreate(CertificateCreateRequest{Name: "cert", ValidityDays: days}), days)
+	}
+	assert.Error(t, ValidateCertificateCreate(CertificateCreateRequest{Name: "cert", ValidityDays: math.MaxInt}))
 }

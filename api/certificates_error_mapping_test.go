@@ -1,10 +1,16 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -143,4 +149,150 @@ func TestRenewCertificate_ForeignCAIs403OnBothRouteShapes(t *testing.T) {
 			svc.AssertCalled(t, "RenewCertificate", mock.Anything, mock.Anything, mock.Anything, 30)
 		})
 	}
+}
+
+func TestCreateCertificate_ValidityAboveMaximum_Returns400(t *testing.T) {
+	svc := &mockCertService{}
+	c := newCertCtx(svc, certAdminClaims())
+	w := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]any{
+		"name": "mycert", "key_id": uuid.New().String(), "validity_days": model.MaxCertificateValidityDays + 1,
+	})
+	r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/certificates", bytes.NewReader(body))
+
+	createCertificate(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	svc.AssertNotCalled(t, "CreateSelfSignedCertificate", mock.Anything, mock.Anything)
+}
+
+// TestCreateCertificate_ValidityBoundaries runs the create route over the
+// boundary values (B78). Refused values never reach the service; accepted
+// ones reach it unchanged.
+func TestCreateCertificate_ValidityBoundaries(t *testing.T) {
+	cases := []struct {
+		raw    string
+		accept int
+	}{
+		{raw: "0"}, {raw: "-1"}, {raw: "36501"},
+		{raw: fmt.Sprint(math.MaxInt64)},
+		// Beyond int64 the JSON decoder itself refuses the body.
+		{raw: "99999999999999999999"},
+		{raw: "1", accept: 1},
+		{raw: "36500", accept: model.MaxCertificateValidityDays},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			svc := &mockCertService{}
+			if tc.accept != 0 {
+				svc.On("CreateSelfSignedCertificate", mock.Anything, mock.MatchedBy(func(req certServices.CreateCertificateRequest) bool {
+					return req.ValidityDays == tc.accept
+				})).Return(nil, certServices.ErrSigningKeyNotFound)
+			}
+			c := newCertCtx(svc, certAdminClaims())
+			w := httptest.NewRecorder()
+			body := fmt.Sprintf(`{"name":"mycert","key_id":%q,"validity_days":%s}`, uuid.New().String(), tc.raw)
+			r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/certificates", bytes.NewBufferString(body))
+
+			createCertificate(c, w, r)
+			if c.Err != nil {
+				writeError(w, c)
+			}
+
+			if tc.accept == 0 {
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				svc.AssertNotCalled(t, "CreateSelfSignedCertificate", mock.Anything, mock.Anything)
+				return
+			}
+			// The stubbed service refuses the key, so reaching it reads as 404.
+			assert.Equal(t, http.StatusNotFound, w.Code)
+			svc.AssertExpectations(t)
+		})
+	}
+}
+
+func TestRenewCertificate_ValidityAboveMaximum_Returns400(t *testing.T) {
+	svc := &mockCertService{}
+	body := fmt.Sprintf(`{"validity_days":%d}`, model.MaxCertificateValidityDays+1)
+	w := runCertVersionHandler(t, svc, &ApiParams{CertificateID: uuid.New().String()},
+		http.MethodPost, body, renewCertificate)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	svc.AssertNotCalled(t, "RenewCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestRenewCertificate_ValidityBoundaries runs the renew route over the
+// boundary values (B78).
+func TestRenewCertificate_ValidityBoundaries(t *testing.T) {
+	certID := uuid.New()
+	scope := certLegacyVaultScope()
+	cases := []struct {
+		raw    string
+		accept int
+	}{
+		{raw: "0"}, {raw: "-1"}, {raw: "36501"},
+		{raw: fmt.Sprint(math.MaxInt64)},
+		{raw: "99999999999999999999"},
+		{raw: "1", accept: 1},
+		{raw: "36500", accept: model.MaxCertificateValidityDays},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			svc := &mockCertService{}
+			if tc.accept != 0 {
+				svc.On("RenewCertificate", mock.Anything, certID, scope, tc.accept).
+					Return(nil, certServices.ErrRenewNotPossible)
+			}
+			w := runCertVersionHandler(t, svc, &ApiParams{CertificateID: certID.String()},
+				http.MethodPost, `{"validity_days":`+tc.raw+`}`, renewCertificate)
+			if tc.accept == 0 {
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				svc.AssertNotCalled(t, "RenewCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+				return
+			}
+			// The stubbed service refuses the renewal, so reaching it reads as 409.
+			assert.Equal(t, http.StatusConflict, w.Code)
+			svc.AssertExpectations(t)
+		})
+	}
+}
+
+// TestRenewCertificate_DefaultValidityClampedToMaximum pins Decision D5 on
+// the renew route: without validity_days, a certificate issued before the
+// cap with a longer period renews at the capped period, not a 400.
+func TestRenewCertificate_DefaultValidityClampedToMaximum(t *testing.T) {
+	certID := uuid.New()
+	scope := certLegacyVaultScope()
+	created := time.Now().Add(-24 * time.Hour)
+	expires := created.AddDate(0, 0, model.MaxCertificateValidityDays+1000)
+
+	svc := &mockCertService{}
+	svc.On("GetCertificate", mock.Anything, certID, scope).
+		Return(&model.Certificate{ID: certID, CreatedAt: created, ExpiresAt: &expires}, nil)
+	svc.On("RenewCertificate", mock.Anything, certID, scope, model.MaxCertificateValidityDays).
+		Return(nil, certServices.ErrRenewNotPossible)
+
+	w := runCertVersionHandler(t, svc, &ApiParams{CertificateID: certID.String()},
+		http.MethodPost, `{}`, renewCertificate)
+	assert.Equal(t, http.StatusConflict, w.Code)
+	svc.AssertExpectations(t)
+}
+
+// TestWriteCertificateError_InvalidValidityDaysIs400 covers the service-side
+// sentinel, which the CLI path and any future caller reach.
+func TestWriteCertificateError_InvalidValidityDaysIs400(t *testing.T) {
+	c := newCertCtx(&mockCertService{}, certAdminClaims())
+	writeCertificateError(c, fmt.Errorf("%w: must not exceed %d", certServices.ErrInvalidValidityDays, model.MaxCertificateValidityDays))
+	w := httptest.NewRecorder()
+	writeError(w, c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// The renew route falls through to the same arm.
+	c = newCertCtx(&mockCertService{}, certAdminClaims())
+	writeCertificateRenewError(c, fmt.Errorf("%w: must not exceed %d", certServices.ErrInvalidValidityDays, model.MaxCertificateValidityDays))
+	w = httptest.NewRecorder()
+	writeError(w, c)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
