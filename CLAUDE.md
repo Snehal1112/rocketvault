@@ -205,6 +205,7 @@ rocketvault/
 ### Key Management (`internal/services/keys/`) - NEW ✨
 - **KeyService**: RSA/ECDSA key generation, access control, CRUD operations
 - Symmetric AES (`oct`) keys are **HSM-only** by design, matching Azure (Managed HSM never allows symmetric key creation on Standard/Premium vaults, and RocketVault's software provider mirrors that restriction). `KeyService.CreateOctKey` → `crypto.KeyProvider.GenerateAESKey` always fails with `crypto.ErrOctKeysRequireHSM` unless `hsm.enabled: true`; the PKCS#11 provider implements AES-KW, AES-CBC, and AES-GCM wrap/encrypt for real (2026-08-19 — see `docs/superpowers/specs/2026-08-19-hsm-secp256k1-aes-cbc-gcm-design.md`). `POST /keys` accepts `"type": "OCT"` with `"bits"` of 128/192/256. The PKCS#11 provider also generates and signs/verifies secp256k1 (P-256K) EC keys as of the same date — real HSM vendors may still reject non-NIST curves like secp256k1 at the hardware level, which `isHSMCapabilityError` (`internal/crypto/pkcs11_provider.go`) degrades to a clean `ErrUnsupportedCurve`/`ErrUnsupportedAlgorithm` instead of a leaked error.
+- Software keys created or imported with `exportable: true` can be exported as unencrypted PKCS#8 via `POST .../keys/{key_id}/export` (`KeyService.ExportKey`), with the Key Vault Key Exporter role. The flag is immutable (`KeyRepository.Update` never writes it, rotation keeps it, restore forces it false); HSM, `oct` and ES256K keys are never exportable; a revoked key gives 409 `key_disabled`. Design: `docs/superpowers/specs/2026-10-01-certificate-and-key-export-design.md`; the 2026-08-25 key-export decision record is superseded for software keys only.
 
 ### Caching
 
@@ -242,6 +243,7 @@ full design.
 - **CertificateService**: Certificate lifecycle management, CA validation
 - Certificates are versioned (2026-10-01): the `certificates` row is always the current version and `certificate_versions` holds every earlier one. `RenewCertificate` archives and bumps in one `CertificateVersionRepository.ArchiveAndRenew` transaction guarded by the version number, so a lost race is a 409. `CertificateRepository.Update` writes metadata only; never write a certificate body or key through it. Design: `docs/superpowers/specs/2026-10-01-certificate-versioning-design.md`.
 - Soft-delete (list/restore/purge) is vault-scoped for both keys and certificates, mirroring the pre-existing secrets soft-delete pattern (`internal/services/secrets/secret_service.go`'s `ListDeletedSecrets`/`RecoverSecret`/`PurgeSecret`) — see `KeyService.ListDeletedKeys`/`RecoverKey`/`PurgeKey` and the `CertificateService` equivalents.
+- Certificates created with `exportable: true` (which requires an exportable key, else 409) export as a leaf-first chain plus PKCS#8, or PKCS12, via `POST .../certificates/{certificate_id}/export` (`CertificateService.ExportCertificate`, reads the repository never `certcache`, never retried). The export routes alone use the R6 `{"error":{"code","message"}}` body (`api/export.go`), set `Cache-Control: no-store`, and audit every attempt through `AuditService.RecordEvent`.
 
 ### Authorization (`internal/services/authorization/`)
 - **RBACService**: global role permissions for vault and user management only
@@ -265,6 +267,8 @@ CLI commands no longer require `--username`/`--password`/`--totp-code` on every 
 ### Azure Role Additions (since 2026-08-11)
 
 Four built-in roles were added beyond the original seven: `Key Vault Purge Operator`, `Key Vault Certificate User`, `Key Vault Crypto Service Encryption User`, and `Key Vault Data Access Administrator` (`model/azure_roles.go`). `Key Vault Data Access Administrator` is the one role that can manage *other* role assignments — grant and revoke — without also holding data-plane access itself; every other role's permissions are described in `.claude/azure-keyvault-parity.md`. Vaults also gained a real purge endpoint, `DELETE /api/v1/vaults/{vault_name}/purge`. Unlike vault-management's `CanManageVault`/`CanPurgeVault` (which short-circuit for the global admin role — see CLI Authorization above), the HTTP route has no admin bypass: it's gated purely by the `RouteVaultData`/`ActionVaultPurge` role-assignment check in `PolicyMiddleware`, so even a global admin needs an explicit role grant (e.g. `Key Vault Purge Operator`) in that specific vault. The CLI's `vaults purge` command, via `CanPurgeVault`, does allow the admin bypass — the two paths genuinely diverge here.
+
+Two RocketVault-only roles followed on 2026-10-01: `Key Vault Certificate Exporter` (`ActionCertificatesExportItem`) and `Key Vault Key Exporter` (`ActionKeysExport`). Administrator holds both actions, and stays grantable by a delegated Data Access Administrator (accepted 2026-10-02); no other role holds either, and neither exporter role is in `nonAdminGrantableRoles`, so only a global admin can grant them. That makes thirteen built-in roles.
 
 ### 🔐 Authorization Scope (`model/scope.go`)
 
@@ -526,6 +530,14 @@ npm run typecheck # If available
 
 ## Documentation History
 
+- **2026-10-01**: Certificate and key export — `POST .../certificates/{id}/export`
+  (PEM chain + PKCS#8 or PKCS12) and `POST .../keys/{id}/export` (software keys,
+  PKCS#8) on both route shapes, the immutable `exportable` flag on every
+  creation surface, `exportable`/`key_algorithm` on certificate and key
+  responses, two exporter roles (thirteen built-in roles), and the new
+  `software.sslmate.com/src/go-pkcs12` dependency. Plans:
+  `docs/superpowers/plans/2026-10-01-export-flag-roles-creation.md`,
+  `2026-10-01-certificate-export.md`, `2026-10-01-key-export-and-docs.md`.
 - **2026-10-01**: Certificate versioning — `GET .../versions`, `GET|PUT .../versions/{n}`
   and `POST .../renew` on both route shapes, version-aware backup, purge and
   master-key rotation, `rocketvault certificate versions list|get`, and the

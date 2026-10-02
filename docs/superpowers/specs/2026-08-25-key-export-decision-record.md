@@ -1,7 +1,7 @@
 # Key Export — Decision Record
 
 **Date**: 2026-08-25
-**Status**: Decided — will not implement
+**Status**: Superseded for software keys (2026-10-01) — HSM keys stay non-extractable
 **Scope**: `.claude/azure-keyvault-parity.md` (documentation amendment only — no code paths touched)
 **Branch target**: v-4.0.0
 **Source finding**: gap-audit review of the secrets/keys/certificates import-export
@@ -138,3 +138,21 @@ satisfy — what "key export" means in this record.
 4. No `.claude/roadmap-azure-parity-and-beyond.md` or `README.md` roadmap change is
    needed: key export was never listed as planned work in either document, so there
    is nothing to close.
+
+## Amendment (2026-10-01): superseded for software keys
+
+[2026-10-01-certificate-and-key-export-design.md](2026-10-01-certificate-and-key-export-design.md)
+adds `POST /keys/{key_id}/export` for software-backed keys. This record's
+reasoning was that software-key export would be an invisible,
+deployment-dependent change to the "keys never leave the vault" trust model.
+The amendment answers that directly: exportability is an explicit, immutable,
+per-key `exportable` flag, set only by the key's creator at creation or import,
+visible in `GET key`, and false for every key that existed before the change.
+Export further requires the narrow Key Vault Key Exporter role (which only a
+global admin can grant) or Administrator (which a delegated Data Access
+Administrator can also grant), and every attempt is audited.
+
+What does not change: HSM-backed keys remain non-extractable
+(`CKA_EXTRACTABLE: false`) and `ExportKey` refuses every `pkcs11:` key; `oct`
+and ES256K keys are refused too. A key created without `exportable: true` can
+never be exported.

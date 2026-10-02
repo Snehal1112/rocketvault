@@ -158,15 +158,21 @@ tell the two apart without cross-referencing.
 
 ### 4. Authorization
 
+> **Renamed 2026-10-01.** This action was `ActionCertificatesExport` with
+> `.../certificates/export/action`. The per-certificate export that shipped
+> first (`docs/superpowers/specs/2026-10-01-certificate-and-key-export-design.md`)
+> owns `ActionCertificatesExportItem` and the `.../certificates/export/action`
+> string, so the bulk action takes a distinct name and string.
+
 New constant — Azure has no bulk-export data action for certificates (there is
 no Azure equivalent to score this against), so this is explicitly a
 RocketVault-only addition, same category as the parity doc's other `➕` rows:
 
 ```go
-// ActionCertificatesExport permits exporting certificates as a
+// ActionCertificatesBulkExport permits exporting certificates as a
 // passphrase-sealed, portable file. RocketVault-only — Azure Key Vault has no
 // equivalent bulk-export operation for certificates.
-ActionCertificatesExport DataAction = "Microsoft.KeyVault/vaults/certificates/export/action"
+ActionCertificatesBulkExport DataAction = "Microsoft.KeyVault/vaults/certificates/bulkExport/action"
 ```
 
 Grant to the same roles as `ActionCertificatesBackup` — the closest existing
@@ -181,7 +187,7 @@ gets a new case, same collection-level shape as
 ```go
 case "export":
 	if method == http.MethodPost {
-		return model.ActionCertificatesExport, RouteVaultData
+		return model.ActionCertificatesBulkExport, RouteVaultData
 	}
 	return "", RouteVaultData
 ```

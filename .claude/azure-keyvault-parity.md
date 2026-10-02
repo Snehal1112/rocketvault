@@ -48,7 +48,8 @@ vaults). RocketVault columns are sourced from the codebase (`api/`, `internal/`,
 | Backup / Restore | ✅ | ✅ `POST /keys/{id}/backup`, `/keys/restore`, registered on both the flat and vault-scoped routers (`api/backup_item.go` `InitBackupItem`). Authorization is the RBAC data action in `PolicyMiddleware` plus a `model.NewVaultScope` read in `ItemBackupService` — a Crypto User with `ActionKeysBackup` can back up any key in a vault they are authorized for, and cannot name a key outside it. Key backups carry `key_versions` history, so a rotated key survives a backup/restore cycle with its archived versions intact | ✅ |
 | Get/Set rotation policy | ✅ | 🟡 `GET/PUT/DELETE /keys/{key_id}/rotationpolicy`, mapped to `ActionKeysRotationPolicyRead`/`Write` in `MapRouteToDataAction` (`mapKeyAction`) and granted only to Crypto Officer + Administrator, matching Azure's `keyrotationpolicies/*`. `RotationScheduler` → `RotationExecutor.Check` (`rotation.keys.*` config, started in `bootstrap.go`) sweeps `KeyRotationPolicyRepository.GetDuePolicies` — enabled, `rotate_after_days > 0`, `next_rotation_at` passed — and calls `RotateKey`, so the rotate action genuinely executes. `expiry_days` is now acted on too (fixed 2026-08-19, `.claude/known-bugs.md` § B27): `RotateKey` stamps `ExpiresAt` on every rotation when the policy is enabled and `expiry_days > 0`. `notify_before_expiry_days` is still only persisted and echoed back — verified 2026-08-20, `NotifyBeforeExpiryDays` is read nowhere outside its own model and CRUD. Azure's Notify lifetime action remains half-implemented: the expiry half executes, the notify half does not. What changed on 2026-08-20 is one layer below parity — per-vault webhook **configuration** now exists (`vault_webhook_configs`, `PUT/GET/DELETE /vaults/{name}/webhook`, `rocketvault vault-webhook`), so a notification now has somewhere to be addressed *to*. Nothing sends: there is no outbound HTTP anywhere in the vault/secret/key service packages, and delivery is specced but unbuilt (`docs/superpowers/specs/2026-08-20-webhook-delivery-primitive-design.md`) | 🟡 |
 | Release (confidential compute) | ✅ | ❌ no TEE attestation flow | ❌ |
-| EXPORT blocked (keys non-extractable) | ✅ | ✅ `buildKeyResponse` emits only JWK public components (`crypto.ExtractPublicComponents`) and `model.KeyVersion` omits `Value`; the one response carrying stored material is the backup blob, and that is the master-key AES-256-GCM ciphertext (`common.EncryptSecret`) or a bare `pkcs11:` handle — never plaintext PEM. This holds for HSM-backed keys as a hard technical constraint (`CKA_EXTRACTABLE: false`, `internal/crypto/pkcs11_provider.go:153,222,260`) and for software-backed keys as a deliberate product decision — `common.EncryptSecret` is reversible, so software-key export is technically possible but excluded to avoid a silent, deployment-dependent divergence in the "keys never leave the vault" trust model. Formal decision record: `docs/superpowers/specs/2026-08-25-key-export-decision-record.md` | ✅ |
+| HSM keys non-extractable | ✅ | ✅ HSM-backed keys are created with `CKA_EXTRACTABLE: false` (`internal/crypto/pkcs11_provider.go`) and `KeyService.ExportKey` refuses every `pkcs11:` key, including an archived version, with 403 `key_not_exportable`. `buildKeyResponse` emits only JWK public components and `model.KeyVersion` omits `Value` | ✅ |
+| Software key export (opt-in) | ❌ (keys are non-extractable on every tier) | ✅ `POST /keys/{key_id}/export` (both route shapes): unencrypted PKCS#8 PEM, optional `version`, only for software keys created or imported with `exportable: true` — an immutable, per-key flag visible in `GET key` and decided by the key's creator; existing keys stay non-exportable forever. Requires `Microsoft.KeyVault/vaults/keys/export/action` (Key Vault Key Exporter or Administrator). `oct` and ES256K keys are refused; a revoked (disabled) key gives 409 `key_disabled`. Amends `docs/superpowers/specs/2026-08-25-key-export-decision-record.md` (now "Superseded for software keys"); design: `docs/superpowers/specs/2026-10-01-certificate-and-key-export-design.md` | ➕ |
 
 *Re-verified 2026-08-19 against `api/keys.go`, `api/key_rotation_policy.go`,
 `api/backup_item.go`, `internal/services/keys/{key_service,crypto_service,
@@ -224,16 +225,19 @@ is now wired, with a regression test.*
 | Per-version attributes (enabled, expires, not_before) | ✅ | ✅ `PUT /certificates/{id}/versions/{n}`; a disabled certificate gates every version | ✅ |
 | Version identifier format | 32-hex | sequential integers, like keys and secrets; new versions come only from renew because import and merge are unbuilt | 🟡 |
 | Backup / Restore | ✅ | ✅ `/certificates/{id}/backup`, `/certificates/restore` — the blob carries every archived version and restore replays them in one transaction; note this is an unencrypted, same-instance base64url blob (`internal/backup/item_backup.go`, `BackupCertificate`), not a portable export; see the passphrase-sealed Export row's design doc below for the distinction | ✅ |
+| Per-certificate export with private key (PEM chain + PKCS#8, or PKCS12) | ❌ (Azure exports a certificate's key only through its linked secret) | ✅ `POST /certificates/{certificate_id}/export` (both route shapes), optional `version`; chain leaf first with intermediates, root excluded; PKCS12 `modern` or `legacy`. Only certificates created with `exportable: true` over an exportable key; requires `Microsoft.KeyVault/vaults/certificates/export/action` (Key Vault Certificate Exporter or Administrator); every attempt audited; `Cache-Control: no-store`. A restore yields a non-exportable certificate, and export reflects the certificate's own key copy until renewal | ➕ |
 | Import certificate (PFX/PEM) | ✅ | ❌ no import route at all — not previously tracked in this table. Design specified, not yet built: `docs/superpowers/specs/2026-08-25-certificate-import-merge-design.md` | ❌ |
 | Merge CSR (pending certificate) | ✅ (full pending-operation lifecycle: create CSR via the vault, get it signed externally, merge later with no resupplied state) | ❌ no merge route at all — not previously tracked in this table. Design specified, not yet built, and deliberately scoped to a single-call merge (caller resupplies the CSR + signed cert together; no persisted pending-operation state) rather than Azure's full lifecycle: `docs/superpowers/specs/2026-08-25-certificate-import-merge-design.md` § 2.1 | ❌ |
 | Public-CA integration (DigiCert/GlobalSign) | ✅ | ❌ self-signed / internal only | ❌ |
 | ACME / external CA enrollment | ✅ (partner CAs) | ❌ | ❌ |
 
-*Certificate export (passphrase-sealed, portable) has no Azure equivalent and so
-is not a row in this table — see `docs/superpowers/specs/
-2026-08-25-certificate-export-design.md` and
-`.claude/roadmap-azure-parity-and-beyond.md` Phase 3. Design specified, not yet
-built.*
+*Bulk certificate export (passphrase-sealed, portable) has no Azure equivalent
+and is not a row in this table — see `docs/superpowers/specs/
+2026-08-25-certificate-export-design.md` (its action is now named
+`ActionCertificatesBulkExport` so it cannot collide with the per-certificate
+`ActionCertificatesExportItem`) and `.claude/roadmap-azure-parity-and-beyond.md`
+Phase 3. Design specified, not yet built. Per-certificate export shipped
+2026-10-01 (row above).*
 
 ## 5. Multi-vault / namespacing
 
@@ -320,7 +324,7 @@ request through `RoleAssignmentService.HasDataAction`, which looks a role up in
 `role_assignments` row isn't in that map and so grants zero data actions, and
 `RoleAssignmentService.AssignRole` has rejected new grants of any legacy name since
 the `feat/vault-scoped-users` merge (`IsLegacyRole`, `roles.go:126-130`). The table
-below re-verifies against the roles that actually govern access: the eleven
+below re-verifies against the roles that actually govern access: the thirteen
 `model/azure_roles.go` bundles.*
 
 | Role | Azure grants (`dataActions`) | RocketVault grants (live `model/azure_roles.go`) | Status |
@@ -345,6 +349,20 @@ Azure's full built-in set:
 | Crypto Service Encryption User | Read key metadata + wrap/unwrap only (disk-encryption scenarios) | `Key Vault Crypto Service Encryption User`: `ActionKeysRead`, `ActionKeysWrap`, `ActionKeysUnwrap` | ✅ |
 | Data Access Administrator | Manage role assignments, scoped to the vault, **for eight named roles only** — Administrator, Reader, Secrets User/Officer, Crypto User/Officer, Certificates Officer, Crypto Service Encryption User. Azure's ABAC condition bars it from granting itself, Purge Operator, or Certificate User | `Key Vault Data Access Administrator`: `ActionRoleAssignmentsWrite`, `ActionRoleAssignmentsDelete`, plus the same eight-role allow-list (`nonAdminGrantableRoles`, `role_assignment_service.go`) enforced on **both** grant (`AssignRole`) and revoke (`RevokeAssignment`) via `ErrRoleNotGrantable` → HTTP 403. A global admin bypasses the allow-list (`CallerIsGlobalAdmin`) | ✅ exact allow-list match — also closes the "role-assignment management is global-admin-only" known limitation from the v4.0.0 release notes |
 
+Two RocketVault-only roles were added 2026-10-01 for per-item export
+(`docs/superpowers/specs/2026-10-01-certificate-and-key-export-design.md`).
+Azure has no counterpart, so they are extras, not parity rows. Neither is in
+`nonAdminGrantableRoles`: only a global admin can grant them. Administrator
+also holds both actions and, as before, remains grantable by a delegated
+non-admin Data Access Administrator (accepted by the user on 2026-10-02), so
+such a delegate can confer export through Administrator; no other built-in
+role holds either action.
+
+| Role | Azure grants | RocketVault grants | Status |
+|---|---|---|---|
+| Certificate Exporter | n/a | `Key Vault Certificate Exporter`: `ActionCertificatesExportItem` only | ➕ |
+| Key Exporter | n/a | `Key Vault Key Exporter`: `ActionKeysExport` only | ➕ |
+
 *Added 2026-08-19: the eight-role restriction is new — before 2026-08-18 any caller
 who passed `CanManageRoleAssignments` could grant **any** role, so a Data Access
 Administrator could grant itself Purge Operator or a second Data Access
@@ -362,11 +380,11 @@ Access Administrator set. See `.claude/known-bugs.md` §§ B19, B21; pinned by
 **Net:** the *architecture* (tenant-global identities + vault-scoped role assignments
 evaluated directly against `model.azureRoleDataActions`, with an access-policy
 explicit-deny override checked first) is a genuine, deliberate match to Azure's real
-RBAC model. All eleven *bundles* are byte-for-byte accurate against
+RBAC model. All eleven Azure *bundles* are byte-for-byte accurate against
 `model/azure_roles.go`: Crypto Officer is a true superset of Crypto User including
 wrap/unwrap, Administrator carries no derived gaps, and Data Access Administrator
 carries Azure's own eight-role grant restriction. Crypto User's `update`/`backup` gap
-(the last bundle gap from the 2026-08-13 pass) was closed 2026-08-17.
+(the last bundle gap from the 2026-08-13 pass) was closed 2026-08-17. (The two exporter roles added 2026-10-01 are RocketVault-only and have no Azure bundle to compare.)
 
 *Corrected 2026-08-20 — and the correction is about method, not just a row.* This
 paragraph previously concluded that "the *individual role boundaries* are now
@@ -393,7 +411,7 @@ migration's translation of those rows to Azure role names
 *Corrected 2026-08-19: this paragraph previously claimed the legacy vocabulary has
 "no live authorization weight." Precisely, it has no live **data-plane** weight — a
 legacy-named `role_assignments` row grants zero data actions, because
-`RoleGrantsDataAction` knows only the eleven Azure names. But a legacy grant made
+`RoleGrantsDataAction` knows only the thirteen built-in names (eleven Azure roles plus the two exporter roles). But a legacy grant made
 before the `IsLegacyRole` rejection landed also materialised `access_policies` rows
 via `ExpandRole`, and revoking the assignment is the only thing that deletes them.
 For `vault-admin` specifically, that bundle includes `(vaults, manage)`, which
@@ -486,16 +504,16 @@ they are capabilities Azure lacks, not parity gaps.
 | Section | ✅ | 🟡 | ❌ | ➕ |
 |---|---:|---:|---:|---:|
 | 1. Secrets management | 9 | 1 | 0 | 2 |
-| 2. Key management — operations | 9 | 3 | 1 | 0 |
+| 2. Key management — operations | 9 | 3 | 1 | 1 |
 | 3. Key management — types & algorithms | 3 | 4 | 1 | 0 |
-| 4. Certificate management | 7 | 1 | 4 | 0 |
+| 4. Certificate management | 7 | 1 | 4 | 1 |
 | 5. Multi-vault / namespacing | 5 | 0 | 0 | 1 |
-| 6. Access control / authorization | 14 | 3 | 0 | 0 |
+| 6. Access control / authorization | 14 | 3 | 0 | 2 |
 | 7. Soft-delete, purge protection, recovery | 5 | 0 | 0 | 0 |
 | 8. HSM & cryptographic protection | 1 | 2 | 0 | 1 |
 | 9. Monitoring, audit & compliance | 1 | 1 | 1 | 3 |
 | 10. Platform & operations | 3 | 0 | 1 | 3 |
-| **Total** | **57** | **15** | **8** | **10** |
+| **Total** | **57** | **15** | **8** | **14** |
 
 **71% full parity** (57/80 parity-comparable rows), 19% partial, 10% not supported.
 Counting partial as usable-with-caveats, 90% of compared capabilities are present in
@@ -505,6 +523,7 @@ import closed the same day, moving it again to 71%/55/77; see
 `docs/superpowers/specs/2026-08-25-certificate-import-merge-design.md` and
 `docs/superpowers/specs/2026-08-25-key-import-jwk-design.md`.)
 (Three §4 rows added 2026-10-01 for certificate versioning moved this from 55/77 to 57/80.)
+(2026-10-01: export added four ➕ rows — software key export, per-certificate export and the two exporter roles — and split the key-export row; the parity percentages are unchanged.)
 
 Read that number with three caveats. **Rows are not equally weighted** — "geo-
 replication ❌" and "RSNULL 🟡" cost the same one row, though only one of them would
@@ -540,7 +559,7 @@ protection that correctly cascades to contained items (closed 2026-08-18, see §
 closely matching Azure's oct-HSM Premium-preview coverage (closed 2026-08-19, see §3), and
 and RBAC *architecture*: vault-scoped role assignments evaluated against
 `model.azureRoleDataActions` with an access-policy explicit-deny override checked
-first, matching Azure's real RBAC model. All eleven role **bundles** are byte-for-byte
+first, matching Azure's real RBAC model. All eleven Azure role **bundles** are byte-for-byte
 accurate against `model/azure_roles.go` (Crypto Officer is a true superset of Crypto
 User including wrap/unwrap, Administrator carries no derived gaps, Data Access
 Administrator enforces Azure's own eight-role grant allow-list, closed 2026-08-18,
