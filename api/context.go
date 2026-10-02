@@ -2,11 +2,13 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 
 	"rocketvault/app"
 	"rocketvault/common"
@@ -126,6 +128,23 @@ func (c *Context) SetNotFound(resource string) {
 		resource+" not found", nil, "", http.StatusNotFound)
 }
 
+// internalErrorDetail is the only detail a generic 500 sends to a client.
+const internalErrorDetail = "An internal error occurred. Quote the request_id when contacting support."
+
+// logInternalError records the real error server-side with the request id.
+// It tolerates a nil logger, which public handlers in tests can carry.
+func (c *Context) logInternalError(err error) {
+	base := logrus.StandardLogger()
+	if c.Logger != nil && c.Logger.Logger != nil {
+		base = c.Logger.Logger
+	}
+	base.WithFields(logrus.Fields{
+		"request_id": c.RequestID,
+		"path":       c.Path,
+		"error":      fmt.Sprint(err),
+	}).Error("Internal server error")
+}
+
 // SetInternalError sets a 500 error for unexpected failures — or a 503 with
 // a Retry-After hint when err is a retry.RetryService circuit-breaker-open or
 // retry-budget-exhausted error. That distinction matters beyond the status
@@ -135,6 +154,8 @@ func (c *Context) SetNotFound(resource string) {
 // generic message rather than err.Error(), which could otherwise serialize a
 // wrapped driver error (e.g. a raw SQL error string) into the response body,
 // the same information-disclosure class as known-bugs.md's B24/B25/B55.
+// A plain 500 also always carries the fixed internalErrorDetail, and the real
+// error is logged server-side keyed by the request id.
 func (c *Context) SetInternalError(err error) {
 	if err != nil && (errors.Is(err, retry.ErrCircuitBreakerOpen) || errors.Is(err, retry.ErrMaxRetriesExceeded)) {
 		c.Err = common.NewAppError("api.context.set_service_unavailable",
@@ -143,12 +164,9 @@ func (c *Context) SetInternalError(err error) {
 		return
 	}
 
-	msg := "Internal server error"
-	detail := ""
-	if err != nil {
-		detail = err.Error()
-	}
-	c.Err = common.NewAppError("api.context.set_internal_error", msg, nil, detail, http.StatusInternalServerError)
+	c.logInternalError(err)
+	c.Err = common.NewAppError("api.context.set_internal_error", "Internal server error", nil,
+		internalErrorDetail, http.StatusInternalServerError)
 }
 
 // ApiHandler wraps public (unauthenticated) handlers.

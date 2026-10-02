@@ -1,8 +1,10 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"rocketvault/api"
 	"rocketvault/app"
@@ -366,12 +369,10 @@ func TestSetInternalError_MaxRetriesExceeded_Returns503WithoutLeakingChain(t *te
 		"the wrapped driver error text must not reach the response body")
 }
 
-// TestSetInternalError_OrdinaryError_StillReturns500 is the control case:
-// an error unrelated to retry exhaustion keeps today's 500 behavior, detail
-// text included, so the new branch in SetInternalError doesn't widen beyond
-// the two retry sentinels it targets.
-func TestSetInternalError_OrdinaryError_StillReturns500(t *testing.T) {
-	plain := errors.New("unexpected failure: disk full")
+// TestSetInternalError_OrdinaryError_Returns500WithFixedDetail verifies that an
+// unrelated error is still a 500 but its text never reaches the response body.
+func TestSetInternalError_OrdinaryError_Returns500WithFixedDetail(t *testing.T) {
+	plain := errors.New("pq: relation \"secrets\" does not exist at /var/lib/rv/db")
 
 	testApp := &app.App{}
 	handler := api.ApiHandler(testApp, func(c *api.Context, w http.ResponseWriter, r *http.Request) {
@@ -384,5 +385,31 @@ func TestSetInternalError_OrdinaryError_StillReturns500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 	assert.Empty(t, rr.Header().Get("Retry-After"))
-	assert.Contains(t, rr.Body.String(), plain.Error())
+	assert.NotContains(t, rr.Body.String(), "secrets")
+	assert.NotContains(t, rr.Body.String(), "/var/lib/rv/db")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.Equal(t, "An internal error occurred. Quote the request_id when contacting support.", body["detailed_error"])
+	assert.NotEmpty(t, body["request_id"])
+}
+
+// TestSetInternalError_LogsErrorWithRequestID verifies the detail is not lost:
+// the real error goes to the server log keyed by the same request id.
+func TestSetInternalError_LogsErrorWithRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	l := logrus.New()
+	l.SetOutput(&buf)
+	testApp := &app.App{Logger: &logging.Logger{Logger: l}}
+
+	handler := api.ApiHandler(testApp, func(c *api.Context, w http.ResponseWriter, r *http.Request) {
+		c.SetInternalError(errors.New("driver exploded"))
+	})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/api/secrets", nil))
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.Contains(t, buf.String(), "driver exploded")
+	assert.Contains(t, buf.String(), body["request_id"].(string))
 }
