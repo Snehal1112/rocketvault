@@ -14,6 +14,7 @@ import (
 	"rocketvault/common"
 	"rocketvault/internal/container"
 	"rocketvault/internal/logging"
+	"rocketvault/internal/middleware"
 	"rocketvault/internal/retry"
 	authServices "rocketvault/internal/services/auth"
 	certServices "rocketvault/internal/services/certificates"
@@ -177,7 +178,7 @@ func ApiHandler(app *app.App, handler func(*Context, http.ResponseWriter, *http.
 			App:            app,
 			Params:         ApiParamsFromRequest(r),
 			RequestID:      "req-" + uuid.New().String()[:8],
-			IPAddress:      r.RemoteAddr,
+			IPAddress:      middleware.ExtractClientIP(r),
 			Path:           r.URL.Path,
 			UserAgent:      r.UserAgent(),
 			AcceptLanguage: r.Header.Get("Accept-Language"),
@@ -239,7 +240,7 @@ func ApiSessionRequired(a *app.App, handler func(*Context, http.ResponseWriter, 
 			},
 			Params:         ApiParamsFromRequest(r),
 			RequestID:      "req-" + uuid.New().String()[:8],
-			IPAddress:      r.RemoteAddr,
+			IPAddress:      middleware.ExtractClientIP(r),
 			Path:           r.URL.Path,
 			UserAgent:      r.UserAgent(),
 			AcceptLanguage: r.Header.Get("Accept-Language"),

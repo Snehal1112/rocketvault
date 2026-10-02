@@ -88,6 +88,13 @@ server:
   cors_allowed_origins:
     - "http://localhost:3000"
     # Add your own frontend origin(s) here.
+  # Reverse proxies whose X-Forwarded-For / X-Real-IP headers may be trusted,
+  # as IP addresses or CIDR ranges. Leave empty when clients connect directly:
+  # the headers are then ignored, since any client can forge them. Behind a
+  # proxy (Railway, Fly, nginx) set this to the proxy's address range, or every
+  # client shares the proxy's rate-limit bucket. An invalid entry is logged as
+  # an error and the whole list is ignored.
+  trusted_proxies: []
   http2:
     enabled: true   # HTTP/2 is enabled by default.
   tls:

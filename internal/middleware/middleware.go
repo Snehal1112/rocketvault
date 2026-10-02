@@ -6,7 +6,6 @@ package middleware
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -20,6 +19,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"rocketvault/common"
+	"rocketvault/config"
 	"rocketvault/internal/logging"
 	auditSvc "rocketvault/internal/services/audit"
 	authServices "rocketvault/internal/services/auth"
@@ -96,6 +96,9 @@ type Middleware struct {
 	vaultLimiter      *keyedRateLimiter
 	vaultLimitMetrics VaultRateLimitRecorder
 	corsOrigins       map[string]bool
+	// clientIPs decides the caller's address for rate limiting, logs and
+	// audit rows. A nil resolver trusts no proxy headers.
+	clientIPs *ClientIPResolver
 }
 
 // NewMiddleware creates a new middleware with service dependencies.
@@ -131,14 +134,32 @@ func NewMiddleware(container Container) *Middleware {
 		corsOrigins[o] = true
 	}
 
+	logger := container.GetLogger()
+	trusted, err := config.LoadTrustedProxies()
+	if err != nil {
+		// Fail closed: with no trusted proxies the headers are simply ignored.
+		if logger != nil {
+			logger.WithError(err).Error("Invalid server.trusted_proxies, ignoring forwarded headers")
+		}
+		trusted = nil
+	}
+	resolver := NewClientIPResolver(trusted)
+	SetClientIPResolver(resolver)
+
 	return &Middleware{
 		container:      container,
-		logger:         container.GetLogger(),
+		logger:         logger,
 		defaultLimiter: newKeyedRateLimiter(defaultLimit),
 		authLimiter:    newKeyedRateLimiter(authLimit),
 		vaultLimiter:   newKeyedRateLimiter(perVaultLimit),
 		corsOrigins:    corsOrigins,
+		clientIPs:      resolver,
 	}
+}
+
+// clientIP resolves the caller's address through the configured resolver.
+func (m *Middleware) clientIP(r *http.Request) string {
+	return m.clientIPs.ClientIP(r)
 }
 
 // LoggingMiddleware logs HTTP request and response details.
@@ -164,7 +185,7 @@ func (m *Middleware) LoggingMiddleware(next http.Handler) http.Handler {
 		logFields := logrus.Fields{
 			"method":      r.Method,
 			"path":        r.URL.Path,
-			"client_ip":   r.RemoteAddr,
+			"client_ip":   m.clientIP(r),
 			"status_code": rw.statusCode,
 			"duration_ms": duration.Milliseconds(),
 			"request_id":  requestID,
@@ -185,14 +206,9 @@ func (m *Middleware) LoggingMiddleware(next http.Handler) http.Handler {
 // by a fixed-window boundary the way a counter-based limiter would be.
 func (m *Middleware) RateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Extract IP address from RemoteAddr (which includes port).
-		// Use IP address (not RemoteAddr with port) as the rate limit key
-		// so that connections from the same IP share the rate limit counter.
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			// Fallback for plain IPs without port (shouldn't happen in normal HTTP).
-			ip = r.RemoteAddr
-		}
+		// Key on the resolved client IP without a port, so that connections
+		// from the same client share the rate limit counter.
+		ip := m.clientIP(r)
 
 		// Select appropriate limiter based on endpoint.
 		// Matches /users/login and /users/refresh regardless of base path prefix.
@@ -242,22 +258,6 @@ func isHealthProbe(path string) bool {
 		strings.HasSuffix(path, "/health/ready") ||
 		strings.HasSuffix(path, "/health/live") ||
 		strings.HasSuffix(path, "/health/database")
-}
-
-// ExtractClientIP returns the client's IP address, preferring X-Forwarded-For.
-func ExtractClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.SplitN(xff, ",", 2)
-		return strings.TrimSpace(parts[0])
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // AuthenticationMiddleware handles JWT token validation and user context.
@@ -318,7 +318,7 @@ func (m *Middleware) AuthenticationMiddleware(next http.Handler) http.Handler {
 				Action:    "auth",
 				Outcome:   "success",
 				Source:    "api",
-				IPAddress: ExtractClientIP(r),
+				IPAddress: m.clientIP(r),
 			})
 		} else {
 			m.logger.LogAuditInfo(claims.UserID.String(), "auth", "success", "Authentication successful")
