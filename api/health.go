@@ -137,7 +137,6 @@ func (h *HealthHandler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
 		h.logger.LogAuditError("", "readiness_api", "failed", "System not ready", err)
 		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "not ready",
-			"error":  err.Error(),
 		})
 		return
 	}

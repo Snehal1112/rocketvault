@@ -62,8 +62,9 @@ func rotateJWKS(c *Context, w http.ResponseWriter, r *http.Request) {
 	newKID, overlapUntil, err := rotatable.Rotate()
 	if err != nil {
 		recordJWKSRotateAudit(c, r, "", "failure")
+		c.logInternalError(err)
 		c.Err = common.NewAppError("api.jwks.rotate", "api.jwks.rotate_failed", nil,
-			err.Error(), http.StatusInternalServerError)
+			internalErrorDetail, http.StatusInternalServerError)
 		return
 	}
 

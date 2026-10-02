@@ -3,8 +3,11 @@ package api
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	userServices "rocketvault/internal/services/users"
 	"rocketvault/model"
@@ -16,6 +19,17 @@ const (
 	oidcCLIRedirectCookie = "oidc_cli_redirect"
 	oidcCookieMaxAge      = 5 * time.Minute
 )
+
+// logBypassError logs an error for handlers that write plain-text responses
+// and so have no Context to carry a request id.
+func logBypassError(r *http.Request, scope string, err error) {
+	logrus.WithFields(logrus.Fields{
+		"scope":  scope,
+		"method": r.Method,
+		"path":   r.URL.Path,
+		"error":  fmt.Sprint(err),
+	}).Error("OIDC handler error")
+}
 
 // InitOIDC registers the public OIDC login/callback routes, plus the CLI
 // exchange endpoint, on the same unauthenticated router that already
@@ -46,7 +60,7 @@ func (api *API) oidcLoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	cliRedirectURI, err := validateCLIRedirectURI(r.URL.Query().Get("cli_redirect_uri"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid cli_redirect_uri", http.StatusBadRequest)
 		return
 	}
 
@@ -117,7 +131,8 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 
 	identity, err := svc.HandleCallback(r.Context(), code, nonceCookie.Value)
 	if err != nil {
-		http.Error(w, "oidc callback failed: "+err.Error(), http.StatusUnauthorized)
+		logBypassError(r, "callback", err)
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
 
@@ -132,7 +147,8 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		PreferredUsername: identity.PreferredUsername,
 	})
 	if err != nil {
-		http.Error(w, "failed to resolve user: "+err.Error(), http.StatusInternalServerError)
+		logBypassError(r, "resolve_user", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
@@ -143,7 +159,8 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := authSvc.IssueSessionForUser(r.Context(), user)
 	if err != nil {
-		http.Error(w, "failed to issue session: "+err.Error(), http.StatusInternalServerError)
+		logBypassError(r, "issue_session", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
