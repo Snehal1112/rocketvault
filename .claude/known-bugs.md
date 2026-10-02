@@ -5707,6 +5707,23 @@ CA ID would give 400. An unusable signing key or CA key
 (`ErrSigningKeyUnusable`) currently answers 500 on both routes; mapping it
 to 403 on create and 409 on renew is § B78's work.
 
+**Known limitations**:
+
+- A skipped auto-renew row, refused or faulted, emits no expiry warning and
+  is not counted in the scheduler's renewed or warned totals. The only
+  signal is one `cert_auto_renew` audit row (`denied` or `failed`) per
+  certificate per scheduler run (`rotation.certificates.interval`, 24h by
+  default), so a certificate inside
+  its renewal window produces about `RenewalDays` such rows before it
+  expires, with no deduplication.
+- A global admin who owns a certificate but holds no role granting
+  `keys/sign` in its vault is refused too: data-plane checks have no admin
+  bypass, over HTTP, the CLI or the scheduler.
+- The check trusts `role_assignments` alone. A deleted owner, or a deleted,
+  disabled or expired service account, whose grant was never removed keeps
+  passing it, so the scheduler keeps re-signing that owner's certificates;
+  see § B99.
+
 **Pinned by**: `TestValidateKeyOwnership_RefusesUnusableKey`,
 `TestCreateSelfSignedCertificate_RefusesRevokedKey`,
 `TestRenewCertificate_RefusesDisabledKey`,
@@ -5737,6 +5754,66 @@ to 403 on create and 409 on renew is § B78's work.
 (`internal/services/certificates/renewal_service_test.go`);
 `TestAPIError_CertificateIssueHintNamesKeySign`
 (`internal/vaultapi/errors_test.go`).
+
+---
+
+### B99 — Deleted principals keep their role assignments, so auto-renew keeps re-signing their certificates
+
+**Status**: Open, found 2026-10-03 (GitHub #66)
+**Severity**: Medium — a principal that no longer exists keeps passing every
+vault data-plane check, and the auto-renew scheduler keeps re-signing its
+certificates with no time limit
+**Files**: `internal/repositories/user_repository.go` (`UserRepository.Delete`,
+~272-302), `internal/services/users/user_service.go` (`DeleteUser`),
+`internal/services/oauth2/oauth2_service.go` (`DeleteClient`, ~204),
+`internal/db/db.go` (`access_policies` ~720-732, `role_assignments`
+~734-744 and the migration copy ~1069-1079),
+`internal/services/authorization/role_assignment_service.go`
+(`HasDataAction`, ~214-231),
+`internal/services/certificates/renewal_service.go`
+
+**Symptom**: deleting a user or a service account leaves its
+`role_assignments` and `access_policies` rows in place. `HasDataAction`,
+which decides every vault data-plane check (`PolicyMiddleware`, the CLI and
+the scheduler, all through `RequireDataPlaneAccess`), reads only
+`role_assignments` through `ListByPrincipalInVault` and never asks whether
+the principal still exists or is active. Interactive and token access do
+stop: `DeleteUser` revokes the user's sessions, and session validation
+(`internal/services/auth/authentication_service.go` ~446-467) rejects a
+service account that is deleted, disabled or expired. The auto-renew
+scheduler has no session, though. Its `keys/sign` check (B77) runs on the
+certificate's stored owner and passes on the stale grant, so the owner's
+certificates keep being re-signed every renewal window. That happens
+wherever the certificate rows outlive their owner: on SQLite, whose
+`foreign_keys` PRAGMA is off project-wide, the `certificates.user_id`
+`ON DELETE CASCADE` (`db.go` ~477) never fires, so a deleted user's
+certificates and keys stay behind. A service account is not a `users` row,
+so its certificates can only exist where that foreign key is not enforced
+(SQLite); an expired one is never deleted, so its grants stay live too.
+
+**Root cause**: `UserRepository.Delete` deletes `user_roles` and then the
+`users` row, nothing else. `oauth2Service.DeleteClient` deletes only the
+`oauth2_clients` row. `role_assignments.principal_id` and
+`access_policies.principal_id` have no foreign key (the only foreign key on
+`role_assignments` is `vault_id`), and no code deletes either table by
+principal: the only deletes are by row ID, by vault, and (for policies) by
+assignment ID. Users have no disabled or expiry state at all. Service
+accounts have `enabled` and `expires_at`, but only token issuance and
+session validation consult them, and no service, HTTP or CLI path sets
+`enabled` to false (`oauth2_clients` rows are only created, rotated or
+deleted).
+
+**Fix recipe**: on user delete and on service-account delete, delete the
+principal's `role_assignments` and `access_policies` rows in the same
+transaction (repository methods by principal ID). Have the scheduler also
+confirm, before the `keys/sign` check, that the owner still exists and, for
+a service account, is enabled and unexpired, and skip the row with a
+`failed` audit row otherwise. Consider a one-off cleanup of rows already
+orphaned.
+
+**Not a regression of B77**: before B77 the scheduler renewed for any owner
+with no check at all. B77 only narrows renewal; this entry is the case it
+does not cover.
 
 ---
 
