@@ -51,7 +51,11 @@ P-256K, and a P-256K key is recorded with type ES256K. Symmetric OCT keys
 are HSM-only and cannot be created from the CLI at all.
 
 The key is created in the vault named by --vault, which defaults to
-"default".`,
+"default".
+
+--exportable marks the key exportable. It can only be set at creation or
+import, never later, and an HSM-backed key refuses it. Exporting still
+requires the Key Vault Key Exporter role.`,
 	Example: `  # RSA key in the default vault
   rocketvault keys create --name <name> --type RSA --bits 2048
 
@@ -100,14 +104,17 @@ The key is created in the vault named by --vault, which defaults to
 			return err
 		}
 
+		exportable, _ := cmd.Flags().GetBool("exportable")
+
 		req := keyServices.CreateKeyRequest{
-			Name:    name,
-			Type:    keyType,
-			Bits:    bits,
-			Curve:   curve,
-			Tags:    tags,
-			UserID:  s.Claims.UserID,
-			VaultID: s.VaultID,
+			Name:       name,
+			Type:       keyType,
+			Bits:       bits,
+			Curve:      curve,
+			Tags:       tags,
+			UserID:     s.Claims.UserID,
+			VaultID:    s.VaultID,
+			Exportable: exportable,
 		}
 		// Only send purge protection when the flag was explicitly passed.
 		if cmd.Flags().Changed("purge-protection") {
@@ -153,4 +160,5 @@ func InitKeysCreate(keysCmd *cobra.Command) {
 	createCmd.Flags().String("curve", "P-256", "ECDSA curve (P-256, P-384, P-521, P-256K)")
 	createCmd.Flags().String("tags", "", "Comma-separated tags for the key")
 	createCmd.Flags().Bool("purge-protection", false, "Protect the key from being purged")
+	createCmd.Flags().Bool("exportable", false, "Allow this key's private material to be exported later; refused for HSM-backed keys; cannot be changed after creation")
 }

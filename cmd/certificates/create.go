@@ -40,7 +40,12 @@ Acts on the vault named by --vault, defaulting to "default". --name and
 --key-id are required and --validity-days must be positive. --auto-renew and
 --renewal-days only arm the background renewal scheduler for later; they
 change nothing about the certificate being issued now. --purge-protection is
-sent only when the flag is passed explicitly.`,
+sent only when the flag is passed explicitly.
+
+--exportable marks the certificate exportable. It can only be set here, never
+later, and needs a key that was itself created with --exportable (otherwise
+the create is refused). Exporting still requires the Key Vault Certificate
+Exporter role.`,
 	Example: `  # Self-signed certificate over an existing key
   rocketvault certificate create --name <name> --key-id <key-id> \
     --validity-days 365
@@ -98,6 +103,8 @@ sent only when the flag is passed explicitly.`,
 		}
 		certService := s.Container.GetCertificateService()
 
+		exportable, _ := cmd.Flags().GetBool("exportable")
+
 		// Create certificate request
 		req := certServices.CreateCertificateRequest{
 			Name:         name,
@@ -109,6 +116,7 @@ sent only when the flag is passed explicitly.`,
 			AutoRenew:    autoRenew,
 			RenewalDays:  renewalDays,
 			IsCA:         isCA,
+			Exportable:   exportable,
 		}
 		// Only send purge protection when the flag was explicitly passed.
 		if cmd.Flags().Changed("purge-protection") {
@@ -153,4 +161,5 @@ func InitCertificatesCreate(certificatesCmd *cobra.Command) {
 	createCmd.Flags().Int("renewal-days", 30, "Days before expiry to trigger renewal")
 	createCmd.Flags().Bool("purge-protection", false, "Protect the certificate from being purged")
 	createCmd.Flags().Bool("is-ca", false, "Issue the certificate as a Certificate Authority that can sign other certificates")
+	createCmd.Flags().Bool("exportable", false, "Allow this certificate and its private key to be exported later; requires a key created with --exportable; cannot be changed after creation")
 }

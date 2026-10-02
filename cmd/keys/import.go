@@ -48,7 +48,11 @@ Microsoft.KeyVault/vaults/keys/import/action data action in the target vault.
 no private key material (public-only) is rejected.
 
 The key is created in the vault named by --vault, which defaults to
-"default".`,
+"default".
+
+--exportable marks the key exportable. It can only be set at creation or
+import, never later, and an HSM-backed key refuses it. Exporting still
+requires the Key Vault Key Exporter role.`,
 	Example: `  # Import from a JWK file
   rocketvault keys import --name <name> --jwk-file ./key.jwk.json
 
@@ -101,12 +105,15 @@ The key is created in the vault named by --vault, which defaults to
 			return err
 		}
 
+		exportable, _ := cmd.Flags().GetBool("exportable")
+
 		req := keyServices.ImportKeyRequest{
-			Name:    name,
-			JWK:     jwkBytes,
-			Tags:    tags,
-			UserID:  s.Claims.UserID,
-			VaultID: s.VaultID,
+			Name:       name,
+			JWK:        jwkBytes,
+			Tags:       tags,
+			UserID:     s.Claims.UserID,
+			VaultID:    s.VaultID,
+			Exportable: exportable,
 		}
 		if cmd.Flags().Changed("purge-protection") {
 			purgeProtection, _ := cmd.Flags().GetBool("purge-protection")
@@ -133,4 +140,5 @@ func InitKeysImport(keysCmd *cobra.Command) {
 	importCmd.Flags().String("jwk-file", "", "Path to a file containing JWK JSON")
 	importCmd.Flags().String("tags", "", "Comma-separated tags for the key")
 	importCmd.Flags().Bool("purge-protection", false, "Protect the key from being purged")
+	importCmd.Flags().Bool("exportable", false, "Allow this key's private material to be exported later; refused for HSM-backed keys; cannot be changed after creation")
 }
