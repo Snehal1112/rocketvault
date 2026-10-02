@@ -709,6 +709,10 @@ A vault has no data-plane role assignments when it's created — grant one befor
 ./rocketvault --username admin --password admin123 --totp-code <code> \
   keys rotate <key-id>
 
+# Export an exportable key's private key to a sealed file
+./rocketvault --username admin --password admin123 --totp-code <code> \
+  keys export <key-id> --file signer.pem.sealed
+
 # Delete a key (by key ID)
 ./rocketvault --username admin --password admin123 --totp-code <code> \
   keys delete <key-id>
@@ -720,6 +724,11 @@ A vault has no data-plane role assignments when it's created — grant one befor
 # Create a self-signed certificate
 ./rocketvault --username admin --password admin123 --totp-code <code> \
   certificate create --name "my-cert" --key-id <key-id> --validity-days 365
+
+# Export an exportable certificate and its key, then open the sealed file
+./rocketvault --username admin --password admin123 --totp-code <code> \
+  certificate export <certificate-id> --file client.pem.sealed
+./rocketvault export open client.pem.sealed --file client.pem
 
 # Get/update certificate policy (renewal rules)
 # Use the REST API: GET/PUT /api/v1/certificates/{id}/policy

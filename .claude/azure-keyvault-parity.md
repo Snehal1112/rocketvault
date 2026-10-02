@@ -263,6 +263,11 @@ above; verified against `api/export.go`, `api/keys_export.go`,
 - Error codes are snake_case in the R6 body
   `{"error":{"code","message"}}`, used only by the two export routes. Azure
   uses CamelCase codes such as `KeyNotFound`.
+- The CLI (`rocketvault certificates export`, `rocketvault keys export`)
+  writes a passphrase-sealed file by default (argon2id and AES-256-GCM, the
+  `secrets export` envelope), opened offline with `rocketvault export open`.
+  Azure's CLI has no sealing step. Local mode only; design:
+  `docs/superpowers/specs/2026-10-02-cli-certificate-and-key-export-design.md`.
 
 ## 5. Multi-vault / namespacing
 

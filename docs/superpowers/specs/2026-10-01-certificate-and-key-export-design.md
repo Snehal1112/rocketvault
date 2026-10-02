@@ -57,8 +57,9 @@ export every private key in a vault.
   non-exportable, and a caller re-creates or re-imports to get an exportable one.
 - Export of HSM-backed (`pkcs11:`) keys, symmetric `oct` keys, or ES256K keys
   (the standard library cannot encode ES256K as PKCS#8).
-- The certificate-to-secret linkage, CLI export commands, and certificate import
-  or CSR merge.
+- The certificate-to-secret linkage, and certificate import or CSR merge. CLI
+  export commands were a non-goal here; they were added by
+  [2026-10-02-cli-certificate-and-key-export-design.md](2026-10-02-cli-certificate-and-key-export-design.md).
 
 ## Design
 

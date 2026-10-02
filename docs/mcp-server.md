@@ -116,6 +116,14 @@ With `confirm_destructive: true` (the default), `delete_item`, `purge_item`,
 resource name. Leave it on. It costs one argument and it stops a destructive
 call triggered by text the model read out of your vault.
 
+### Never exposed: certificate and key export
+
+No tier, flag or configuration exposes certificate or key export as an MCP
+tool, and none is planned. An export returns an unencrypted private key, and a
+tool result lands in the model's context. Use `rocketvault certificates
+export` or `rocketvault keys export` from a terminal instead; both seal the
+file by default.
+
 ## Least privilege: which role to grant
 
 The MCP server can only do what its principal's role assignments allow. The

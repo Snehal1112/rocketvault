@@ -206,6 +206,7 @@ rocketvault/
 - **KeyService**: RSA/ECDSA key generation, access control, CRUD operations
 - Symmetric AES (`oct`) keys are **HSM-only** by design, matching Azure (Managed HSM never allows symmetric key creation on Standard/Premium vaults, and RocketVault's software provider mirrors that restriction). `KeyService.CreateOctKey` → `crypto.KeyProvider.GenerateAESKey` always fails with `crypto.ErrOctKeysRequireHSM` unless `hsm.enabled: true`; the PKCS#11 provider implements AES-KW, AES-CBC, and AES-GCM wrap/encrypt for real (2026-08-19 — see `docs/superpowers/specs/2026-08-19-hsm-secp256k1-aes-cbc-gcm-design.md`). `POST /keys` accepts `"type": "OCT"` with `"bits"` of 128/192/256. The PKCS#11 provider also generates and signs/verifies secp256k1 (P-256K) EC keys as of the same date — real HSM vendors may still reject non-NIST curves like secp256k1 at the hardware level, which `isHSMCapabilityError` (`internal/crypto/pkcs11_provider.go`) degrades to a clean `ErrUnsupportedCurve`/`ErrUnsupportedAlgorithm` instead of a leaked error.
 - Software keys created or imported with `exportable: true` can be exported as unencrypted PKCS#8 via `POST .../keys/{key_id}/export` (`KeyService.ExportKey`), with the Key Vault Key Exporter role. The flag is immutable (`KeyRepository.Update` never writes it, rotation keeps it, restore forces it false); HSM, `oct` and ES256K keys are never exportable; a revoked key gives 409 `key_disabled`. Design: `docs/superpowers/specs/2026-10-01-certificate-and-key-export-design.md`; the 2026-08-25 key-export decision record is superseded for software keys only.
+- The CLI counterpart is `rocketvault keys export <id>` (`cmd/keys/export.go`), sealed by default under the `secrets export` envelope, with `rocketvault export open` (`cmd/export.go`) to decrypt it offline. Local mode only; never an MCP tool. Design: `docs/superpowers/specs/2026-10-02-cli-certificate-and-key-export-design.md`.
 
 ### Caching
 
@@ -244,6 +245,7 @@ full design.
 - Certificates are versioned (2026-10-01): the `certificates` row is always the current version and `certificate_versions` holds every earlier one. `RenewCertificate` archives and bumps in one `CertificateVersionRepository.ArchiveAndRenew` transaction guarded by the version number, so a lost race is a 409. `CertificateRepository.Update` writes metadata only; never write a certificate body or key through it. Design: `docs/superpowers/specs/2026-10-01-certificate-versioning-design.md`.
 - Soft-delete (list/restore/purge) is vault-scoped for both keys and certificates, mirroring the pre-existing secrets soft-delete pattern (`internal/services/secrets/secret_service.go`'s `ListDeletedSecrets`/`RecoverSecret`/`PurgeSecret`) — see `KeyService.ListDeletedKeys`/`RecoverKey`/`PurgeKey` and the `CertificateService` equivalents.
 - Certificates created with `exportable: true` (which requires an exportable key, else 409) export as a leaf-first chain plus PKCS#8, or PKCS12, via `POST .../certificates/{certificate_id}/export` (`CertificateService.ExportCertificate`, reads the repository never `certcache`, never retried). The export routes alone use the R6 `{"error":{"code","message"}}` body (`api/export.go`), set `Cache-Control: no-store`, and audit every attempt through `AuditService.RecordEvent`.
+- The CLI counterpart is `rocketvault certificates export <id>` (`cmd/certificates/export.go`, `--format pem|pkcs12`, PKCS12 password never a flag value). Both CLI export commands audit every attempt through `internal/services/exportaudit`, the package the HTTP export handlers now share for their fixed reasons and event shape.
 
 ### Authorization (`internal/services/authorization/`)
 - **RBACService**: global role permissions for vault and user management only
@@ -259,6 +261,8 @@ HTTP requests get their authorization check for free from middleware. CLI comman
 - **Per-vault data-plane operations** (`secrets`, `keys`, `certificates`): call `cmd/vaultcli.RequireDataAction` (which re-runs the identical two-stage check HTTP gets — `AccessPolicyService`'s explicit-deny override, then the deny-by-default role-assignment check) after resolving the target vault via `vaultcli.ResolveVaultID`.
 - **Vault-management operations** (`vaults` lifecycle: create/update/delete/recover/purge; `vault-access` role-assignment grant/revoke): call their own package-local helpers (`cmd/vaults/authz.go`, `cmd/vault-access/authz.go`), built on the shared `CanManageVault`/`CanPurgeVault`/`CanManageRoleAssignments` checks in `internal/services/authorization`. `CanManageVault`/`CanManageRoleAssignments` consult the vault-scoped check (`CheckVaultScopedAccess`) for a concrete vault and `CheckAccess` only for the `uuid.Nil` create/list decision — see the Authorization section above.
 - **Provisioning-grant management** (`vault-provisioning grant`/`revoke`/`list`): calls its own package-local helper, `cmd/vault-provisioning/authz.go`'s `requireGrantAdmin`. Unlike the `vaults` and `vault-access` helpers above, this one has no access-policy or role-assignment path at all — it checks only the global `admin` account role. This tier is admin-only and deliberately non-delegable: a principal able to amend its own provisioning grant could raise its own quota, and the bound the grant exists to impose would be decorative. See `docs/release-notes/v4.5.0-vault-provisioning.md`.
+
+`certificates export` and `keys export` are per-vault data-plane operations (`ActionCertificatesExportItem` / `ActionKeysExport`, `OpCreate`) with no account-role gate, because the exporter roles are granted per vault to principals that typically hold only the `user` or `service_account` account role. `export open` decrypts a local file only; its group replaces the root pre-run, so it needs no session.
 
 A new CLI command that skips its tier's check bypasses authorization entirely — there is no other enforcement point on the CLI path.
 
@@ -530,6 +534,11 @@ npm run typecheck # If available
 
 ## Documentation History
 
+- **2026-10-02**: CLI certificate and key export — `rocketvault certificates
+  export`, `rocketvault keys export` and the offline `rocketvault export open`,
+  sealed by default like `secrets export`; shared `internal/services/exportaudit`
+  for the HTTP and CLI audit events. Plan:
+  `docs/superpowers/plans/2026-10-02-cli-certificate-and-key-export.md`.
 - **2026-10-01**: Certificate and key export — `POST .../certificates/{id}/export`
   (PEM chain + PKCS#8 or PKCS12) and `POST .../keys/{id}/export` (software keys,
   PKCS#8) on both route shapes, the immutable `exportable` flag on every

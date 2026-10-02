@@ -36,13 +36,15 @@ var keysCmd = &cobra.Command{
 inspect and list them, update their metadata, rotate them, delete them, and
 use them to sign, verify, wrap, and unwrap. Crypto operations run inside the
 vault and return only the result. Private key material leaves the vault only
-through "keys export", and only for a key created with --exportable.
+through "keys export", and only for a key created or imported with --exportable.
 
 Creating, updating, rotating, deleting, and every crypto operation require the
 admin or crypto_manager role plus the matching data action (keys/create,
 keys/sign, keys/wrap, ...) in the target vault. get and list require only the
-keys/read data action. Vault access is deny-by-default, so a role assignment
-must exist for the target vault — see 'rocketvault vault-access'.
+keys/read data action. export needs only the keys/export data action, held by
+the Key Vault Key Exporter and Key Vault Administrator roles, and no account
+role. Vault access is deny-by-default, so a role assignment must exist for the
+target vault — see 'rocketvault vault-access'.
 
 Every command here acts on the vault named by --vault, defaulting to
 "default". The CLI creates RSA and ECDSA keys only; symmetric AES (OCT) keys

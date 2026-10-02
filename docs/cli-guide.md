@@ -885,6 +885,20 @@ To see which versions a key has, use the REST endpoint `GET /api/v1/keys/{id}/ve
 
 > Addressing an older version needs no extra permission. It's the same data action as using the current one, on a key you already have access to.
 
+### Export a key
+
+A key created or imported with `--exportable` can be exported as an unencrypted PKCS#8 private key in PEM. You need a role assignment that grants the key export permission — `Key Vault Key Exporter` or `Key Vault Administrator`, which only a global admin can grant. No account role is needed. HSM-backed, `oct` and ES256K keys can never be exported.
+
+```
+go run main.go keys export KEY-ID-HERE --file ./signer.pem.sealed
+```
+
+The file is sealed by default, exactly like `secrets export`: the passphrase comes from `--passphrase-file`, then `ROCKETVAULT_EXPORT_PASSPHRASE`, then a prompt asked twice. Add `--version 2` for an older version, and `--vault <name>` for another vault. An existing file is never replaced unless you add `--force`. Turn the sealed file into the PEM file with `export open` (see "Open a sealed export file" below).
+
+To write the PEM file directly, add `--encrypt=false`; the command prints a warning, because the file then holds the private key in the clear. Every attempt, allowed or refused, is recorded in the audit log.
+
+For scripts, give the passphrase through `--passphrase-file` or `ROCKETVAULT_EXPORT_PASSPHRASE` so nothing prompts. See "How export files are written" below for the file-writing rules.
+
 ---
 
 ## Managing Certificates
@@ -973,6 +987,54 @@ go run main.go certificate renew CERT-ID-HERE \
   --validity-days 365 \
   --vault my-team-vault
 ```
+
+### Export a certificate and its private key
+
+A certificate created with `--exportable` can be exported with its private key, as one PEM file (the certificate, any intermediate CA certificates, then the private key) or as a PKCS12 bundle. You need `Key Vault Certificate Exporter` or `Key Vault Administrator` on the vault; no account role is needed.
+
+```
+go run main.go certificates export CERT-ID-HERE --file ./client.pem.sealed
+```
+
+For PKCS12, add `--format pkcs12` and give the bundle's password through `--pkcs12-password-file`, the `ROCKETVAULT_PKCS12_PASSWORD` variable, or the prompt (asked twice). An empty password needs `--pkcs12-empty-password`; a password is never a flag value. Add `--compat legacy` for tools that cannot read the default AES-256 encoding:
+
+```
+go run main.go certificates export CERT-ID-HERE --format pkcs12 \
+  --pkcs12-password-file ./p12-pass --file ./client.p12.sealed
+```
+
+The output is sealed by default, exactly like `secrets export`; `--encrypt=false` writes the PEM or PKCS12 file directly and prints a warning. `--version` exports an older version. A PEM export is one file; split it if a tool needs two:
+
+```
+openssl pkey -in client.pem -out client.key
+sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' client.pem > client.crt
+```
+
+**Running without a terminal.** The export passphrase comes from `--passphrase-file` or `ROCKETVAULT_EXPORT_PASSPHRASE`; for PKCS12 the bundle password comes from `--pkcs12-password-file`, `ROCKETVAULT_PKCS12_PASSWORD` or `--pkcs12-empty-password`. A user at a terminal who sets none of these is asked twice for the passphrase and then, for PKCS12, twice for the PKCS12 password. Without a terminal and without a source, the command fails and writes no file.
+
+### How export files are written
+
+Both export commands, and `export open`, write the file the same way:
+
+- The file has mode 0600 and missing parent directories are created with mode 0700.
+- It is written to a temporary file named `.rocketvault-export-*` in the same directory, synced, then moved into place, so a failure normally leaves no partial output. If the process is killed (SIGINT or SIGKILL) during the write, that temporary file can survive. It is mode 0600 and, with `--encrypt=false`, holds plaintext, so delete any leftover `.rocketvault-export-*` file. The parent directory is not synced, so a power loss right after the command returns can still lose the file.
+- An existing file is never replaced unless you add `--force`. Without `--force` the file is created with a hard link, so the output filesystem must support hard links. Otherwise the command fails with "the output filesystem does not support hard links; choose another location or use --force".
+- `--file -` is refused: an export is only ever written to a file.
+- Nothing secret is printed. Stdout carries only a status block (name, version, format, encryption, file path).
+
+### Open a sealed export file
+
+`export open` turns a sealed certificate or key export back into the file it holds. It works offline, with no login, no config file, no database and no server, so you can run it on the machine that will use the key:
+
+```
+go run main.go export open ./client.pem.sealed --file ./client.pem
+```
+
+It asks for the passphrase (or reads `--passphrase-file` or `ROCKETVAULT_EXPORT_PASSPHRASE`), writes the file with owner-only permissions, and refuses to replace an existing file unless you add `--force`. A sealed secrets export is refused; open that with `secrets import` instead. A sealed file larger than 1 MiB is refused as not an export. The status block it prints strips control characters from the name and format stored in the file. Delete the opened file when you are done with it.
+
+`rocketvault export open --help` works anywhere. `rocketvault help export` and shell completion for `export open` still need a config file, like the other command groups.
+
+Export is local mode only: with a remote target configured, both export commands are refused.
 
 ### Delete a certificate
 
