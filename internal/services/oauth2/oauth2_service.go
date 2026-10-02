@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"rocketvault/common"
 	"rocketvault/internal/repositories"
 	"rocketvault/model"
 )
@@ -63,6 +64,9 @@ type oauth2Service struct {
 	passwordSvc PasswordService
 	jwtSvc      JWTService
 	tokenExpiry time.Duration
+	// burnCompare spends a dummy bcrypt compare when a client is rejected
+	// before its secret is checked. Tests replace it with a spy.
+	burnCompare func(secret string)
 }
 
 // NewOAuth2Service creates a new OAuth2Service with the provided config.
@@ -76,6 +80,7 @@ func NewOAuth2Service(cfg OAuth2Config) OAuth2Service {
 		passwordSvc: cfg.PasswordService,
 		jwtSvc:      cfg.JWTService,
 		tokenExpiry: expiry,
+		burnCompare: common.BurnPasswordCompare,
 	}
 }
 
@@ -84,16 +89,17 @@ func NewOAuth2Service(cfg OAuth2Config) OAuth2Service {
 func (s *oauth2Service) IssueToken(ctx context.Context, clientName, secret string) (*TokenResponse, error) {
 	client, err := s.repo.FindByName(ctx, clientName)
 	if err != nil {
+		// Spend the bcrypt time a wrong secret costs, so timing cannot tell
+		// an unknown client from a wrong secret.
+		s.burnCompare(secret)
 		return nil, fmt.Errorf("invalid client credentials")
 	}
 
 	// Invalid-credentials errors are intentionally uniform to prevent
-	// credential-enumeration (RFC 6749 §5.2 / OWASP).
-	if !client.Enabled {
-		return nil, fmt.Errorf("invalid client credentials")
-	}
-
-	if client.ExpiresAt != nil && client.ExpiresAt.Before(time.Now().UTC()) {
+	// credential-enumeration (RFC 6749 §5.2 / OWASP). Disabled and expired
+	// clients also pay the same bcrypt cost as a wrong secret.
+	if !client.Enabled || (client.ExpiresAt != nil && client.ExpiresAt.Before(time.Now().UTC())) {
+		s.burnCompare(secret)
 		return nil, fmt.Errorf("invalid client credentials")
 	}
 

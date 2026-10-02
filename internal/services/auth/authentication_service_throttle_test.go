@@ -28,6 +28,7 @@ type throttleFixture struct {
 	totp     *MockTOTPService
 	jwt      *MockJWTService
 	steps    *MockTOTPStepRepository
+	burns    *burnSpy
 }
 
 func newThrottleFixture() *throttleFixture {
@@ -40,6 +41,7 @@ func newThrottleFixture() *throttleFixture {
 		totp:     &MockTOTPService{},
 		jwt:      &MockJWTService{},
 		steps:    &MockTOTPStepRepository{},
+		burns:    &burnSpy{},
 	}
 }
 
@@ -58,7 +60,9 @@ func (f *throttleFixture) service(withSteps bool) AuthenticationService {
 	if withSteps {
 		cfg.TOTPStepRepository = f.steps
 	}
-	return NewAuthenticationService(cfg)
+	svc := NewAuthenticationService(cfg)
+	f.burns.install(svc)
+	return svc
 }
 
 // failures returns the recorded failure count for username, or 0.
@@ -168,6 +172,9 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 		// wantClient marks a client outcome that must not count toward the
 		// database circuit breaker (B90).
 		wantClient bool
+		// wantBurn marks an exit that found no account and must spend a
+		// dummy bcrypt compare in place of the real one.
+		wantBurn bool
 	}{
 		{
 			name: "unknown user",
@@ -177,6 +184,7 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 			withSteps:  true,
 			wantMsg:    "invalid credentials",
 			wantClient: true,
+			wantBurn:   true,
 		},
 		{
 			name: "user lookup database error",
@@ -185,6 +193,7 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 			},
 			withSteps: true,
 			wantMsg:   "invalid credentials",
+			wantBurn:  true,
 		},
 		{
 			name: "wrong password",
@@ -280,6 +289,11 @@ func TestAuthenticateUser_EveryFailureExitCountsOnce(t *testing.T) {
 			}
 			assert.Equal(t, 2, f.failures(t, "alice"), "the failure must be recorded exactly once")
 			assert.Equal(t, tt.wantClient, retry.IsClientError(err), "client outcomes, and only they, skip the breaker")
+			if tt.wantBurn {
+				assert.Equal(t, []string{"pw"}, f.burns.calls(), "a missing account must pay one bcrypt compare with the supplied password")
+			} else {
+				assert.Empty(t, f.burns.calls(), "an exit with an account already paid the real compare")
+			}
 		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"sync"
 
 	"github.com/spf13/viper"
 	"golang.org/x/crypto/bcrypt"
@@ -27,6 +28,38 @@ func HashString(input string) (string, error) {
 		return "", err
 	}
 	return string(hash), nil
+}
+
+var (
+	dummyHashOnce sync.Once
+	dummyHash     []byte
+)
+
+// loadDummyHash returns the dummy bcrypt hash, building it on first use. It is
+// the hash of random bytes nobody knows, at the production cost, so it guards
+// nothing and no password can match it.
+func loadDummyHash() []byte {
+	dummyHashOnce.Do(func() {
+		random := make([]byte, 32)
+		_, _ = rand.Read(random)
+		// A failure here only makes the burn cheaper, never wrong.
+		dummyHash, _ = bcrypt.GenerateFromPassword(random, bcryptCost)
+	})
+	return dummyHash
+}
+
+// PrimeBurnPasswordCompare builds the dummy hash ahead of the first request,
+// so the first unknown account is not slower than later ones.
+func PrimeBurnPasswordCompare() {
+	loadDummyHash()
+}
+
+// BurnPasswordCompare spends one bcrypt comparison at the production cost and
+// discards the outcome. Callers run it when a lookup finds no account, so a
+// missing account takes as long to reject as a wrong password and response
+// timing does not reveal which names exist.
+func BurnPasswordCompare(password string) {
+	_ = bcrypt.CompareHashAndPassword(loadDummyHash(), []byte(password))
 }
 
 // masterKeySize is the AES-256 key length in raw bytes.

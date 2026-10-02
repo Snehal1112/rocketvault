@@ -3,8 +3,10 @@ package common
 import (
 	"encoding/base64"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func setupMasterKey(t *testing.T) string {
@@ -128,5 +130,54 @@ func TestDecryptSecret_BadCiphertext(t *testing.T) {
 	_, err = DecryptSecret(bad)
 	if err == nil {
 		t.Error("expected error for corrupted ciphertext")
+	}
+}
+
+func TestBurnPasswordCompare_DummyHashUsesProductionCost(t *testing.T) {
+	cost, err := bcrypt.Cost(loadDummyHash())
+	if err != nil {
+		t.Fatalf("dummy hash is not a bcrypt hash: %v", err)
+	}
+	if cost != bcryptCost {
+		t.Fatalf("dummy hash cost %d, want the production cost %d", cost, bcryptCost)
+	}
+}
+
+func TestBurnPasswordCompare_BuildsDummyHashOnce(t *testing.T) {
+	PrimeBurnPasswordCompare()
+	first := loadDummyHash()
+	BurnPasswordCompare("x")
+	second := loadDummyHash()
+	if len(first) == 0 || &first[0] != &second[0] {
+		t.Fatal("the dummy hash must be built once and reused")
+	}
+}
+
+func TestBurnPasswordCompare_CostsAsMuchAsARealCompare(t *testing.T) {
+	hash, err := HashString("real")
+	if err != nil {
+		t.Fatal(err)
+	}
+	PrimeBurnPasswordCompare()
+
+	// Take the fastest of a few runs on each side, so one slow scheduling
+	// slice cannot fail the test.
+	fastest := func(f func()) time.Duration {
+		best := time.Duration(1<<63 - 1)
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			f()
+			if d := time.Since(start); d < best {
+				best = d
+			}
+		}
+		return best
+	}
+	realCompare := fastest(func() { _ = CheckPassword("x", hash) })
+	burned := fastest(func() { BurnPasswordCompare("x") })
+
+	// Same bcrypt cost, so the same order of magnitude; allow a wide band.
+	if burned < realCompare/4 {
+		t.Fatalf("dummy compare took %v, real compare %v", burned, realCompare)
 	}
 }

@@ -3,6 +3,7 @@ package oauth2_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"rocketvault/common"
 	"rocketvault/internal/repositories"
 	oauth2svc "rocketvault/internal/services/oauth2"
 	"rocketvault/model"
@@ -214,4 +216,89 @@ func TestOAuth2Service_RotateSecret_ReturnsPlainText(t *testing.T) {
 	plain, err := svc.RotateSecret(context.Background(), clientID)
 	require.NoError(t, err)
 	assert.NotEmpty(t, plain)
+}
+
+// burnRecorder replaces the dummy bcrypt compare and records each secret it
+// was asked to burn.
+type burnRecorder struct {
+	mu     sync.Mutex
+	burned []string
+}
+
+func (b *burnRecorder) burn(secret string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.burned = append(b.burned, secret)
+}
+
+func (b *burnRecorder) calls() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.burned...)
+}
+
+// Every rejection that skips the real secret compare must pay a dummy one,
+// so timing cannot tell an unknown, disabled or expired client from a wrong
+// secret. The error stays the uniform one.
+func TestOAuth2Service_IssueToken_RejectionsBurnPasswordCompare(t *testing.T) {
+	past := time.Now().UTC().Add(-time.Hour)
+	cases := map[string]*model.OAuth2Client{
+		"ghost":    nil,
+		"disabled": {ID: uuid.New(), Name: "disabled", ClientSecret: "hash", Enabled: false},
+		"expired":  {ID: uuid.New(), Name: "expired", ClientSecret: "hash", Enabled: true, ExpiresAt: &past},
+	}
+	for name, client := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := &mockOAuth2ClientRepo{}
+			if client == nil {
+				repo.On("FindByName", mock.Anything, name).Return(nil, errors.New("not found"))
+			} else {
+				repo.On("FindByName", mock.Anything, name).Return(client, nil)
+			}
+			pw := &mockPasswordService{}
+			svc := buildService(repo, pw, &mockJWTService{})
+			rec := &burnRecorder{}
+			oauth2svc.SetBurnCompareForTest(svc, rec.burn)
+
+			_, err := svc.IssueToken(context.Background(), name, "secret")
+
+			require.Error(t, err)
+			assert.Equal(t, "invalid client credentials", err.Error())
+			assert.Equal(t, []string{"secret"}, rec.calls())
+			pw.AssertNotCalled(t, "ValidatePassword")
+		})
+	}
+}
+
+// A wrong secret already pays the real compare and must not burn a second.
+func TestOAuth2Service_IssueToken_WrongSecretDoesNotBurn(t *testing.T) {
+	repo := &mockOAuth2ClientRepo{}
+	pw := &mockPasswordService{}
+	svc := buildService(repo, pw, &mockJWTService{})
+	rec := &burnRecorder{}
+	oauth2svc.SetBurnCompareForTest(svc, rec.burn)
+
+	client := &model.OAuth2Client{ID: uuid.New(), Name: "svc", ClientSecret: "hash", Enabled: true}
+	repo.On("FindByName", mock.Anything, "svc").Return(client, nil)
+	pw.On("ValidatePassword", "wrong", "hash").Return(errors.New("hash mismatch"))
+
+	_, err := svc.IssueToken(context.Background(), "svc", "wrong")
+
+	require.Error(t, err)
+	assert.Empty(t, rec.calls())
+}
+
+// The default dummy compare is the real bcrypt one. The bound is a loose lower
+// limit: cost 12 takes far longer than 20ms, and a slow machine only adds time.
+func TestOAuth2Service_IssueToken_UnknownClientPaysBcryptCost(t *testing.T) {
+	repo := &mockOAuth2ClientRepo{}
+	repo.On("FindByName", mock.Anything, "ghost").Return(nil, errors.New("not found"))
+	svc := buildService(repo, &mockPasswordService{}, &mockJWTService{})
+	common.PrimeBurnPasswordCompare()
+
+	start := time.Now()
+	_, err := svc.IssueToken(context.Background(), "ghost", "secret")
+
+	require.Error(t, err)
+	assert.Greater(t, time.Since(start), 20*time.Millisecond, "an unknown client must still pay for a bcrypt compare")
 }

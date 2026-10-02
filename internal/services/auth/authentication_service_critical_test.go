@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,8 +16,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"rocketvault/common"
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
+	"rocketvault/internal/retry"
 	"rocketvault/model"
 )
 
@@ -60,6 +63,95 @@ func TestAuthenticateUser_UserNotFound(t *testing.T) {
 	assert.Nil(t, result)
 	pwd.AssertNotCalled(t, "ValidatePassword")
 	totp.AssertNotCalled(t, "ValidateCodeWithStep")
+}
+
+// burnSpy stands in for the dummy bcrypt compare and records each password
+// it was asked to burn.
+type burnSpy struct {
+	mu     sync.Mutex
+	burned []string
+}
+
+// install points svc's dummy compare at the spy.
+func (b *burnSpy) install(svc AuthenticationService) {
+	svc.(*authenticationService).burnCompare = func(password string) {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.burned = append(b.burned, password)
+	}
+}
+
+// calls returns the passwords burned so far.
+func (b *burnSpy) calls() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.burned...)
+}
+
+// An unknown user must pay one bcrypt compare with the supplied password, the
+// same work a known user with a wrong password costs, and still get the same
+// generic client error.
+func TestAuthenticateUser_UserNotFound_BurnsPasswordCompare(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	userRepo := &MockUserRepository{}
+	pwd := &MockPasswordService{}
+	userRepo.On("ReadByUsername", ctx, "nobody").Return(model.User{}, fmt.Errorf("user not found: %w", repositories.ErrNotFound))
+
+	svc := newAuthService(userRepo, &MockSessionRepository{}, pwd, &MockTOTPService{}, &MockJWTService{}, nil)
+	spy := &burnSpy{}
+	spy.install(svc)
+
+	_, err := svc.AuthenticateUser(ctx, "nobody", "whatever", "123456")
+
+	require.Error(t, err)
+	assert.Equal(t, "invalid credentials", err.Error())
+	assert.True(t, retry.IsClientError(err))
+	assert.Equal(t, []string{"whatever"}, spy.calls())
+	pwd.AssertNotCalled(t, "ValidatePassword")
+}
+
+// A wrong password already pays the real compare, so it must not burn a
+// second one and become slower than an unknown user.
+func TestAuthenticateUser_WrongPassword_DoesNotBurn(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	userRepo := &MockUserRepository{}
+	pwd := &MockPasswordService{}
+	userRepo.On("ReadByUsername", ctx, "alice").Return(model.User{ID: uuid.New(), Username: "alice", PasswordHash: "hashed", TOTPSecret: "secret"}, nil)
+	pwd.On("ValidatePassword", "wrong", "hashed").Return(errors.New("mismatch"))
+
+	svc := newAuthService(userRepo, &MockSessionRepository{}, pwd, &MockTOTPService{}, &MockJWTService{}, nil)
+	spy := &burnSpy{}
+	spy.install(svc)
+
+	_, err := svc.AuthenticateUser(ctx, "alice", "wrong", "123456")
+
+	require.Error(t, err)
+	assert.Equal(t, "invalid credentials", err.Error())
+	assert.Empty(t, spy.calls())
+}
+
+// The default dummy compare is the real bcrypt one. The bound is a loose lower
+// limit: cost 12 takes far longer than 20ms, and a slow machine only adds time.
+func TestAuthenticateUser_UserNotFound_CostsAsMuchAsWrongPassword(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	userRepo := &MockUserRepository{}
+	userRepo.On("ReadByUsername", ctx, "nobody").Return(model.User{}, errors.New("not found"))
+	svc := newAuthService(userRepo, &MockSessionRepository{}, &MockPasswordService{}, &MockTOTPService{}, &MockJWTService{}, nil)
+	common.PrimeBurnPasswordCompare()
+
+	start := time.Now()
+	_, err := svc.AuthenticateUser(ctx, "nobody", "whatever", "123456")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Equal(t, "invalid credentials", err.Error())
+	assert.Greater(t, elapsed, 20*time.Millisecond, "an unknown user must still pay for a bcrypt compare")
 }
 
 // --- ValidateSession ---

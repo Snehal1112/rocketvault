@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/viper"
 
+	"rocketvault/common"
 	"rocketvault/internal/backup"
 	"rocketvault/internal/cache"
 	"rocketvault/internal/certcache"
@@ -442,6 +443,11 @@ func (c *ServiceContainer) initializeServices() error {
 	// Initialize authentication services
 	c.passwordService = authServices.NewPasswordService()
 	c.totpService = authServices.NewTOTPService()
+
+	// Build the dummy hash that unknown-account logins compare against now,
+	// off the startup path, so the first such login is not slower than later
+	// ones.
+	go common.PrimeBurnPasswordCompare()
 
 	// Initialize cryptography service early — needed by SelfPKIProvider.
 	c.cryptoService = secretServices.NewCryptographyService()

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
+	"rocketvault/common"
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
 	"rocketvault/internal/retry"
@@ -103,6 +104,9 @@ type authenticationService struct {
 	logger           *logging.Logger
 	auditService     auditServices.AuditServiceInterface
 	throttle         *LoginThrottle
+	// burnCompare spends a dummy bcrypt compare when no account was found.
+	// Tests replace it with a spy.
+	burnCompare func(password string)
 }
 
 // AuthenticationConfig holds the dependencies for authentication service.
@@ -149,6 +153,7 @@ func NewAuthenticationService(config AuthenticationConfig) AuthenticationService
 		logger:           config.Logger,
 		auditService:     config.AuditService,
 		throttle:         config.LoginThrottle,
+		burnCompare:      common.BurnPasswordCompare,
 	}
 }
 
@@ -190,6 +195,9 @@ func (s *authenticationService) AuthenticateUser(ctx context.Context, username, 
 			})
 		}
 		s.logger.WithField("username", username).Warn("Authentication failed: user not found")
+		// Spend the bcrypt time a wrong password costs, so timing does not
+		// reveal which usernames exist.
+		s.burnCompare(password)
 		s.recordLoginFailure(ctx, username)
 		// Only a missing user is a client outcome. A lookup fault answers
 		// the same, but still counts toward the database breaker.
