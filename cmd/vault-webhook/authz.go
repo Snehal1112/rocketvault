@@ -35,7 +35,12 @@ func requireCanManageVault(ctx context.Context, sc container.ServiceContainerInt
 		return uuid.Nil, err
 	}
 	if !authz.CanManageVault(ctx, roles, sc.GetAccessPolicyService(), principalID, vaultID) {
-		return uuid.Nil, fmt.Errorf("permission denied: managing webhook config for vault %q requires admin or vaults/manage", vaultName)
+		err := fmt.Errorf("permission denied: managing webhook config for vault %q requires admin or vaults/manage", vaultName)
+		// Audit the refusal under the same operation name the HTTP handler uses (B81).
+		if logger := sc.GetLogger(); logger != nil {
+			logger.LogAuditError(principalID.String(), "manage_vault_webhook", "denied", err.Error(), nil)
+		}
+		return uuid.Nil, err
 	}
 	return principalID, nil
 }

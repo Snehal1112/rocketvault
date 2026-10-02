@@ -10,6 +10,7 @@ import (
 
 	"rocketvault/cmd/testutils"
 	"rocketvault/common"
+	"rocketvault/internal/logging/logtest"
 	authzServices "rocketvault/internal/services/authorization"
 	"rocketvault/model"
 )
@@ -55,9 +56,14 @@ func nonAdminCtx(tc *testutils.TestContext, policySvc authzServices.AccessPolicy
 func TestRequireCanManageVault_DeniedWithoutGrant(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	ctx := nonAdminCtx(tc, &fakePolicySvc{decision: authzServices.AccessFallback})
+	rec := &logtest.Recorder{}
+	tc.MockContainer.GetLogger().SetAuditPersister(rec)
 
 	principal, err := requireCanManageVault(ctx, tc.MockContainer, tc.TestVaultID, "prod")
 	require.Error(t, err)
+	row, ok := rec.Find("manage_vault_webhook", "denied")
+	require.True(t, ok, "a refused CLI webhook change must be audited")
+	assert.Equal(t, tc.TestUserID.String(), row.UserID)
 	assert.Equal(t, uuid.Nil, principal, "a denied call must not hand back a principal to attribute")
 	assert.Contains(t, err.Error(), "permission denied")
 	assert.Contains(t, err.Error(), `"prod"`, "denial message must name the vault")
