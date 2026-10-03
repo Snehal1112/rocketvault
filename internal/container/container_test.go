@@ -892,11 +892,15 @@ func TestNewServiceContainer_LoginThrottleIsWired(t *testing.T) {
 	containerViper.Set("jwt.key_source", "os_store")
 	// The breaker keeps its default threshold of 5: failed logins are client
 	// outcomes and must not open it (B90), or the throttle would be hidden.
+	// The clock is frozen so the backoff window cannot expire while slow
+	// bcrypt logins run on a loaded machine.
+	frozen := time.Now()
 	container, err := NewServiceContainer(Config{
 		Database:    rawDB,
 		Logger:      newTestLogger(),
 		CacheConfig: cacheConfigWithSecretsDisabled(t),
 		Viper:       containerViper,
+		Now:         func() time.Time { return frozen },
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = container.Close() })

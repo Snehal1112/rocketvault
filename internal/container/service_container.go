@@ -244,6 +244,9 @@ type ServiceContainer struct {
 	// closing rocketMemClient itself, so the goroutine exits before its
 	// underlying connection pool is torn out from under it.
 	rocketMemSupervisorCancel context.CancelFunc
+
+	// now is the login throttle's clock. Nil means time.Now.
+	now func() time.Time
 }
 
 // Config holds configuration for the service container.
@@ -256,6 +259,9 @@ type Config struct {
 	// RocketMemConfig overrides the loaded cache.rocket_mem.* config, mirroring
 	// CacheConfig's own override field -- nil means "load from Viper".
 	RocketMemConfig *rvconfig.RocketMemConfig
+
+	// Now is the clock the login throttle reads. Nil means time.Now.
+	Now func() time.Time
 }
 
 // NewServiceContainer creates a new service container with the provided configuration.
@@ -285,6 +291,7 @@ func NewServiceContainer(config Config) (*ServiceContainer, error) {
 		conn:   conn,
 		logger: config.Logger,
 		viper:  config.Viper,
+		now:    config.Now,
 	}
 
 	if config.CacheConfig == nil {
@@ -484,7 +491,7 @@ func (c *ServiceContainer) initializeServices() error {
 
 	// Per-account failed-login backoff. The counter lives in the database, so
 	// it holds across restarts, server instances and the CLI.
-	c.loginThrottle = authServices.NewLoginThrottle(repositories.NewLoginFailureRepository(c.conn), c.logger, time.Now)
+	c.loginThrottle = authServices.NewLoginThrottle(repositories.NewLoginFailureRepository(c.conn), c.logger, c.now)
 
 	// Initialize authentication service
 	baseAuthService := authServices.NewAuthenticationService(authServices.AuthenticationConfig{
