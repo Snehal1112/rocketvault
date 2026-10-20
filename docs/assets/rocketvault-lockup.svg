@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 96" role="img" aria-label="RocketVault">
+  <style>.rv{fill:#0F172A}@media (prefers-color-scheme:dark){.rv{fill:#F1F5F9}}</style>
+  <rect x="4" y="16" width="64" height="64" rx="14" fill="#0FA89A"/>
+  <rect x="9" y="21" width="54" height="54" rx="10" fill="#0A6B62"/>
+  <circle cx="36" cy="48" r="12.5" fill="none" stroke="#FFFFFF" stroke-width="2.6"/>
+  <path d="M36 48V35.5" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="36" cy="48" r="2.3" fill="#FFFFFF"/>
+  <text x="92" y="65" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="46" font-weight="700" letter-spacing="-0.5">
+    <tspan class="rv">Rocket </tspan><tspan fill="#0FA89A">Vault</tspan>
+  </text>
+</svg>

@@ -103,6 +103,7 @@ bootstrap.token
 rocketvault
 rocketvault.exe
 rocketvault-*
+!docs/assets/rocketvault-*.svg
 
 # Test artifacts
 test_data/
