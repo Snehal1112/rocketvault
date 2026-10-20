@@ -1,4 +1,6 @@
-<img src="docs/assets/rocketvault-lockup.svg" alt="RocketVault" height="64"/>
+<p align="center">
+  <img src="docs/assets/rocketvault-lockup.svg" alt="RocketVault" height="64"/>
+</p>
 
 **RocketVault** is a self-hosted, open-source alternative to [Microsoft Azure Key Vault](https://azure.microsoft.com/en-us/products/key-vault), built entirely in **Go**. It brings virtually all the capabilities of Azure Key Vault — secrets management, cryptographic key operations, X.509 certificate lifecycle management, and multi-vault RBAC — to your own infrastructure, with no cloud dependency required.
 
