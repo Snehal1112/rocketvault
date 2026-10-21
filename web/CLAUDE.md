@@ -23,10 +23,14 @@ bun run typecheck   # tsc -b --noEmit
 bun run lint        # biome lint --error-on-warnings
 bun run lint:fix    # biome lint --write --error-on-warnings
 bun run format      # prettier --write "**/*.{ts,tsx}"
+bun run test        # vitest run
+bun run test:watch  # vitest (watch mode)
 ```
 
-There is no test runner wired up yet; if tests are needed, add one rather than
-assuming `bun test` is configured.
+Vitest + React Testing Library + jsdom are wired up (`vitest.config.ts` extends
+`vite.config.ts` via `mergeConfig`; setup file: `src/test/setup.ts`). Do not
+assume `bun test` (Bun's own built-in runner) is configured — `bun run test`
+is the vitest script.
 
 Two flags in those scripts are load-bearing; both guard against a check that
 silently passes while inspecting nothing:
