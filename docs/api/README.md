@@ -32,15 +32,15 @@ The following variables are used as path parameters — set them manually in the
 | `vault_name` | All vault-scoped resource routes (secrets, keys, certificates, access-policies, soft-delete) |
 | `user_id` | users/get-user, update-user, delete-user |
 | `secret_id` | secrets/get-secret, update-secret, delete-secret, versions |
-| `key_id` | keys/get-key, update-key, delete-key, rotate, wrap, unwrap |
-| `certificate_id` | certificates/get-certificate, update-certificate, delete-certificate |
+| `key_id` | keys/get-key, update-key, delete-key, rotate, wrap, unwrap, export |
+| `certificate_id` | certificates/get-certificate, update-certificate, delete-certificate, list/get/update versions, renew, export |
 | `policy_id` | access-policies/get-policy, update-policy, delete-policy |
 | `principal_id` | access-policies/list-by-principal, vault-provisioning-grants/upsert-vault-provisioning-grant, vault-provisioning-grants/delete-vault-provisioning-grant |
 | `assignment_id` | role-assignments/get-role-assignment, delete-role-assignment |
 | `service_account_id` | service-accounts/get, delete, rotate service account |
 | `ca_cert_id` | certificates/create-certificate-ca-signed |
 | `session_id` | users/revoke-session |
-| `version` | secrets/get-version |
+| `version` | secrets/get-version, certificates/get-certificate-version, update-certificate-version |
 | `client_id` | oauth2/token |
 | `client_secret` | oauth2/token |
 
@@ -53,7 +53,7 @@ oidc/              OIDC login, callback, and CLI token exchange
 users/             User CRUD + session management
 secrets/           Secret CRUD + generate, export, import, versioning (vault-scoped)
 keys/              Key CRUD + rotate, wrap, unwrap, import (vault-scoped)
-certificates/      Certificate CRUD, self-signed and CA-signed (vault-scoped)
+certificates/      Certificate CRUD, self-signed and CA-signed, versions, renew, export (vault-scoped)
 access-policies/   Policy CRUD + list by principal (vault-scoped)
 role-assignments/  Per-vault Azure role assignments: grant, list, get, revoke (vault-scoped)
 vault-provisioning-grants/  Issue, list, and revoke per-principal vault-creation quotas (admin)

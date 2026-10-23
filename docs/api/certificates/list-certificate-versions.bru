@@ -1,0 +1,15 @@
+meta {
+  name: List Certificate Versions
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{base_url}}/api/v1/vaults/{{vault_name}}/certificates/{{certificate_id}}/versions
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

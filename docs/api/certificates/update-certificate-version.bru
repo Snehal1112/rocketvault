@@ -1,0 +1,21 @@
+meta {
+  name: Update Certificate Version
+  type: http
+  seq: 12
+}
+
+put {
+  url: {{base_url}}/api/v1/vaults/{{vault_name}}/certificates/{{certificate_id}}/versions/{{version}}
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "enabled": false
+  }
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Export Certificate
+  type: http
+  seq: 14
+}
+
+post {
+  url: {{base_url}}/api/v1/vaults/{{vault_name}}/certificates/{{certificate_id}}/export
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "format": "pem",
+    "version": 0
+  }
+}

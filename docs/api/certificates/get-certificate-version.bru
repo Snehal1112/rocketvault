@@ -1,0 +1,15 @@
+meta {
+  name: Get Certificate Version
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{base_url}}/api/v1/vaults/{{vault_name}}/certificates/{{certificate_id}}/versions/{{version}}
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Export Key
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{base_url}}/api/v1/vaults/{{vault_name}}/keys/{{key_id}}/export
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+body:json {
+  {
+    "format": "pem",
+    "version": 0
+  }
+}
