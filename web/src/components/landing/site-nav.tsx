@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Link } from "@tanstack/react-router"
 import { Menu } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -70,6 +71,15 @@ export function SiteNav() {
             <TooltipContent>View the source on GitHub</TooltipContent>
           </Tooltip>
 
+          <Button
+            render={<Link to="/login" />}
+            variant="outline"
+            size="sm"
+            className="hidden sm:inline-flex"
+          >
+            Sign in
+          </Button>
+
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger
               render={
@@ -105,6 +115,15 @@ export function SiteNav() {
                     <GitHubMark />
                     GitHub
                   </a>
+                </li>
+                <li>
+                  <Link
+                    to="/login"
+                    onClick={() => setOpen(false)}
+                    className="block rounded-md px-2 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                  >
+                    Sign in
+                  </Link>
                 </li>
               </ul>
             </SheetContent>
