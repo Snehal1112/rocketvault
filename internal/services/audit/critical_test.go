@@ -18,7 +18,11 @@ type fakeAuditService struct {
 	events      []auditSvc.AuditEvent
 }
 
-func (f *fakeAuditService) RecordEvent(_ context.Context, ev auditSvc.AuditEvent) error {
+// RecordEvent drops the event on a cancelled context, as a real DB write would.
+func (f *fakeAuditService) RecordEvent(ctx context.Context, ev auditSvc.AuditEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.events = append(f.events, ev)
 	return nil
 }
@@ -45,8 +49,26 @@ func TestWithCritical_AuditFailureBlocksOp(t *testing.T) {
 	assert.False(t, called)
 	assert.True(t, errors.Is(err, auditSvc.ErrAuditUnavailable))
 	assert.True(t, errors.Is(err, cause))
-	assert.Equal(t, "audit unavailable", auditSvc.ErrAuditUnavailable.Error())
+	// The public message must not carry the cause.
+	assert.Equal(t, "audit unavailable", err.Error())
 	assert.Empty(t, svc.events)
+}
+
+func TestWithCritical_ResultSurvivesCancelledContext(t *testing.T) {
+	svc := &fakeAuditService{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := auditSvc.WithCritical(ctx, svc, auditSvc.AuditEvent{Action: "export_key"},
+		func(context.Context) error {
+			// The client disconnects after the operation has committed.
+			cancel()
+			return nil
+		})
+
+	require.NoError(t, err)
+	require.Len(t, svc.events, 1)
+	assert.Equal(t, "success", svc.events[0].Outcome)
 }
 
 func TestWithCritical_RecordsAttemptThenResult(t *testing.T) {
