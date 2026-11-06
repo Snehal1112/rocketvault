@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>v4.12.0 — OIDC JIT provisioning policy — RocketVault Docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="../assets/doc-theme.css"/>
+</head>
+<body>
+<header class="doc-header">
+  <a class="doc-back" href="../admin-manual.html">&larr; Admin Manual</a>
+  <div class="doc-brand">
+    <div class="doc-mark" aria-hidden="true"></div>
+    <span class="doc-kicker">RocketVault Docs</span>
+  </div>
+  <h1 class="doc-title">v4.12.0 — OIDC JIT provisioning policy</h1>
+  <div class="doc-meta"><span class="doc-chip">docs/release-notes/v4.12.0-oidc-jit-policy.md</span></div>
+  <hr/>
+</header>
+<nav class="doc-toc"><div class="doc-toc-label">On this page</div><ol><li><a href="#what-changed">What changed</a></li><li><a href="#breaking-changes">Breaking changes</a></li><li><a href="#upgrade-procedure">Upgrade procedure</a></li><li><a href="#schema">Schema</a></li><li><a href="#what-did-not-change">What did not change</a></li></ol></nav>
+<main class="doc">
+<blockquote>
+<p>The version number is provisional and may change before tagging.</p>
+</blockquote>
+<p>This release adds a policy for who may sign in through OIDC and turns
+just-in-time (JIT) user provisioning off by default. It also adds PKCE to the
+login flow and stops OIDC from provisioning on any lookup error. Full detail:
+<code>docs/known-bugs.md</code> (B102, GitHub #70, and B103, GitHub #71). Key reference:
+<code>docs/contributing/configuration.md</code> (OIDC login policy).</p>
+<h2 id="what-changed">What changed</h2>
+<ul>
+<li><strong>JIT provisioning is off by default.</strong> A new OIDC identity is created only
+when <code>oidc.jit_enabled: true</code>.</li>
+<li><strong>New policy keys under <code>oidc:</code></strong>
+<ul>
+<li><code>jit_enabled</code> (default <code>false</code>): allow creating a user for a new identity.</li>
+<li><code>allowed_email_domains</code> (default <code>[]</code>): when set, the email domain must
+match one entry, case-insensitive. A missing email is denied.</li>
+<li><code>require_email_verified</code> (default <code>false</code>): the provider must report
+<code>email_verified</code> as true.</li>
+<li><code>required_claims</code> (default <code>{}</code>): each named claim must match the
+configured value; a claim holding a list matches when it contains it.</li>
+<li><code>default_role</code> (default <code>user</code>): role of a new user. Only <code>user</code> is
+accepted.</li>
+<li><code>enforce_on_existing</code> (default <code>true</code>): also apply the domain, verified
+and claim checks to already-linked users.</li>
+</ul>
+</li>
+<li><strong>PKCE (S256) is always on</strong> for the login flow. There is no switch.</li>
+<li><strong>Only &quot;not found&quot; creates a user.</strong> Any other error while looking up the
+external identity is returned and no user is created.</li>
+<li><strong>Email is stored on OIDC users.</strong> The new nullable <code>users.email</code> column is
+added by an automatic migration and refreshed at login.</li>
+<li><strong>A policy denial returns a generic 403.</strong> The reason is written to the
+audit log only (<code>oidc_login_denied</code>).</li>
+</ul>
+<h2 id="breaking-changes">Breaking changes</h2>
+<ol>
+<li><strong>New OIDC identities are denied until you opt in.</strong> Before, any identity
+the provider authenticated got a local user.</li>
+</ol>
+<h2 id="upgrade-procedure">Upgrade procedure</h2>
+<ol>
+<li>
+<p><strong>To keep auto-provisioning, set <code>oidc.jit_enabled: true</code></strong> in
+<code>.rocketvault.yaml</code>. Consider also setting <code>allowed_email_domains</code> and
+<code>require_email_verified: true</code>.</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">yaml</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">oidc:
+  jit_enabled: true
+  allowed_email_domains: [&quot;example.com&quot;]
+  require_email_verified: true
+</pre></div>
+</li>
+<li>
+<p><strong>Already-linked users keep logging in.</strong> The policy checks apply to them
+when <code>enforce_on_existing</code> is <code>true</code> (the default), so a linked user who
+fails the domain, verified or claim checks is now denied. Set
+<code>enforce_on_existing: false</code> to exempt them.</p>
+</li>
+<li>
+<p>Invalid policy values (a malformed domain, or a <code>default_role</code> other than
+<code>user</code>) make startup fail.</p>
+</li>
+<li>
+<p>The <code>users.email</code> column is added automatically on SQLite and Postgres.
+No manual step.</p>
+</li>
+</ol>
+<h2 id="schema">Schema</h2>
+<p>New nullable column <code>users.email</code>. It is dual-written in
+<code>createOptimizedSchema</code> and <code>migrateSchema</code>. Identities still link only by
+<code>(provider, subject)</code>, never by email.</p>
+<h2 id="what-did-not-change">What did not change</h2>
+<p>Local username and password login, TOTP, and the <code>oidc.enabled</code> gate (default
+<code>false</code>, no network call at startup) are unchanged.</p>
+
+</main>
+<footer class="doc-footer"><a href="../admin-manual.html">&larr; Back to the Admin Manual</a></footer>
+<script src="../assets/doc-theme.js"></script>
+</body>
+</html>
