@@ -13,6 +13,9 @@ import (
 	"rocketvault/model"
 )
 
+// outcomeAttempt is the outcome of the first row of a critical event.
+const outcomeAttempt = "attempt"
+
 // SOC2Report contains aggregated data for a SOC 2 access-events report.
 type SOC2Report struct {
 	From             time.Time
@@ -94,6 +97,11 @@ func (s *ComplianceReportService) GenerateSOC2Report(ctx context.Context, from, 
 	userSet := map[string]struct{}{}
 
 	for _, l := range logs {
+		// The attempt row of a critical event is not a result. Its success
+		// or failure row carries the real outcome and is counted instead.
+		if l.Outcome == outcomeAttempt {
+			continue
+		}
 		report.TotalEvents++
 		if l.UserID != "" {
 			userSet[l.UserID] = struct{}{}
@@ -158,6 +166,11 @@ func (s *ComplianceReportService) GenerateGDPRReport(ctx context.Context, from, 
 
 	report := &GDPRReport{SubjectID: subjectID, From: from, To: to, TotalEvents: total, Events: logs}
 	for _, l := range logs {
+		// Attempt rows stay in Events but are not counted twice.
+		if l.Outcome == outcomeAttempt {
+			report.TotalEvents--
+			continue
+		}
 		switch {
 		case l.ResourceType == "secret" && (l.Action == "get_secret" || l.Action == "list_secrets"):
 			report.DataAccess++

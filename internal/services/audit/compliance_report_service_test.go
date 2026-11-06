@@ -244,3 +244,62 @@ func TestComplianceReportService_SetRetentionBelowFloorIsRefused(t *testing.T) {
 	require.ErrorIs(t, err, auditSvc.ErrRetentionBelowFloor)
 	require.NoError(t, svc.SetRetentionDays(context.Background(), 90))
 }
+
+// seedAttemptPairs adds, for user "ua", an attempt and a success row for a
+// login, a key create, a secret read and a user delete, plus one attempt-only
+// login.
+func seedAttemptPairs(t *testing.T, repo repositories.AuditRepositoryExtended) {
+	t.Helper()
+	now := time.Now().UTC()
+	add := func(action, resource, outcome string) {
+		require.NoError(t, repo.InsertAuditLog(context.Background(), repositories.AuditLog{
+			ID: uuid.New().String(), UserID: "ua", Action: action, Outcome: outcome,
+			Source: "system", ResourceType: resource, Timestamp: now,
+		}))
+	}
+	for _, c := range [][2]string{
+		{"authenticate_user", "user"}, {"create_key", "key"},
+		{"get_secret", "secret"}, {"delete_user", "user"},
+	} {
+		add(c[0], c[1], "attempt")
+		add(c[0], c[1], "success")
+	}
+	add("authenticate_user", "user", "attempt")
+}
+
+func TestComplianceReportService_SOC2Report_IgnoresAttemptRows(t *testing.T) {
+	db := openTestDB(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	seedAttemptPairs(t, repo)
+	svc := auditSvc.NewComplianceReportService(repo, nil)
+
+	report, err := svc.GenerateSOC2Report(context.Background(),
+		time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(time.Hour))
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), report.TotalEvents)
+	assert.Equal(t, int64(1), report.UniqueUsers)
+	assert.Equal(t, int64(1), report.AuthSuccesses)
+	assert.Equal(t, int64(0), report.AuthFailures)
+	assert.Equal(t, int64(1), report.KeyOperations)
+	assert.Equal(t, int64(1), report.DataAccessEvents)
+	assert.Equal(t, int64(1), report.AdminActions)
+	for _, ac := range report.TopActions {
+		assert.Equal(t, int64(1), ac.Count, ac.Action)
+	}
+}
+
+func TestComplianceReportService_GDPRReport_IgnoresAttemptRows(t *testing.T) {
+	db := openTestDB(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	seedAttemptPairs(t, repo)
+	svc := auditSvc.NewComplianceReportService(repo, nil)
+
+	report, err := svc.GenerateGDPRReport(context.Background(),
+		time.Now().UTC().Add(-time.Hour), time.Now().UTC().Add(time.Hour), "ua")
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), report.TotalEvents)
+	assert.Equal(t, int64(1), report.DataAccess)
+	assert.Equal(t, int64(1), report.Deletions)
+	assert.Equal(t, int64(1), report.AuthEvents)
+	assert.Len(t, report.Events, 9, "listing keeps attempt rows")
+}
