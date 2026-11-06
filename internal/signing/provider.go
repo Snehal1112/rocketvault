@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/viper"
 
 	"rocketvault/internal/repositories"
+	auditServices "rocketvault/internal/services/audit"
 	secretServices "rocketvault/internal/services/secrets"
 )
 
@@ -43,6 +44,8 @@ type RotatableProvider interface {
 type ProviderDeps struct {
 	CryptoService secretServices.CryptographyService
 	KeyRepository repositories.KeyRepositoryInterface
+	// AuditService writes the critical row when self_pki generates a key.
+	AuditService auditServices.AuditServiceInterface
 }
 
 // NewProvider constructs the appropriate SigningKeyProvider based on jwt.key_source.
@@ -65,7 +68,7 @@ func NewProvider(v *viper.Viper, deps ProviderDeps) (SigningKeyProvider, error) 
 			return nil, fmt.Errorf("self_pki requires CryptoService and KeyRepository")
 		}
 		overlapStr := v.GetString("jwt.rotation_overlap")
-		return NewSelfPKIProvider(deps.CryptoService, deps.KeyRepository, overlapStr)
+		return NewSelfPKIProvider(deps.CryptoService, deps.KeyRepository, overlapStr, deps.AuditService)
 
 	case "external_pki":
 		keyFile := v.GetString("jwt.signing_key_file")

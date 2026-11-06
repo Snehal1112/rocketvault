@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"rocketvault/cmd/testutils"
+	auditServices "rocketvault/internal/services/audit"
 	secretServices "rocketvault/internal/services/secrets"
 	"rocketvault/model"
 )
@@ -290,3 +291,5 @@ func (m *MockRotationService) AcknowledgeReminder(ctx context.Context, reminderI
 	args := m.Called(ctx, reminderID, secretID, scope)
 	return args.Error(0)
 }
+
+func (m *MockRotationService) SetAuditService(auditServices.AuditServiceInterface) {}

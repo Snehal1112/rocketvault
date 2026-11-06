@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"rocketvault/cmd/testutils"
+	auditServices "rocketvault/internal/services/audit"
 	secretServices "rocketvault/internal/services/secrets"
 	"rocketvault/model"
 )
@@ -97,6 +98,8 @@ func (m *mockRotationService) GetUpcomingReminders(ctx context.Context, scope mo
 func (m *mockRotationService) AcknowledgeReminder(ctx context.Context, reminderID, secretID uuid.UUID, scope model.Scope) error {
 	return m.Called(ctx, reminderID, secretID, scope).Error(0)
 }
+
+func (m *mockRotationService) SetAuditService(auditServices.AuditServiceInterface) {}
 
 func TestRotationDeletePassesCallerID(t *testing.T) {
 	callerID := uuid.New()

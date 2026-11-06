@@ -467,6 +467,7 @@ func (c *ServiceContainer) initializeServices() error {
 	signingDeps := signing.ProviderDeps{
 		CryptoService: c.cryptoService,
 		KeyRepository: c.keyRepository,
+		AuditService:  c.auditService,
 	}
 	provider, err := signing.NewProvider(viperCfg, signingDeps)
 	if err != nil {
@@ -563,6 +564,7 @@ func (c *ServiceContainer) initializeServices() error {
 		c.accessPolicyRepository,
 		c.userRepository,
 		c.logger,
+		c.auditService,
 	)
 	c.vaultProvisioningGrantRepository = repositories.NewVaultProvisioningGrantRepository(c.conn)
 	c.grantService = provisioning.NewGrantService(c.vaultProvisioningGrantRepository, c.logger)
@@ -639,6 +641,7 @@ func (c *ServiceContainer) initializeServices() error {
 		c.logger,
 		secretCacheInvalidator,
 	)
+	c.rotationService.SetAuditService(c.auditService)
 	c.schedulerService = secretServices.NewSchedulerService(
 		c.rotationService,
 		c.versioningService,
@@ -732,6 +735,7 @@ func (c *ServiceContainer) initializeServices() error {
 		KeyCache:      c.keyCache,
 		CryptoMetrics: c.cryptoMetrics,
 		Logger:        c.logger,
+		AuditService:  c.auditService,
 	})
 
 	// Initialize certificate service

@@ -2,6 +2,7 @@ package authorization
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"rocketvault/internal/logging"
+	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/model"
 )
 
@@ -105,11 +107,16 @@ type roleAssignmentService struct {
 	policyRepo policyWriter
 	users      userLookup
 	log        *logging.Logger
+	// audit writes the critical rows for grant and revoke. Nil only in
+	// tests; the container always wires it.
+	audit auditServices.AuditServiceInterface
 }
 
-// NewRoleAssignmentService constructs the service. The logger is optional and may be nil.
-func NewRoleAssignmentService(rr roleAssignmentRepo, pr policyWriter, ul userLookup, log *logging.Logger) RoleAssignmentService {
-	return &roleAssignmentService{roleRepo: rr, policyRepo: pr, users: ul, log: log}
+// NewRoleAssignmentService constructs the service. The logger is optional
+// and may be nil. audit writes the critical grant and revoke rows; nil keeps
+// the legacy log-only behaviour and is meant for tests.
+func NewRoleAssignmentService(rr roleAssignmentRepo, pr policyWriter, ul userLookup, log *logging.Logger, audit auditServices.AuditServiceInterface) RoleAssignmentService {
+	return &roleAssignmentService{roleRepo: rr, policyRepo: pr, users: ul, log: log, audit: audit}
 }
 
 func (s *roleAssignmentService) AssignRole(ctx context.Context, in AssignRoleInput) (*model.RoleAssignment, error) {
@@ -154,33 +161,70 @@ func (s *roleAssignmentService) AssignRole(ctx context.Context, in AssignRoleInp
 		VaultID:       in.VaultID,
 		CreatedBy:     in.CreatedBy,
 	}
-	if err := s.roleRepo.Create(ctx, ra); err != nil {
-		return nil, fmt.Errorf("create assignment: %w", err)
-	}
 
-	policies, err := ExpandRole(in.Role, principalID, pType, in.VaultID, assignmentID)
+	// Every authorization and validation check has passed. The attempt row
+	// must be written before the grant; if it fails, nothing is created.
+	err = s.runCritical(ctx, in.CreatedBy, "assign_role", ra, func(ctx context.Context) error {
+		return s.createAssignment(ctx, ra)
+	})
 	if err != nil {
-		if delErr := s.roleRepo.Delete(ctx, assignmentID); delErr != nil && s.log != nil {
-			s.log.LogAuditError(in.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete assignment %s", assignmentID), delErr)
-		}
 		return nil, err
 	}
-	for _, p := range policies {
-		if err := s.policyRepo.Create(ctx, p); err != nil {
-			if delErr := s.policyRepo.DeleteByAssignmentID(ctx, assignmentID); delErr != nil && s.log != nil {
-				s.log.LogAuditError(in.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete policies for assignment %s", assignmentID), delErr)
-			}
-			if delErr := s.roleRepo.Delete(ctx, assignmentID); delErr != nil && s.log != nil {
-				s.log.LogAuditError(in.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete assignment %s", assignmentID), delErr)
-			}
-			return nil, fmt.Errorf("expand role policies: %w", err)
-		}
-	}
-	if s.log != nil {
+	if s.audit == nil && s.log != nil {
 		s.log.LogAuditInfo(in.CreatedBy.String(), "assign_role", "success",
 			fmt.Sprintf("Role %q assigned to principal %s in vault %s", in.Role, principalID, in.VaultID))
 	}
 	return ra, nil
+}
+
+// createAssignment stores ra and its expanded policies, removing ra again if
+// any policy cannot be stored.
+func (s *roleAssignmentService) createAssignment(ctx context.Context, ra *model.RoleAssignment) error {
+	if err := s.roleRepo.Create(ctx, ra); err != nil {
+		return fmt.Errorf("create assignment: %w", err)
+	}
+
+	policies, err := ExpandRole(ra.Role, ra.PrincipalID, ra.PrincipalType, ra.VaultID, ra.ID)
+	if err != nil {
+		if delErr := s.roleRepo.Delete(ctx, ra.ID); delErr != nil && s.log != nil {
+			s.log.LogAuditError(ra.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete assignment %s", ra.ID), delErr)
+		}
+		return err
+	}
+	for _, p := range policies {
+		if err := s.policyRepo.Create(ctx, p); err != nil {
+			if delErr := s.policyRepo.DeleteByAssignmentID(ctx, ra.ID); delErr != nil && s.log != nil {
+				s.log.LogAuditError(ra.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete policies for assignment %s", ra.ID), delErr)
+			}
+			if delErr := s.roleRepo.Delete(ctx, ra.ID); delErr != nil && s.log != nil {
+				s.log.LogAuditError(ra.CreatedBy.String(), "assign_role", "rollback", fmt.Sprintf("rollback: failed to delete assignment %s", ra.ID), delErr)
+			}
+			return fmt.Errorf("expand role policies: %w", err)
+		}
+	}
+	return nil
+}
+
+// runCritical runs op after a critical attempt row for action on ra by
+// actorID, and records its result. With no audit service wired (tests only)
+// it runs op directly. A failed attempt write returns
+// audit.ErrAuditUnavailable and op does not run.
+func (s *roleAssignmentService) runCritical(ctx context.Context, actorID uuid.UUID, action string, ra *model.RoleAssignment, op func(context.Context) error) error {
+	if s.audit == nil {
+		return op(ctx)
+	}
+	actor := actorID.String()
+	if actorID == uuid.Nil {
+		actor = "system"
+	}
+	details, _ := json.Marshal(map[string]any{
+		"vault_id": ra.VaultID.String(), "principal_id": ra.PrincipalID.String(),
+		"principal_type": string(ra.PrincipalType), "role": ra.Role,
+	})
+	return auditServices.WithCritical(ctx, s.audit, auditServices.AuditEvent{
+		UserID: actor, Action: action, Details: string(details),
+		ResourceType: "role_assignment", ResourceID: ra.ID.String(), Source: "system",
+	}, op)
 }
 
 func (s *roleAssignmentService) RevokeAssignment(ctx context.Context, assignmentID, vaultID, actorID uuid.UUID, callerIsGlobalAdmin bool) error {
@@ -194,13 +238,21 @@ func (s *roleAssignmentService) RevokeAssignment(ctx context.Context, assignment
 	if !callerIsGlobalAdmin && !nonAdminGrantableRoles[ra.Role] {
 		return fmt.Errorf("%w: %q may only be revoked by a global admin", ErrRoleNotGrantable, ra.Role)
 	}
-	if err := s.policyRepo.DeleteByAssignmentID(ctx, assignmentID); err != nil {
-		return fmt.Errorf("delete policies: %w", err)
+	// Every authorization check has passed. The attempt row must be written
+	// before the revoke; if it fails, the assignment and its policies stay.
+	err = s.runCritical(ctx, actorID, "revoke_role_assignment", ra, func(ctx context.Context) error {
+		if err := s.policyRepo.DeleteByAssignmentID(ctx, assignmentID); err != nil {
+			return fmt.Errorf("delete policies: %w", err)
+		}
+		if err := s.roleRepo.Delete(ctx, assignmentID); err != nil {
+			return fmt.Errorf("delete assignment: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-	if err := s.roleRepo.Delete(ctx, assignmentID); err != nil {
-		return fmt.Errorf("delete assignment: %w", err)
-	}
-	if s.log != nil {
+	if s.audit == nil && s.log != nil {
 		s.log.LogAuditInfo(actorID.String(), "revoke_role_assignment", "success",
 			fmt.Sprintf("Role assignment %s (role %q) revoked in vault %s", assignmentID, ra.Role, vaultID))
 	}

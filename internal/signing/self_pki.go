@@ -16,6 +16,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"rocketvault/internal/repositories"
+	auditServices "rocketvault/internal/services/audit"
 	secretServices "rocketvault/internal/services/secrets"
 	"rocketvault/model"
 )
@@ -33,6 +34,9 @@ type SelfPKIProvider struct {
 	crypto     secretServices.CryptographyService
 	keyRepo    repositories.KeyRepositoryInterface
 	overlapDur time.Duration
+	// audit writes the critical row for a generated key. Nil only in tests;
+	// the container always wires it.
+	audit auditServices.AuditServiceInterface
 
 	activeKey   *ecdsa.PrivateKey
 	activeKID   string
@@ -43,11 +47,14 @@ type SelfPKIProvider struct {
 	overlapUntil time.Time
 }
 
-// NewSelfPKIProvider looks up or generates the JWT signing key in the key store.
+// NewSelfPKIProvider looks up or generates the JWT signing key in the key
+// store. audit writes the critical row for a generated key; nil skips it and
+// is meant for tests.
 func NewSelfPKIProvider(
 	cryptoSvc secretServices.CryptographyService,
 	keyRepo repositories.KeyRepositoryInterface,
 	overlapStr string,
+	audit auditServices.AuditServiceInterface,
 ) (*SelfPKIProvider, error) {
 	overlap := defaultRotationOverlap
 	if overlapStr != "" {
@@ -60,6 +67,7 @@ func NewSelfPKIProvider(
 		crypto:     cryptoSvc,
 		keyRepo:    keyRepo,
 		overlapDur: overlap,
+		audit:      audit,
 	}
 
 	if err := p.loadOrGenerate(context.Background()); err != nil {
@@ -213,8 +221,26 @@ func (p *SelfPKIProvider) generateAndStore(ctx context.Context) error {
 		Value:     encrypted,
 		CreatedAt: time.Now(),
 	}
-	if err := p.keyRepo.Create(ctx, keyRecord); err != nil {
-		return fmt.Errorf("store generated key: %w", err)
+	store := func(ctx context.Context) error {
+		if err := p.keyRepo.Create(ctx, keyRecord); err != nil {
+			return fmt.Errorf("store generated key: %w", err)
+		}
+		return nil
+	}
+	if p.audit != nil {
+		// The attempt row must be written before the key is stored. A failed
+		// write returns audit.ErrAuditUnavailable and startup fails rather
+		// than sign with an unaudited key.
+		err = auditServices.WithCritical(ctx, p.audit, auditServices.AuditEvent{
+			UserID: "system", Action: "signing_key_generate",
+			Details:      fmt.Sprintf(`{"key_id":%q,"algorithm":%q}`, keyRecord.ID.String(), selfPKIAlgorithm),
+			ResourceType: "signing_key", ResourceID: kid, Source: "system",
+		}, store)
+	} else {
+		err = store(ctx)
+	}
+	if err != nil {
+		return err
 	}
 
 	p.activeKey = key

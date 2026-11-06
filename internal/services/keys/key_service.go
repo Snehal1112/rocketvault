@@ -271,6 +271,28 @@ func (s *keyService) applyCreatePurgeProtection(ctx context.Context, purgeProtec
 	return nil
 }
 
+// createEvent builds the critical audit event for creating or importing key.
+// The creator is the acting principal.
+func (s *keyService) createEvent(action string, key *model.Key) auditServices.AuditEvent {
+	return keyCriticalEvent(key.UserID, action, key.ID, map[string]any{
+		"vault_id": key.VaultID.String(), "name": key.Name, "type": key.Type,
+	})
+}
+
+// storedKeyValue returns the value to store for a provider handle: a PKCS#11
+// label is prefixed and stored as-is, and a software PEM is encrypted.
+func (s *keyService) storedKeyValue(handle string, userID uuid.UUID, action string) (string, error) {
+	if isPKCS11Handle(handle) {
+		return "pkcs11:" + handle, nil
+	}
+	stored, err := common.EncryptSecret(handle)
+	if err != nil {
+		s.logger.LogAuditError(userID.String(), action, "failed", "failed to encrypt key", err)
+		return "", fmt.Errorf("failed to encrypt key: %w", err)
+	}
+	return stored, nil
+}
+
 // CreateRSAKey creates a new RSA cryptographic key.
 // It validates parameters, generates the key, encrypts it, and handles storage.
 //
@@ -300,36 +322,13 @@ func (s *keyService) CreateRSAKey(ctx context.Context, req CreateKeyRequest) (*C
 		return nil, err
 	}
 
-	// Generate key via the configured provider (software or PKCS#11 HSM).
-	handle, err := s.keyProvider.GenerateRSAKey(ctx, req.Bits)
-	if err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "create_rsa_key", "failed", "failed to generate RSA key", err)
-		return nil, fmt.Errorf("failed to generate RSA key: %w", err)
-	}
-	if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "create_rsa_key"); err != nil {
-		return nil, err
-	}
-
-	// For software keys, the handle is PEM — encrypt before storage.
-	// For PKCS#11 keys, the handle is a UUID label — prefix and store as-is.
-	var storedValue string
-	if isPKCS11Handle(handle) {
-		storedValue = "pkcs11:" + handle
-	} else {
-		storedValue, err = common.EncryptSecret(handle)
-		if err != nil {
-			s.logger.LogAuditError(req.UserID.String(), "create_rsa_key", "failed", "failed to encrypt key", err)
-			return nil, fmt.Errorf("failed to encrypt key: %w", err)
-		}
-	}
-
 	// Default to enabled when caller did not specify.
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
 
-	// Create key entity.
+	// Create key entity. The id is minted first so the attempt row names it.
 	key := &model.Key{
 		Exportable: req.Exportable,
 		ID:         uuid.New(),
@@ -337,7 +336,6 @@ func (s *keyService) CreateRSAKey(ctx context.Context, req CreateKeyRequest) (*C
 		VaultID:    resolveVaultID(req.VaultID),
 		Name:       req.Name,
 		Type:       model.KeyTypeRSA,
-		Value:      storedValue,
 		Revoked:    false,
 		CreatedAt:  time.Now(),
 		Tags:       req.Tags,
@@ -347,17 +345,33 @@ func (s *keyService) CreateRSAKey(ctx context.Context, req CreateKeyRequest) (*C
 		NotBefore:  req.NotBefore,
 	}
 
-	// Store in repository.
-	if err := s.keyRepo.Create(ctx, key); err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "create_rsa_key", "failed", "failed to store key", err)
-		return nil, fmt.Errorf("failed to store RSA key: %w", err)
-	}
-
-	if err := s.applyCreatePurgeProtection(ctx, req.PurgeProtection, key.ID, "create_rsa_key", req.UserID); err != nil {
+	// The attempt row must be written before any key material is generated.
+	err := runKeyCritical(ctx, s.auditService, s.createEvent("create_rsa_key", key), func(ctx context.Context) error {
+		// Generate key via the configured provider (software or PKCS#11 HSM).
+		handle, err := s.keyProvider.GenerateRSAKey(ctx, req.Bits)
+		if err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "create_rsa_key", "failed", "failed to generate RSA key", err)
+			return fmt.Errorf("failed to generate RSA key: %w", err)
+		}
+		if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "create_rsa_key"); err != nil {
+			return err
+		}
+		// For software keys, the handle is PEM — encrypt before storage.
+		// For PKCS#11 keys, the handle is a UUID label — prefix and store as-is.
+		if key.Value, err = s.storedKeyValue(handle, req.UserID, "create_rsa_key"); err != nil {
+			return err
+		}
+		if err := s.keyRepo.Create(ctx, key); err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "create_rsa_key", "failed", "failed to store key", err)
+			return fmt.Errorf("failed to store RSA key: %w", err)
+		}
+		return s.applyCreatePurgeProtection(ctx, req.PurgeProtection, key.ID, "create_rsa_key", req.UserID)
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	s.logger.LogAuditInfo(req.UserID.String(), "create_rsa_key", "success", fmt.Sprintf("RSA key created: %s, ID: %s", req.Name, key.ID))
+	logLegacySuccess(s.auditService, s.logger, req.UserID.String(), "create_rsa_key", fmt.Sprintf("RSA key created: %s, ID: %s", req.Name, key.ID))
 	logrus.WithFields(logrus.Fields{
 		"key_id": key.ID.String(),
 		"name":   key.Name,
@@ -402,27 +416,6 @@ func (s *keyService) CreateECDSAKey(ctx context.Context, req CreateKeyRequest) (
 		return nil, err
 	}
 
-	// Generate key via the configured provider (software or PKCS#11 HSM).
-	handle, err := s.keyProvider.GenerateECDSAKey(ctx, req.Curve)
-	if err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "create_ecdsa_key", "failed", "failed to generate ECDSA key", err)
-		return nil, fmt.Errorf("failed to generate ECDSA key: %w", err)
-	}
-	if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "create_ecdsa_key"); err != nil {
-		return nil, err
-	}
-
-	var storedValue string
-	if isPKCS11Handle(handle) {
-		storedValue = "pkcs11:" + handle
-	} else {
-		storedValue, err = common.EncryptSecret(handle)
-		if err != nil {
-			s.logger.LogAuditError(req.UserID.String(), "create_ecdsa_key", "failed", "failed to encrypt key", err)
-			return nil, fmt.Errorf("failed to encrypt key: %w", err)
-		}
-	}
-
 	// P-256K keys use a distinct type so the crypto layer routes them correctly.
 	keyType := model.KeyTypeECDSA
 	if req.Curve == "P-256K" {
@@ -435,7 +428,7 @@ func (s *keyService) CreateECDSAKey(ctx context.Context, req CreateKeyRequest) (
 		enabled = *req.Enabled
 	}
 
-	// Create key entity.
+	// Create key entity. The id is minted first so the attempt row names it.
 	key := &model.Key{
 		Exportable: req.Exportable,
 		ID:         uuid.New(),
@@ -443,7 +436,6 @@ func (s *keyService) CreateECDSAKey(ctx context.Context, req CreateKeyRequest) (
 		VaultID:    resolveVaultID(req.VaultID),
 		Name:       req.Name,
 		Type:       keyType,
-		Value:      storedValue,
 		Revoked:    false,
 		CreatedAt:  time.Now(),
 		Tags:       req.Tags,
@@ -453,17 +445,31 @@ func (s *keyService) CreateECDSAKey(ctx context.Context, req CreateKeyRequest) (
 		NotBefore:  req.NotBefore,
 	}
 
-	// Store in repository.
-	if err := s.keyRepo.Create(ctx, key); err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "create_ecdsa_key", "failed", "failed to store key", err)
-		return nil, fmt.Errorf("failed to store ECDSA key: %w", err)
-	}
-
-	if err := s.applyCreatePurgeProtection(ctx, req.PurgeProtection, key.ID, "create_ecdsa_key", req.UserID); err != nil {
+	// The attempt row must be written before any key material is generated.
+	err := runKeyCritical(ctx, s.auditService, s.createEvent("create_ecdsa_key", key), func(ctx context.Context) error {
+		// Generate key via the configured provider (software or PKCS#11 HSM).
+		handle, err := s.keyProvider.GenerateECDSAKey(ctx, req.Curve)
+		if err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "create_ecdsa_key", "failed", "failed to generate ECDSA key", err)
+			return fmt.Errorf("failed to generate ECDSA key: %w", err)
+		}
+		if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "create_ecdsa_key"); err != nil {
+			return err
+		}
+		if key.Value, err = s.storedKeyValue(handle, req.UserID, "create_ecdsa_key"); err != nil {
+			return err
+		}
+		if err := s.keyRepo.Create(ctx, key); err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "create_ecdsa_key", "failed", "failed to store key", err)
+			return fmt.Errorf("failed to store ECDSA key: %w", err)
+		}
+		return s.applyCreatePurgeProtection(ctx, req.PurgeProtection, key.ID, "create_ecdsa_key", req.UserID)
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	s.logger.LogAuditInfo(req.UserID.String(), "create_ecdsa_key", "success", fmt.Sprintf("ECDSA key created: %s, ID: %s", req.Name, key.ID))
+	logLegacySuccess(s.auditService, s.logger, req.UserID.String(), "create_ecdsa_key", fmt.Sprintf("ECDSA key created: %s, ID: %s", req.Name, key.ID))
 	logrus.WithFields(logrus.Fields{
 		"key_id": key.ID.String(),
 		"name":   key.Name,
@@ -499,16 +505,12 @@ func (s *keyService) CreateOctKey(ctx context.Context, req CreateKeyRequest) (*C
 		return nil, fmt.Errorf("%w: oct keys are HSM-only", model.ErrExportableNotSupported)
 	}
 
-	handle, err := s.keyProvider.GenerateAESKey(ctx, req.Bits)
-	if err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "create_oct_key", "failed", "failed to generate AES key", err)
-		return nil, fmt.Errorf("failed to generate AES key: %w", err)
+	// The software provider can never create one, so refuse before the
+	// attempt row, as the provider itself would.
+	if _, software := s.keyProvider.(*crypto.SoftwareKeyProvider); software {
+		s.logger.LogAuditError(req.UserID.String(), "create_oct_key", "failed", "failed to generate AES key", crypto.ErrOctKeysRequireHSM)
+		return nil, fmt.Errorf("failed to generate AES key: %w", crypto.ErrOctKeysRequireHSM)
 	}
-
-	// AES keys are HSM-only: GenerateAESKey never returns a software (PEM)
-	// handle, so the value is always the PKCS#11 label — no plaintext key
-	// material ever reaches this process.
-	storedValue := "pkcs11:" + handle
 
 	enabled := true
 	if req.Enabled != nil {
@@ -521,7 +523,6 @@ func (s *keyService) CreateOctKey(ctx context.Context, req CreateKeyRequest) (*C
 		VaultID:   resolveVaultID(req.VaultID),
 		Name:      req.Name,
 		Type:      model.KeyTypeOct,
-		Value:     storedValue,
 		Revoked:   false,
 		CreatedAt: time.Now(),
 		Tags:      req.Tags,
@@ -531,16 +532,28 @@ func (s *keyService) CreateOctKey(ctx context.Context, req CreateKeyRequest) (*C
 		NotBefore: req.NotBefore,
 	}
 
-	if err := s.keyRepo.Create(ctx, key); err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "create_oct_key", "failed", "failed to store key", err)
-		return nil, fmt.Errorf("failed to store AES key: %w", err)
-	}
-
-	if err := s.applyCreatePurgeProtection(ctx, req.PurgeProtection, key.ID, "create_oct_key", req.UserID); err != nil {
+	// The attempt row must be written before the HSM creates a key object.
+	err := runKeyCritical(ctx, s.auditService, s.createEvent("create_oct_key", key), func(ctx context.Context) error {
+		handle, err := s.keyProvider.GenerateAESKey(ctx, req.Bits)
+		if err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "create_oct_key", "failed", "failed to generate AES key", err)
+			return fmt.Errorf("failed to generate AES key: %w", err)
+		}
+		// AES keys are HSM-only: GenerateAESKey never returns a software (PEM)
+		// handle, so the value is always the PKCS#11 label — no plaintext key
+		// material ever reaches this process.
+		key.Value = "pkcs11:" + handle
+		if err := s.keyRepo.Create(ctx, key); err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "create_oct_key", "failed", "failed to store key", err)
+			return fmt.Errorf("failed to store AES key: %w", err)
+		}
+		return s.applyCreatePurgeProtection(ctx, req.PurgeProtection, key.ID, "create_oct_key", req.UserID)
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	s.logger.LogAuditInfo(req.UserID.String(), "create_oct_key", "success", fmt.Sprintf("AES key created: %s, ID: %s", req.Name, key.ID))
+	logLegacySuccess(s.auditService, s.logger, req.UserID.String(), "create_oct_key", fmt.Sprintf("AES key created: %s, ID: %s", req.Name, key.ID))
 
 	return &CreateKeyResult{
 		KeyID:     key.ID,
@@ -599,26 +612,6 @@ func (s *keyService) ImportKey(ctx context.Context, req ImportKeyRequest) (*Crea
 		return nil, err
 	}
 
-	handle, err := s.keyProvider.ImportKey(ctx, keyType, privateKey)
-	if err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "import_key", "failed", "failed to import key material", err)
-		return nil, fmt.Errorf("failed to import key: %w", err)
-	}
-	if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "import_key"); err != nil {
-		return nil, err
-	}
-
-	var storedValue string
-	if isPKCS11Handle(handle) {
-		storedValue = "pkcs11:" + handle
-	} else {
-		storedValue, err = common.EncryptSecret(handle)
-		if err != nil {
-			s.logger.LogAuditError(req.UserID.String(), "import_key", "failed", "failed to encrypt key", err)
-			return nil, fmt.Errorf("failed to encrypt key: %w", err)
-		}
-	}
-
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -636,7 +629,6 @@ func (s *keyService) ImportKey(ctx context.Context, req ImportKeyRequest) (*Crea
 		VaultID:    resolveVaultID(req.VaultID),
 		Name:       req.Name,
 		Type:       modelType,
-		Value:      storedValue,
 		Revoked:    false,
 		CreatedAt:  time.Now(),
 		Tags:       req.Tags,
@@ -647,16 +639,30 @@ func (s *keyService) ImportKey(ctx context.Context, req ImportKeyRequest) (*Crea
 		NotBefore:  req.NotBefore,
 	}
 
-	if err := s.keyRepo.Create(ctx, key); err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "import_key", "failed", "failed to store key", err)
-		return nil, fmt.Errorf("failed to store imported key: %w", err)
-	}
-
-	if err := s.applyCreatePurgeProtection(ctx, req.PurgeProtection, key.ID, "import_key", req.UserID); err != nil {
+	// The attempt row must be written before the material reaches the provider.
+	err = runKeyCritical(ctx, s.auditService, s.createEvent("import_key", key), func(ctx context.Context) error {
+		handle, err := s.keyProvider.ImportKey(ctx, keyType, privateKey)
+		if err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "import_key", "failed", "failed to import key material", err)
+			return fmt.Errorf("failed to import key: %w", err)
+		}
+		if err := s.refuseExportableHSM(req.Exportable, handle, req.UserID, "import_key"); err != nil {
+			return err
+		}
+		if key.Value, err = s.storedKeyValue(handle, req.UserID, "import_key"); err != nil {
+			return err
+		}
+		if err := s.keyRepo.Create(ctx, key); err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "import_key", "failed", "failed to store key", err)
+			return fmt.Errorf("failed to store imported key: %w", err)
+		}
+		return s.applyCreatePurgeProtection(ctx, req.PurgeProtection, key.ID, "import_key", req.UserID)
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	s.logger.LogAuditInfo(req.UserID.String(), "import_key", "success", fmt.Sprintf("key imported: %s, ID: %s", req.Name, key.ID))
+	logLegacySuccess(s.auditService, s.logger, req.UserID.String(), "import_key", fmt.Sprintf("key imported: %s, ID: %s", req.Name, key.ID))
 
 	return &CreateKeyResult{
 		KeyID:     key.ID,
@@ -976,9 +982,18 @@ func (s *keyService) DeleteKey(ctx context.Context, keyID uuid.UUID, scope model
 		return nil, fmt.Errorf("%w: key does not belong to the requested vault", ErrKeyNotFound)
 	}
 
-	if err := s.keyRepo.SoftDelete(ctx, keyID); err != nil {
-		s.logger.LogAuditError(actor, "delete_key", "failed", "Failed to soft-delete key", err)
-		return nil, fmt.Errorf("failed to delete key: %w", err)
+	// The attempt row must be written before the key is soft-deleted. A failed
+	// write returns audit.ErrAuditUnavailable and the key stays live.
+	ev := keyCriticalEvent(scope.ActorID(), "delete_key", keyID, map[string]any{"vault_id": key.VaultID.String(), "name": key.Name})
+	err = runKeyCritical(ctx, s.auditService, ev, func(ctx context.Context) error {
+		if err := s.keyRepo.SoftDelete(ctx, keyID); err != nil {
+			s.logger.LogAuditError(actor, "delete_key", "failed", "Failed to soft-delete key", err)
+			return fmt.Errorf("failed to delete key: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	if s.keyCache != nil {
@@ -987,11 +1002,11 @@ func (s *keyService) DeleteKey(ctx context.Context, keyID uuid.UUID, scope model
 
 	deleted, err := s.keyRepo.ReadDeletedScoped(ctx, keyID, scope)
 	if err != nil {
-		s.logger.LogAuditInfo(actor, "delete_key", "success", "Key deleted (metadata unavailable)")
+		logLegacySuccess(s.auditService, s.logger, actor, "delete_key", "Key deleted (metadata unavailable)")
 		return key, nil
 	}
 
-	s.logger.LogAuditInfo(actor, "delete_key", "success", "Key deleted successfully")
+	logLegacySuccess(s.auditService, s.logger, actor, "delete_key", "Key deleted successfully")
 	return deleted, nil
 }
 
@@ -1075,25 +1090,18 @@ func (s *keyService) PurgeKey(ctx context.Context, keyID uuid.UUID, scope model.
 		}
 	}
 
-	purge := func(ctx context.Context) error {
+	// The attempt row must be written before the key is gone. A failed
+	// write returns audit.ErrAuditUnavailable and the key stays deleted.
+	err = runKeyCritical(ctx, s.auditService, keyCriticalEvent(scope.ActorID(), "purge_key", keyID, nil), func(ctx context.Context) error {
 		if err := s.keyRepo.PurgeKey(ctx, keyID); err != nil {
 			return fmt.Errorf("failed to purge key: %w", err)
 		}
 		return nil
-	}
-	if s.auditService != nil {
-		// The attempt row must be written before the key is gone. A failed
-		// write returns audit.ErrAuditUnavailable and the key stays deleted.
-		return auditServices.WithCritical(ctx, s.auditService, auditServices.AuditEvent{
-			UserID: scope.ActorID().String(), Action: "purge_key",
-			ResourceType: "key", ResourceID: keyID.String(), Source: "system",
-		}, purge)
-	}
-	if err := purge(ctx); err != nil {
+	})
+	if err != nil {
 		return err
 	}
-	s.logger.LogAuditInfo(scope.ActorID().String(), "purge_key", "success",
-		fmt.Sprintf("Key purged: %s", keyID))
+	logLegacySuccess(s.auditService, s.logger, scope.ActorID().String(), "purge_key", fmt.Sprintf("Key purged: %s", keyID))
 	return nil
 }
 
@@ -1141,8 +1149,56 @@ func (s *keyService) RotateKey(ctx context.Context, keyID uuid.UUID, scope model
 		curve = "P-256" // Fallback for keys without stored curve.
 	}
 
+	// Only RSA and EC keys can be regenerated here; refuse anything else
+	// before the attempt row.
+	switch existing.Type {
+	case model.KeyTypeRSA, model.KeyTypeECDSA, model.KeyTypeES256K:
+	default:
+		s.logger.LogAuditError(userID.String(), "rotate_key", "failed", "unsupported key type for rotation", nil)
+		return nil, fmt.Errorf("unsupported key type for rotation: %s", existing.Type)
+	}
+
+	// The attempt row must be written before new material is generated or
+	// any version row is written. A failed write returns
+	// audit.ErrAuditUnavailable and the key keeps its current material.
+	var nextVersion int
+	ev := keyCriticalEvent(userID, "rotate_key", keyID, map[string]any{"vault_id": existing.VaultID.String(), "name": existing.Name})
+	err = runKeyCritical(ctx, s.auditService, ev, func(ctx context.Context) error {
+		var err error
+		nextVersion, err = s.rotateKeyMaterial(ctx, existing, scope, bits, curve)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Evict stale cached material now that the key has new material.
+	if s.keyCache != nil {
+		s.keyCache.Invalidate(keyID)
+	}
+
+	logLegacySuccess(s.auditService, s.logger, userID.String(), "rotate_key",
+		fmt.Sprintf("Key %s rotated to version %d.", keyID, nextVersion))
+
+	return &CreateKeyResult{
+		KeyID:     keyID,
+		Name:      existing.Name,
+		Type:      existing.Type,
+		Tags:      existing.Tags,
+		CreatedAt: existing.CreatedAt,
+	}, nil
+}
+
+// rotateKeyMaterial generates new material for existing, archives it as the
+// next version and makes it the key's active value. It returns the new
+// version number.
+func (s *keyService) rotateKeyMaterial(ctx context.Context, existing *model.Key, scope model.Scope, bits int, curve string) (int, error) {
+	userID := scope.ActorID()
+	keyID := existing.ID
+
 	// Generate new key material via the configured provider.
 	var newHandle string
+	var err error
 	switch existing.Type {
 	case model.KeyTypeRSA:
 		newHandle, err = s.keyProvider.GenerateRSAKey(ctx, bits)
@@ -1150,13 +1206,10 @@ func (s *keyService) RotateKey(ctx context.Context, keyID uuid.UUID, scope model
 		newHandle, err = s.keyProvider.GenerateECDSAKey(ctx, curve)
 	case model.KeyTypeES256K:
 		newHandle, err = s.keyProvider.GenerateECDSAKey(ctx, "P-256K")
-	default:
-		s.logger.LogAuditError(userID.String(), "rotate_key", "failed", "unsupported key type for rotation", nil)
-		return nil, fmt.Errorf("unsupported key type for rotation: %s", existing.Type)
 	}
 	if err != nil {
 		s.logger.LogAuditError(userID.String(), "rotate_key", "failed", "key generation failed", err)
-		return nil, fmt.Errorf("key generation failed: %w", err)
+		return 0, fmt.Errorf("key generation failed: %w", err)
 	}
 
 	var encryptedNew string
@@ -1166,30 +1219,30 @@ func (s *keyService) RotateKey(ctx context.Context, keyID uuid.UUID, scope model
 		encryptedNew, err = common.EncryptSecret(newHandle)
 		if err != nil {
 			s.logger.LogAuditError(userID.String(), "rotate_key", "failed", "key encryption failed", err)
-			return nil, fmt.Errorf("key encryption failed: %w", err)
+			return 0, fmt.Errorf("key encryption failed: %w", err)
 		}
 	}
 
 	// Determine next version number from existing history. The scoped Read
-	// of existing above is the authorization; ListVersions itself performs
-	// none.
+	// of existing by the caller is the authorization; ListVersions itself
+	// performs none.
 	versions, err := s.keyRepo.ListVersions(ctx, keyID)
 	if err != nil {
-		return nil, fmt.Errorf("list versions: %w", err)
+		return 0, fmt.Errorf("list versions: %w", err)
 	}
 	nextVersion := len(versions) + 1
 
 	// If this is the first rotation, archive the original material as version 1 first.
 	if len(versions) == 0 {
 		if err := s.keyRepo.CreateVersion(ctx, keyID, 1, existing.Value); err != nil {
-			return nil, fmt.Errorf("archive original key version: %w", err)
+			return 0, fmt.Errorf("archive original key version: %w", err)
 		}
 		nextVersion = 2
 	}
 
 	// Archive the new material as the next version.
 	if err := s.keyRepo.CreateVersion(ctx, keyID, nextVersion, encryptedNew); err != nil {
-		return nil, fmt.Errorf("create new key version: %w", err)
+		return 0, fmt.Errorf("create new key version: %w", err)
 	}
 
 	// Apply the rotation policy's expiry_days lifetime action, if
@@ -1209,7 +1262,7 @@ func (s *keyService) RotateKey(ctx context.Context, keyID uuid.UUID, scope model
 			// No policy configured for this key -- nothing to stamp.
 		case err != nil:
 			s.logger.LogAuditError(userID.String(), "rotate_key", "failed", "rotation policy lookup failed", err)
-			return nil, fmt.Errorf("rotate key: look up rotation policy: %w", err)
+			return 0, fmt.Errorf("rotate key: look up rotation policy: %w", err)
 		}
 	}
 
@@ -1217,24 +1270,9 @@ func (s *keyService) RotateKey(ctx context.Context, keyID uuid.UUID, scope model
 	// that authorized the read.
 	existing.Value = encryptedNew
 	if err := s.keyRepo.Update(ctx, existing, scope); err != nil {
-		return nil, fmt.Errorf("update key value: %w", err)
+		return 0, fmt.Errorf("update key value: %w", err)
 	}
-
-	// Evict stale cached material now that the key has new material.
-	if s.keyCache != nil {
-		s.keyCache.Invalidate(keyID)
-	}
-
-	s.logger.LogAuditInfo(userID.String(), "rotate_key", "success",
-		fmt.Sprintf("Key %s rotated to version %d.", keyID, nextVersion))
-
-	return &CreateKeyResult{
-		KeyID:     keyID,
-		Name:      existing.Name,
-		Type:      existing.Type,
-		Tags:      existing.Tags,
-		CreatedAt: existing.CreatedAt,
-	}, nil
+	return nextVersion, nil
 }
 
 // ValidateKeyAccess validates that a user has access to a specific key.

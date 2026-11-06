@@ -277,7 +277,7 @@ func TestNewSelfPKIProvider_GeneratesKey_WhenNoneExists(t *testing.T) {
 	crypto := &mockCryptoService{}
 	repo := &mockKeyRepo{}
 
-	p, err := NewSelfPKIProvider(crypto, repo, "")
+	p, err := NewSelfPKIProvider(crypto, repo, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, p)
 
@@ -306,7 +306,7 @@ func TestNewSelfPKIProvider_LoadsExistingKey(t *testing.T) {
 	}
 	repo := &mockKeyRepo{keys: []model.Key{existingKey}}
 
-	p, err := NewSelfPKIProvider(crypto, repo, "1h")
+	p, err := NewSelfPKIProvider(crypto, repo, "1h", nil)
 	require.NoError(t, err)
 	assert.Equal(t, selfPKIAlgorithm, p.Algorithm())
 	assert.NotEmpty(t, p.KeyID())
@@ -328,7 +328,7 @@ func TestNewSelfPKIProvider_SkipsDeletedKeys(t *testing.T) {
 	}
 	repo := &mockKeyRepo{keys: []model.Key{deletedKey}}
 
-	p, err := NewSelfPKIProvider(crypto, repo, "")
+	p, err := NewSelfPKIProvider(crypto, repo, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, p)
 	// New key generated because the stored one is deleted.
@@ -347,7 +347,7 @@ func TestNewSelfPKIProvider_SkipsNonSigningKeys(t *testing.T) {
 	}
 	repo := &mockKeyRepo{keys: []model.Key{otherKey}}
 
-	p, err := NewSelfPKIProvider(crypto, repo, "")
+	p, err := NewSelfPKIProvider(crypto, repo, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, p)
 	// New key generated because the existing key doesn't have the jwt signing name.
@@ -358,7 +358,7 @@ func TestNewSelfPKIProvider_ListByUserError(t *testing.T) {
 	crypto := &mockCryptoService{}
 	repo := &mockKeyRepo{listByUserErr: fmt.Errorf("db error")}
 
-	_, err := NewSelfPKIProvider(crypto, repo, "")
+	_, err := NewSelfPKIProvider(crypto, repo, "", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "list keys")
 }
@@ -367,7 +367,7 @@ func TestNewSelfPKIProvider_CreateKeyError(t *testing.T) {
 	crypto := &mockCryptoService{}
 	repo := &mockKeyRepo{createErr: fmt.Errorf("write error")}
 
-	_, err := NewSelfPKIProvider(crypto, repo, "")
+	_, err := NewSelfPKIProvider(crypto, repo, "", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "store generated key")
 }
@@ -387,7 +387,7 @@ func TestNewSelfPKIProvider_BadDecrypt_Regenerates(t *testing.T) {
 	}
 	repo := &mockKeyRepo{keys: []model.Key{badKey}}
 
-	p, err := NewSelfPKIProvider(crypto, repo, "")
+	p, err := NewSelfPKIProvider(crypto, repo, "", nil)
 	require.NoError(t, err)
 	require.NotNil(t, p)
 	// New key generated after decrypt failure.
@@ -395,7 +395,7 @@ func TestNewSelfPKIProvider_BadDecrypt_Regenerates(t *testing.T) {
 }
 
 func TestSelfPKIProvider_PrivateKey_Algorithm_KeyID(t *testing.T) {
-	p, err := NewSelfPKIProvider(&mockCryptoService{}, &mockKeyRepo{}, "1s")
+	p, err := NewSelfPKIProvider(&mockCryptoService{}, &mockKeyRepo{}, "1s", nil)
 	require.NoError(t, err)
 
 	assert.NotNil(t, p.PrivateKey())
@@ -404,7 +404,7 @@ func TestSelfPKIProvider_PrivateKey_Algorithm_KeyID(t *testing.T) {
 }
 
 func TestSelfPKIProvider_PublicKeys_SingleKey(t *testing.T) {
-	p, err := NewSelfPKIProvider(&mockCryptoService{}, &mockKeyRepo{}, "")
+	p, err := NewSelfPKIProvider(&mockCryptoService{}, &mockKeyRepo{}, "", nil)
 	require.NoError(t, err)
 
 	keys := p.PublicKeys()
@@ -415,7 +415,7 @@ func TestSelfPKIProvider_PublicKeys_SingleKey(t *testing.T) {
 }
 
 func TestSelfPKIProvider_Rotate_PromotesNewKey(t *testing.T) {
-	p, err := NewSelfPKIProvider(&mockCryptoService{}, &mockKeyRepo{}, "10m")
+	p, err := NewSelfPKIProvider(&mockCryptoService{}, &mockKeyRepo{}, "10m", nil)
 	require.NoError(t, err)
 
 	originalKID := p.KeyID()
@@ -434,7 +434,7 @@ func TestSelfPKIProvider_Rotate_PromotesNewKey(t *testing.T) {
 
 func TestSelfPKIProvider_Rotate_CreateError(t *testing.T) {
 	repo := &mockKeyRepo{}
-	p, err := NewSelfPKIProvider(&mockCryptoService{}, repo, "")
+	p, err := NewSelfPKIProvider(&mockCryptoService{}, repo, "", nil)
 	require.NoError(t, err)
 
 	// Make subsequent Creates (for rotation) fail.
@@ -451,7 +451,7 @@ func TestSelfPKIProvider_Rotate_EncryptError(t *testing.T) {
 	crypto := &mockCryptoService{encryptFail: 2}
 	repo := &mockKeyRepo{}
 
-	p, err := NewSelfPKIProvider(crypto, repo, "")
+	p, err := NewSelfPKIProvider(crypto, repo, "", nil)
 	require.NoError(t, err)
 
 	_, _, err = p.Rotate()

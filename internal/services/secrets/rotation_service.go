@@ -5,6 +5,7 @@ package secrets
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"rocketvault/internal/logging"
 	"rocketvault/internal/pwgen"
 	"rocketvault/internal/repositories"
+	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/model"
 )
 
@@ -46,6 +48,10 @@ type RotationServiceInterface interface {
 	// model.NewAdminScope(actorID) explicitly -- there is no longer a
 	// sentinel value that skips the check.
 	AcknowledgeReminder(ctx context.Context, reminderID, secretID uuid.UUID, scope model.Scope) error
+
+	// SetAuditService attaches the audit service that writes the critical
+	// attempt row for PerformManualRotation.
+	SetAuditService(a auditServices.AuditServiceInterface)
 }
 
 // CreatePolicyRequest represents the request to create a rotation policy.
@@ -122,6 +128,9 @@ type rotationService struct {
 	versioningSvc VersioningServiceInterface
 	cacheInv      SecretCacheInvalidator
 	log           *logging.Logger
+	// audit writes the critical rotation row. Nil only in tests; the
+	// container always wires it.
+	audit auditServices.AuditServiceInterface
 }
 
 // NewRotationService creates a new rotation service with the required
@@ -154,6 +163,10 @@ func NewRotationService(
 		log:           log,
 	}
 }
+
+// SetAuditService attaches the audit service for the critical rotation row.
+// See rotationService.audit.
+func (s *rotationService) SetAuditService(a auditServices.AuditServiceInterface) { s.audit = a }
 
 // invalidateCache evicts every cached view of a secret after a direct write.
 // A failure is logged but never fails the rotation that already succeeded.
@@ -413,46 +426,15 @@ func (s *rotationService) PerformManualRotation(ctx context.Context, req ManualR
 		return fmt.Errorf("policy not found: %w", err)
 	}
 
-	// The stored value is ciphertext and CreateVersion encrypts whatever it is
-	// given, so the plaintext is what must be archived -- exactly as
-	// SecretService.UpdateSecret does. Passing the ciphertext straight through
-	// would store it doubly encrypted.
-	currentPlaintext, err := s.cryptoSvc.DecryptSecret(secret.Value)
-	if err != nil {
-		s.log.LogAuditError(actor, "rotate_secret", "failed", "Failed to decrypt the current value", err)
-		return fmt.Errorf("failed to decrypt the current secret value: %w", err)
-	}
-
-	// CreateVersion gates on secret.UserID == req.UserID, so pass the secret's
-	// real owner here, never the scope's actor: a legitimate vault-scoped
-	// rotation by a non-owner member must not be rejected by that gate.
-	if _, err = s.versioningSvc.CreateVersion(ctx, CreateVersionRequest{
-		SecretID: secret.ID,
-		UserID:   secret.UserID,
-		Name:     secret.Name,
-		Value:    currentPlaintext,
-		Version:  secret.Version,
-	}); err != nil {
-		s.log.LogAuditError(actor, "rotate_secret", "failed", "Failed to archive the pre-rotation value", err)
-		return fmt.Errorf("failed to archive the pre-rotation value: %w", err)
-	}
-
-	encryptedValue, err := s.cryptoSvc.EncryptSecret(newPlaintext)
-	if err != nil {
-		s.log.LogAuditError(actor, "rotate_secret", "failed", "Failed to encrypt the replacement value", err)
-		return fmt.Errorf("failed to encrypt the replacement value: %w", err)
-	}
-
-	// Update secret with new value and incremented version
+	// The attempt row must be written before the old value is archived or
+	// replaced. A failed write returns audit.ErrAuditUnavailable and the
+	// secret, its versions and its schedule stay as they were; the scheduler
+	// retries a due secret on its next tick.
 	previousVersion := secret.Version
-	secret.Value = encryptedValue
-	secret.Version++
-
-	err = s.secretRepo.Update(ctx, secret, model.NewOwnerScope(secret.VaultID, secret.UserID))
-	if err != nil {
-		s.log.WithError(err).Error("Failed to update secret during rotation")
-		s.log.LogAuditError(actor, "rotate_secret", "failed", "Failed to update secret during rotation", err)
-		return fmt.Errorf("failed to update secret during rotation: %w", err)
+	if err := s.runCritical(ctx, req, secret, func(ctx context.Context) error {
+		return s.replaceSecretValue(ctx, actor, secret, newPlaintext)
+	}); err != nil {
+		return err
 	}
 
 	// The write bypassed CachedSecretService. Without this eviction a
@@ -485,8 +467,10 @@ func (s *rotationService) PerformManualRotation(ctx context.Context, req ManualR
 		// Don't fail rotation if scheduling update fails
 	}
 
-	s.log.LogAuditInfo(actor, "rotate_secret", "success",
-		fmt.Sprintf("Secret %s rotated to version %d", req.SecretID, secret.Version))
+	if s.audit == nil {
+		s.log.LogAuditInfo(actor, "rotate_secret", "success",
+			fmt.Sprintf("Secret %s rotated to version %d", req.SecretID, secret.Version))
+	}
 
 	s.log.WithFields(map[string]interface{}{
 		"secret_id":   req.SecretID,
@@ -495,6 +479,67 @@ func (s *rotationService) PerformManualRotation(ctx context.Context, req ManualR
 		"new_version": secret.Version,
 	}).Info("Manual rotation completed successfully")
 
+	return nil
+}
+
+// runCritical runs op after a critical attempt row for rotating secret on
+// behalf of req's actor, and records its result. With no audit service wired
+// (tests only) it runs op directly.
+func (s *rotationService) runCritical(ctx context.Context, req ManualRotationRequest, secret *model.Secret, op func(context.Context) error) error {
+	if s.audit == nil {
+		return op(ctx)
+	}
+	details, _ := json.Marshal(map[string]any{
+		"vault_id": secret.VaultID.String(), "policy_id": req.PolicyID.String(), "version": secret.Version,
+	})
+	return auditServices.WithCritical(ctx, s.audit, auditServices.AuditEvent{
+		UserID: req.Scope.ActorID().String(), Action: "rotate_secret", Details: string(details),
+		ResourceType: "secret", ResourceID: secret.ID.String(), Source: "system",
+	}, op)
+}
+
+// replaceSecretValue archives secret's current value as a version, then
+// stores newPlaintext as its next version.
+func (s *rotationService) replaceSecretValue(ctx context.Context, actor string, secret *model.Secret, newPlaintext string) error {
+	// The stored value is ciphertext and CreateVersion encrypts whatever it is
+	// given, so the plaintext is what must be archived -- exactly as
+	// SecretService.UpdateSecret does. Passing the ciphertext straight through
+	// would store it doubly encrypted.
+	currentPlaintext, err := s.cryptoSvc.DecryptSecret(secret.Value)
+	if err != nil {
+		s.log.LogAuditError(actor, "rotate_secret", "failed", "Failed to decrypt the current value", err)
+		return fmt.Errorf("failed to decrypt the current secret value: %w", err)
+	}
+
+	// CreateVersion gates on secret.UserID == req.UserID, so pass the secret's
+	// real owner here, never the scope's actor: a legitimate vault-scoped
+	// rotation by a non-owner member must not be rejected by that gate.
+	if _, err = s.versioningSvc.CreateVersion(ctx, CreateVersionRequest{
+		SecretID: secret.ID,
+		UserID:   secret.UserID,
+		Name:     secret.Name,
+		Value:    currentPlaintext,
+		Version:  secret.Version,
+	}); err != nil {
+		s.log.LogAuditError(actor, "rotate_secret", "failed", "Failed to archive the pre-rotation value", err)
+		return fmt.Errorf("failed to archive the pre-rotation value: %w", err)
+	}
+
+	encryptedValue, err := s.cryptoSvc.EncryptSecret(newPlaintext)
+	if err != nil {
+		s.log.LogAuditError(actor, "rotate_secret", "failed", "Failed to encrypt the replacement value", err)
+		return fmt.Errorf("failed to encrypt the replacement value: %w", err)
+	}
+
+	// Update secret with new value and incremented version
+	secret.Value = encryptedValue
+	secret.Version++
+
+	if err := s.secretRepo.Update(ctx, secret, model.NewOwnerScope(secret.VaultID, secret.UserID)); err != nil {
+		s.log.WithError(err).Error("Failed to update secret during rotation")
+		s.log.LogAuditError(actor, "rotate_secret", "failed", "Failed to update secret during rotation", err)
+		return fmt.Errorf("failed to update secret during rotation: %w", err)
+	}
 	return nil
 }
 

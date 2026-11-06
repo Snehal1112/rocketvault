@@ -14,6 +14,7 @@ import (
 
 	"rocketvault/cmd/testutils"
 	"rocketvault/internal/pwgen"
+	auditServices "rocketvault/internal/services/audit"
 	secretServices "rocketvault/internal/services/secrets"
 	"rocketvault/model"
 )
@@ -114,6 +115,8 @@ func (m *MockRotationSvc) GetUpcomingReminders(ctx context.Context, scope model.
 func (m *MockRotationSvc) AcknowledgeReminder(ctx context.Context, reminderID, secretID uuid.UUID, scope model.Scope) error {
 	return nil
 }
+
+func (m *MockRotationSvc) SetAuditService(auditServices.AuditServiceInterface) {}
 
 func setupRotationTestContext(t *testing.T) (*testutils.TestContext, *MockRotationSvc) {
 	tc := testutils.NewTestContext(t)

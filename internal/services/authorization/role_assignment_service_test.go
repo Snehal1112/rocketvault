@@ -100,7 +100,7 @@ func (f *fakeUserLookup) ReadByUsername(_ context.Context, name string) (model.U
 }
 
 func newSvc(rr *fakeRoleRepo, pr *fakePolicyRepo, ul *fakeUserLookup) RoleAssignmentService {
-	return NewRoleAssignmentService(rr, pr, ul, nil)
+	return NewRoleAssignmentService(rr, pr, ul, nil, nil)
 }
 
 func TestAssignRole_HappyPath(t *testing.T) {
@@ -398,7 +398,7 @@ func TestHasDataAction(t *testing.T) {
 			{PrincipalID: alice, VaultID: vaultA, Role: model.RoleKeyVaultSecretsUser},
 		},
 	}}
-	svc := NewRoleAssignmentService(repo, nil, nil, nil)
+	svc := NewRoleAssignmentService(repo, nil, nil, nil, nil)
 	ctx := context.Background()
 
 	cases := []struct {
@@ -440,7 +440,7 @@ func TestHasDataActionMultipleRolesUnion(t *testing.T) {
 			{PrincipalID: alice, VaultID: vault, Role: model.RoleKeyVaultCryptoUser},
 		},
 	}}
-	svc := NewRoleAssignmentService(repo, nil, nil, nil)
+	svc := NewRoleAssignmentService(repo, nil, nil, nil, nil)
 	ctx := context.Background()
 
 	for _, action := range []model.DataAction{model.ActionSecretsGet, model.ActionKeysSign} {
@@ -460,7 +460,7 @@ func TestHasDataActionMultipleRolesUnion(t *testing.T) {
 // instead of masking a database outage as a permission denial.
 func TestHasDataActionRepositoryErrorPropagates(t *testing.T) {
 	repo := &fakeVaultRoleRepo{err: errors.New("database is locked")}
-	svc := NewRoleAssignmentService(repo, nil, nil, nil)
+	svc := NewRoleAssignmentService(repo, nil, nil, nil, nil)
 	got, err := svc.HasDataAction(context.Background(), uuid.New(), uuid.New(), model.ActionSecretsGet)
 	if err == nil {
 		t.Fatal("want an error when the lookup fails")
@@ -654,7 +654,7 @@ func newAuditingSvc(rr *fakeRoleRepo, pr *fakePolicyRepo, ul *fakeUserLookup) (R
 	logger := logging.WrapLogrus(l)
 	persister := &recordingAuditPersister{}
 	logger.SetAuditPersister(persister)
-	return NewRoleAssignmentService(rr, pr, ul, logger), persister
+	return NewRoleAssignmentService(rr, pr, ul, logger, nil), persister
 }
 
 func TestAssignRole_LogsSuccessAudit(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"rocketvault/internal/logging"
 	"rocketvault/internal/metrics"
 	"rocketvault/internal/repositories"
+	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/model"
 )
 
@@ -164,6 +165,9 @@ type CryptoServiceConfig struct {
 	KeyCache keycache.Cache
 	// CryptoMetrics is optional; nil defaults to NopCryptoMetrics (no metrics).
 	CryptoMetrics metrics.CryptoMetrics
+	// AuditService writes the critical audit rows for wrap and unwrap. Nil
+	// only in tests; the container always wires it.
+	AuditService auditServices.AuditServiceInterface
 }
 
 // NewCryptoService creates a new crypto service.
@@ -183,6 +187,16 @@ func NewCryptoService(config CryptoServiceConfig) CryptoService {
 		cryptoMetrics: config.CryptoMetrics,
 		cfg:           config,
 	}
+}
+
+// runCritical runs op after a critical attempt row for action with key by
+// the scope's actor, and records its result. The algorithm and version are
+// recorded; the key material and payload never are.
+func (s *cryptoService) runCritical(ctx context.Context, scope model.Scope, action string, key *model.Key, algorithm string, version int, op func(context.Context) error) error {
+	ev := keyCriticalEvent(scope.ActorID(), action, key.ID, map[string]any{
+		"vault_id": key.VaultID.String(), "algorithm": algorithm, "version": version,
+	})
+	return runKeyCritical(ctx, s.cfg.AuditService, ev, op)
 }
 
 const pkcs11Prefix = "pkcs11:"
@@ -700,21 +714,30 @@ func (s *cryptoService) WrapKey(ctx context.Context, req WrapKeyRequest) (*WrapK
 			return nil, fmt.Errorf("algorithm %q requires a %d-bit key, but key %s is %d-bit", req.Algorithm, expectedBits, req.KeyID, key.Bits)
 		}
 	}
+	// Every gate has passed. The attempt row must be written before the key
+	// is used; if it fails, nothing is wrapped or returned.
 	var wrappedKey []byte
-	if wrapIsPKCS11 {
-		wrappedKey, _, err = s.keyProvider.Encrypt(ctx, wrapHandle, req.PlaintextKey, encAlgo)
-	} else {
-		var result *crypto.EncryptResult
-		result, err = s.cryptoOps.Encrypt(wrapHandle, req.PlaintextKey, encAlgo)
-		if err == nil {
-			wrappedKey = result.Ciphertext
+	err = s.runCritical(ctx, req.Scope, "wrap_key", key, req.Algorithm, resolvedVersion, func(ctx context.Context) error {
+		var err error
+		if wrapIsPKCS11 {
+			wrappedKey, _, err = s.keyProvider.Encrypt(ctx, wrapHandle, req.PlaintextKey, encAlgo)
+		} else {
+			var result *crypto.EncryptResult
+			result, err = s.cryptoOps.Encrypt(wrapHandle, req.PlaintextKey, encAlgo)
+			if err == nil {
+				wrappedKey = result.Ciphertext
+			}
 		}
-	}
+		if err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "wrap_key", "failed", "wrap operation failed", err)
+			return fmt.Errorf("wrap failed: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "wrap_key", "failed", "wrap operation failed", err)
-		return nil, fmt.Errorf("wrap failed: %w", err)
+		return nil, err
 	}
-	s.logger.LogAuditInfo(req.UserID.String(), "wrap_key", "success",
+	logLegacySuccess(s.cfg.AuditService, s.logger, req.UserID.String(), "wrap_key",
 		fmt.Sprintf("key material wrapped with vault key %s", req.KeyID))
 	return &WrapKeyResult{WrappedKey: wrappedKey, Algorithm: req.Algorithm, Version: resolvedVersion}, nil
 }
@@ -772,21 +795,30 @@ func (s *cryptoService) UnwrapKey(ctx context.Context, req UnwrapKeyRequest) (*U
 			return nil, fmt.Errorf("algorithm %q requires a %d-bit key, but key %s is %d-bit", req.Algorithm, expectedBits, req.KeyID, key.Bits)
 		}
 	}
+	// Every gate has passed. The attempt row must be written before the key
+	// is used; if it fails, no plaintext key is recovered or returned.
 	var plaintext []byte
-	if unwrapIsPKCS11 {
-		plaintext, err = s.keyProvider.Decrypt(ctx, unwrapHandle, req.WrappedKey, nil, decAlgo)
-	} else {
-		var result *crypto.DecryptResult
-		result, err = s.cryptoOps.Decrypt(unwrapHandle, req.WrappedKey, nil, decAlgo)
-		if err == nil {
-			plaintext = result.Plaintext
+	err = s.runCritical(ctx, req.Scope, "unwrap_key", key, req.Algorithm, resolvedVersion, func(ctx context.Context) error {
+		var err error
+		if unwrapIsPKCS11 {
+			plaintext, err = s.keyProvider.Decrypt(ctx, unwrapHandle, req.WrappedKey, nil, decAlgo)
+		} else {
+			var result *crypto.DecryptResult
+			result, err = s.cryptoOps.Decrypt(unwrapHandle, req.WrappedKey, nil, decAlgo)
+			if err == nil {
+				plaintext = result.Plaintext
+			}
 		}
-	}
+		if err != nil {
+			s.logger.LogAuditError(req.UserID.String(), "unwrap_key", "failed", "unwrap operation failed", err)
+			return fmt.Errorf("unwrap failed: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		s.logger.LogAuditError(req.UserID.String(), "unwrap_key", "failed", "unwrap operation failed", err)
-		return nil, fmt.Errorf("unwrap failed: %w", err)
+		return nil, err
 	}
-	s.logger.LogAuditInfo(req.UserID.String(), "unwrap_key", "success",
+	logLegacySuccess(s.cfg.AuditService, s.logger, req.UserID.String(), "unwrap_key",
 		fmt.Sprintf("key material unwrapped with vault key %s", req.KeyID))
 	return &UnwrapKeyResult{PlaintextKey: plaintext, Algorithm: req.Algorithm, Version: resolvedVersion}, nil
 }
