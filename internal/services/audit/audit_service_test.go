@@ -27,7 +27,7 @@ func openTestDB(t *testing.T) *sql.DB {
 		id TEXT PRIMARY KEY, user_id TEXT, action TEXT NOT NULL,
 		details TEXT, timestamp TIMESTAMP,
 		resource_type TEXT, resource_id TEXT, ip_address TEXT,
-		outcome TEXT, source TEXT, prev_hash TEXT
+		outcome TEXT, source TEXT, prev_hash TEXT, seq BIGINT
 	)`)
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TABLE audit_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)

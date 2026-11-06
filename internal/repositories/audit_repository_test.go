@@ -3,6 +3,8 @@ package repositories_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -91,10 +93,10 @@ func TestAuditRepository_PersistAudit_MultipleRecords(t *testing.T) {
 	assert.Equal(t, 5, count)
 }
 
-// openAuditTestDBFull creates an in-memory DB with the full enriched audit_logs schema.
+// openAuditTestDBFull creates a file-backed DB with the full enriched audit_logs schema.
 func openAuditTestDBFull(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "audit.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() }) //nolint:errcheck,gosec
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS audit_logs (
@@ -108,8 +110,16 @@ func openAuditTestDBFull(t *testing.T) *sql.DB {
 		ip_address    TEXT,
 		outcome       TEXT,
 		source        TEXT,
-		prev_hash     TEXT
+		prev_hash     TEXT,
+		seq           BIGINT
 	)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_logs_seq ON audit_logs(seq)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS audit_chain_head (
+		id INT PRIMARY KEY CHECK (id = 1), last_seq BIGINT NOT NULL, last_hash TEXT NOT NULL)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO audit_chain_head (id, last_seq, last_hash) VALUES (1, 0, '')`)
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS audit_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
 	require.NoError(t, err)
@@ -186,4 +196,106 @@ func TestAuditRepository_AuditConfig_RoundTrip(t *testing.T) {
 	val, err = repo.GetAuditConfig(context.Background(), "retention_days")
 	require.NoError(t, err)
 	assert.Equal(t, "180", val)
+}
+
+func TestAppendChained_AssignsContiguousSeq(t *testing.T) {
+	db := openAuditTestDBFull(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	ctx := context.Background()
+
+	prev := ""
+	for i := int64(1); i <= 3; i++ {
+		hash := fmt.Sprintf("hash-%d", i)
+		err := repo.AppendChained(ctx, func(nextSeq int64, prevHash string, now time.Time) repositories.AuditLog {
+			assert.Equal(t, i, nextSeq)
+			assert.Equal(t, prev, prevHash)
+			return repositories.AuditLog{ID: uuid.New().String(), UserID: "u", Action: "a", PrevHash: hash}
+		})
+		require.NoError(t, err)
+		prev = hash
+	}
+
+	rows, err := db.Query(`SELECT seq FROM audit_logs ORDER BY seq`)
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+	var got []int64
+	for rows.Next() {
+		var s int64
+		require.NoError(t, rows.Scan(&s))
+		got = append(got, s)
+	}
+	assert.Equal(t, []int64{1, 2, 3}, got)
+
+	var lastSeq int64
+	var lastHash string
+	require.NoError(t, db.QueryRow(`SELECT last_seq, last_hash FROM audit_chain_head WHERE id = 1`).Scan(&lastSeq, &lastHash))
+	assert.Equal(t, int64(3), lastSeq)
+	assert.Equal(t, "hash-3", lastHash)
+}
+
+func TestAppendChained_BuildErrorRollsBack(t *testing.T) {
+	db := openAuditTestDBFull(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	ctx := context.Background()
+
+	_, err := db.Exec(`INSERT INTO audit_logs (id, action) VALUES ('dup', 'x')`)
+	require.NoError(t, err)
+
+	err = repo.AppendChained(ctx, func(int64, string, time.Time) repositories.AuditLog {
+		return repositories.AuditLog{ID: "dup", Action: "a", PrevHash: "h"}
+	})
+	require.Error(t, err)
+
+	var lastSeq int64
+	var lastHash string
+	require.NoError(t, db.QueryRow(`SELECT last_seq, last_hash FROM audit_chain_head WHERE id = 1`).Scan(&lastSeq, &lastHash))
+	assert.Equal(t, int64(0), lastSeq)
+	assert.Equal(t, "", lastHash)
+
+	var seq int64
+	err = repo.AppendChained(ctx, func(nextSeq int64, _ string, _ time.Time) repositories.AuditLog {
+		seq = nextSeq
+		return repositories.AuditLog{ID: uuid.New().String(), Action: "a", PrevHash: "h2"}
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), seq)
+}
+
+func TestAppendChained_TimestampMicrosecondPrecision(t *testing.T) {
+	db := openAuditTestDBFull(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+
+	var seen time.Time
+	err := repo.AppendChained(context.Background(), func(_ int64, _ string, now time.Time) repositories.AuditLog {
+		seen = now
+		return repositories.AuditLog{ID: uuid.New().String(), Action: "a", PrevHash: "h"}
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, seen.Nanosecond()%1000)
+	assert.Equal(t, time.UTC, seen.Location())
+}
+
+func TestQueryAuditLogs_OrdersChainedBeforeLegacy(t *testing.T) {
+	db := openAuditTestDBFull(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	ctx := context.Background()
+
+	require.NoError(t, repo.InsertAuditLog(ctx, repositories.AuditLog{
+		ID: "legacy", Action: "a", Timestamp: time.Now().UTC().Add(time.Hour),
+	}))
+	for _, id := range []string{"c1", "c2"} {
+		require.NoError(t, repo.AppendChained(ctx, func(int64, string, time.Time) repositories.AuditLog {
+			return repositories.AuditLog{ID: id, Action: "a", PrevHash: "h" + id}
+		}))
+	}
+
+	logs, _, err := repo.QueryAuditLogs(ctx, repositories.AuditFilter{})
+	require.NoError(t, err)
+	require.Len(t, logs, 3)
+	assert.Equal(t, "c2", logs[0].ID)
+	assert.Equal(t, "c1", logs[1].ID)
+	assert.Equal(t, "legacy", logs[2].ID)
+	require.NotNil(t, logs[0].Seq)
+	assert.Equal(t, int64(2), *logs[0].Seq)
+	assert.Nil(t, logs[2].Seq)
 }

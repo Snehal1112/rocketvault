@@ -37,6 +37,7 @@ type AuditRepositoryExtended interface {
 	AuditRepositoryInterface
 	InsertAuditLog(ctx context.Context, entry AuditLog) error
 	GetLastHash(ctx context.Context) (string, error)
+	AppendChained(ctx context.Context, build func(nextSeq int64, prevHash string, now time.Time) AuditLog) error
 	QueryAuditLogs(ctx context.Context, filter AuditFilter) ([]AuditLog, int64, error)
 	DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error)
 	GetAuditConfig(ctx context.Context, key string) (string, error)
@@ -90,6 +91,71 @@ func (r *AuditRepository) InsertAuditLog(ctx context.Context, entry AuditLog) er
 	return err
 }
 
+// AppendChained appends one hash-chained row in a single transaction.
+// It locks the chain head, calls build with the next seq, the previous hash
+// and the DB time, inserts the row and advances the head.
+func (r *AuditRepository) AppendChained(ctx context.Context, build func(nextSeq int64, prevHash string, now time.Time) AuditLog) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("audit append begin: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// A no-op update takes the write lock on both engines.
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_chain_head SET last_seq = last_seq WHERE id = 1`); err != nil {
+		return fmt.Errorf("audit head lock: %w", err)
+	}
+	var lastSeq int64
+	var lastHash string
+	if err := tx.QueryRowContext(ctx, `SELECT last_seq, last_hash FROM audit_chain_head WHERE id = 1`).Scan(&lastSeq, &lastHash); err != nil {
+		return fmt.Errorf("audit head read: %w", err)
+	}
+
+	var now time.Time
+	if r.db.Dialect() == db.Postgres {
+		if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+			return fmt.Errorf("audit db time: %w", err)
+		}
+	} else {
+		now = time.Now()
+	}
+	now = now.UTC().Truncate(time.Microsecond)
+
+	nextSeq := lastSeq + 1
+	entry := build(nextSeq, lastHash, now)
+	entry.Timestamp = now
+	if entry.ID == "" {
+		entry.ID = uuid.New().String()
+	}
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO audit_logs
+			(id, user_id, action, details, timestamp,
+			 resource_type, resource_id, ip_address, outcome, source, prev_hash, seq)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		entry.ID, entry.UserID, entry.Action, entry.Details, entry.Timestamp,
+		nullableString(entry.ResourceType), nullableString(entry.ResourceID),
+		nullableString(entry.IPAddress), nullableString(entry.Outcome),
+		nullableString(entry.Source), nullableString(entry.PrevHash), nextSeq,
+	); err != nil {
+		return fmt.Errorf("audit insert: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE audit_chain_head SET last_seq = ?, last_hash = ? WHERE id = 1`, nextSeq, entry.PrevHash); err != nil {
+		return fmt.Errorf("audit head advance: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("audit append commit: %w", err)
+	}
+	committed = true
+	return nil
+}
+
 // GetLastHash returns the prev_hash of the most recently inserted row,
 // or "" if the table is empty.
 func (r *AuditRepository) GetLastHash(ctx context.Context) (string, error) {
@@ -129,9 +195,9 @@ func (r *AuditRepository) QueryAuditLogs(ctx context.Context, filter AuditFilter
 
 	// Fetch page using a separate args slice to avoid mutating the count args.
 	querySQL := `SELECT id, user_id, action, details, timestamp,
-					resource_type, resource_id, ip_address, outcome, source, prev_hash
+					resource_type, resource_id, ip_address, outcome, source, prev_hash, seq
 				 FROM audit_logs` + where +
-		` ORDER BY timestamp DESC, id DESC LIMIT ?`
+		` ORDER BY COALESCE(seq, 0) DESC, timestamp DESC, id DESC LIMIT ?`
 	queryArgs := append(args, limit)
 
 	rows, err := r.db.QueryContext(ctx, querySQL, queryArgs...)
@@ -144,9 +210,10 @@ func (r *AuditRepository) QueryAuditLogs(ctx context.Context, filter AuditFilter
 	for rows.Next() {
 		var l AuditLog
 		var userID, resourceType, resourceID, ipAddress, outcome, source, prevHash sql.NullString
+		var seq sql.NullInt64
 		if err := rows.Scan(
 			&l.ID, &userID, &l.Action, &l.Details, &l.Timestamp,
-			&resourceType, &resourceID, &ipAddress, &outcome, &source, &prevHash,
+			&resourceType, &resourceID, &ipAddress, &outcome, &source, &prevHash, &seq,
 		); err != nil {
 			return nil, 0, fmt.Errorf("audit log scan: %w", err)
 		}
@@ -157,6 +224,10 @@ func (r *AuditRepository) QueryAuditLogs(ctx context.Context, filter AuditFilter
 		l.Outcome = outcome.String
 		l.Source = source.String
 		l.PrevHash = prevHash.String
+		if seq.Valid {
+			v := seq.Int64
+			l.Seq = &v
+		}
 		logs = append(logs, l)
 	}
 	return logs, total, rows.Err()

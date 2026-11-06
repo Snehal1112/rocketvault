@@ -1094,7 +1094,8 @@ func setupAuditDBFull(t *testing.T) *sql.DB {
 			ip_address TEXT,
 			outcome TEXT,
 			source TEXT,
-			prev_hash TEXT
+			prev_hash TEXT,
+			seq BIGINT
 		);
 		CREATE TABLE IF NOT EXISTS audit_config (
 			key   TEXT PRIMARY KEY,

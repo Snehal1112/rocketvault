@@ -12,6 +12,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -526,4 +528,44 @@ func TestPostgres_SetupSchema_DropsLegacyUserCascades(t *testing.T) {
 	require.NoError(t, repo.SetupSchema(conn.Underlying(), rvdb.Postgres))
 
 	require.Equal(t, []string{"user_roles", "user_sessions"}, cascadingUserFKTables(t, conn))
+}
+
+// TestPG_AppendChained_Concurrent proves the head lock serialises appenders.
+func TestPG_AppendChained_Concurrent(t *testing.T) {
+	conn, cleanup := newPostgresConn(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := repositories.NewAuditRepository(conn)
+
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- repo.AppendChained(ctx, func(nextSeq int64, _ string, _ time.Time) repositories.AuditLog {
+				return repositories.AuditLog{ID: uuid.New().String(), Action: "a", PrevHash: fmt.Sprintf("h%d", nextSeq)}
+			})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	rows, err := conn.QueryContext(ctx, `SELECT seq FROM audit_logs ORDER BY seq`)
+	require.NoError(t, err)
+	defer rows.Close() //nolint:errcheck
+	var got []int64
+	for rows.Next() {
+		var s int64
+		require.NoError(t, rows.Scan(&s))
+		got = append(got, s)
+	}
+	require.Len(t, got, n)
+	for i, s := range got {
+		require.Equal(t, int64(i+1), s)
+	}
 }
