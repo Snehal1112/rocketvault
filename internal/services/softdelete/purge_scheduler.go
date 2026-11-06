@@ -4,6 +4,7 @@ package softdelete
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"rocketvault/config"
 	rvdb "rocketvault/internal/db"
 	"rocketvault/internal/logging"
+	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/model"
 )
 
@@ -32,14 +34,18 @@ type PurgeScheduler struct {
 	log    *logging.Logger
 	done   chan struct{}
 	vaults VaultPurger
+	// audit writes the critical row before each table's purge. Nil only in
+	// tests; bootstrap always wires it.
+	audit auditServices.AuditServiceInterface
 }
 
 // NewPurgeScheduler creates a new PurgeScheduler. vaults may be nil, in
 // which case vault auto-purge is skipped (secrets/keys/certificates are
 // still swept normally) -- tests that don't exercise vault behavior are not
-// required to supply one.
-func NewPurgeScheduler(db rvdb.DB, cfg config.SoftDeleteConfig, log *logging.Logger, vaults VaultPurger) *PurgeScheduler {
-	return &PurgeScheduler{db: db, cfg: cfg, log: log, done: make(chan struct{}), vaults: vaults}
+// required to supply one. audit writes the critical row before each table's
+// purge; with audit nil (tests only) the tables are purged unaudited.
+func NewPurgeScheduler(db rvdb.DB, cfg config.SoftDeleteConfig, log *logging.Logger, vaults VaultPurger, audit auditServices.AuditServiceInterface) *PurgeScheduler {
+	return &PurgeScheduler{db: db, cfg: cfg, log: log, done: make(chan struct{}), vaults: vaults, audit: audit}
 }
 
 // Start launches the scheduler in a background goroutine.
@@ -87,7 +93,14 @@ func (s *PurgeScheduler) purgeExpired(ctx context.Context) {
 			`DELETE FROM %s WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purge_protection = FALSE`,
 			table,
 		)
-		n, err := s.purgeTable(ctx, table, query, cutoff)
+		n, err := s.auditedPurgeTable(ctx, table, query, cutoff)
+		if errors.Is(err, errNothingEligible) {
+			continue
+		}
+		if errors.Is(err, auditServices.ErrAuditUnavailable) {
+			s.log.WithError(err).Errorf("auto-purge skipped for table %s: audit unavailable", table)
+			continue
+		}
 		if err != nil {
 			s.log.WithError(err).Errorf("auto-purge failed for table %s", table)
 			continue
@@ -98,6 +111,47 @@ func (s *PurgeScheduler) purgeExpired(ctx context.Context) {
 	}
 
 	s.purgeExpiredVaults(ctx)
+}
+
+// errNothingEligible means a table had no expired rows, so neither the purge
+// nor its audit rows were written.
+var errNothingEligible = errors.New("nothing eligible")
+
+// auditedPurgeTable purges one table audit-first. It counts the eligible
+// rows, writes the critical attempt row, runs the purge and then records the
+// result with the number of rows deleted. A failed attempt write returns an
+// error matching audit.ErrAuditUnavailable and deletes nothing.
+func (s *PurgeScheduler) auditedPurgeTable(ctx context.Context, table, query string, cutoff time.Time) (int64, error) {
+	if s.audit == nil {
+		return s.purgeTable(ctx, table, query, cutoff)
+	}
+	var eligible int64
+	countQuery := fmt.Sprintf(
+		`SELECT COUNT(*) FROM %s WHERE deleted_at IS NOT NULL AND deleted_at < ? AND purge_protection = FALSE`, table)
+	if err := s.db.QueryRowContext(ctx, countQuery, cutoff).Scan(&eligible); err != nil {
+		return 0, err
+	}
+	// Nothing to purge, so nothing to audit; this keeps the chain quiet.
+	if eligible == 0 {
+		return 0, errNothingEligible
+	}
+
+	ev := auditServices.AuditEvent{UserID: "system", Action: "auto_purge_" + table, ResourceType: table, Source: "system"}
+	attempt := ev
+	attempt.Details = fmt.Sprintf("cutoff=%s eligible=%d", cutoff.UTC().Format(time.RFC3339), eligible)
+	if err := auditServices.RecordAttempt(ctx, s.audit, attempt); err != nil {
+		return 0, err
+	}
+
+	n, err := s.purgeTable(ctx, table, query, cutoff)
+	result := ev
+	result.Outcome, result.Details = "success", fmt.Sprintf("rows_deleted=%d", n)
+	if err != nil {
+		result.Outcome, result.Details = "failure", "purge failed"
+	}
+	// The result row is best effort; RecordEvent already logs and counts a failure.
+	_ = s.audit.RecordEvent(context.WithoutCancel(ctx), result)
+	return n, err
 }
 
 // purgeTable runs the expired-row DELETE for one table. For certificates it

@@ -110,7 +110,7 @@ func TestNewPurgeScheduler(t *testing.T) {
 	log := testLogger()
 
 	vaults := &fakeVaultPurger{}
-	s := NewPurgeScheduler(conn, cfg, log, vaults)
+	s := NewPurgeScheduler(conn, cfg, log, vaults, nil)
 
 	require.NotNil(t, s)
 	assert.Equal(t, conn, s.db)
@@ -126,7 +126,7 @@ func TestStartStop(t *testing.T) {
 	createPurgeTables(rawDB)
 	conn := newTestConn(t, rawDB)
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil, nil)
 
 	assert.NotPanics(t, func() {
 		s.Start(context.Background())
@@ -142,7 +142,7 @@ func TestPurgeExpired_EmptyDB(t *testing.T) {
 	rawDB := newTestDB(t)
 	conn := newTestConn(t, rawDB)
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil, nil)
 
 	// purgeExpired is called inside the goroutine launched by Start.
 	// We just ensure no panic; errors are logged internally.
@@ -184,7 +184,7 @@ func TestPurgeExpired_WithData(t *testing.T) {
 
 	// RetentionDays=30 — the 60-day-old rows are past the threshold.
 	conn := newTestConn(t, rawDB)
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil, nil)
 	s.Start(context.Background())
 
 	// Give the goroutine enough time to run purgeExpired once.
@@ -227,7 +227,7 @@ func TestStopViaContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil, nil)
 	s.Start(ctx)
 
 	// Cancel the context; the goroutine must exit without a panic.
@@ -251,7 +251,7 @@ func TestPurgeExpired_NullDeletedAt_NotPurged(t *testing.T) {
 	require.NoError(t, err)
 
 	conn := newTestConn(t, rawDB)
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil, nil)
 	s.Start(context.Background())
 	time.Sleep(30 * time.Millisecond)
 	s.Stop()
@@ -283,7 +283,7 @@ func TestPurgeExpired_SkipsAllWhenGlobalPurgeProtectionEnabled(t *testing.T) {
 	conn := newTestConn(t, rawDB)
 	cfg := testConfig()
 	cfg.PurgeProtection = true
-	s := NewPurgeScheduler(conn, cfg, testLogger(), vaults)
+	s := NewPurgeScheduler(conn, cfg, testLogger(), vaults, nil)
 	s.Start(context.Background())
 	time.Sleep(30 * time.Millisecond)
 	s.Stop()
@@ -308,7 +308,7 @@ func TestPurgeExpiredVaults_UsesPerVaultRetentionOverride(t *testing.T) {
 		{Name: "short-retention", DeletedAt: &deletedAt, RetentionDays: 10},
 	}}
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults, nil)
 	s.Start(context.Background())
 	time.Sleep(30 * time.Millisecond)
 	s.Stop()
@@ -330,7 +330,7 @@ func TestPurgeExpiredVaults_FallsBackToGlobalRetentionWhenUnset(t *testing.T) {
 		{Name: "recent", DeletedAt: &notYetExpired},
 	}}
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults, nil)
 	s.Start(context.Background())
 	time.Sleep(30 * time.Millisecond)
 	s.Stop()
@@ -350,7 +350,7 @@ func TestPurgeExpiredVaults_SkipsProtectedVault(t *testing.T) {
 		{Name: "protected", DeletedAt: &deletedAt, PurgeProtection: true},
 	}}
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults, nil)
 	s.Start(context.Background())
 	time.Sleep(30 * time.Millisecond)
 	s.Stop()
@@ -368,7 +368,7 @@ func TestPurgeExpiredVaults_SkipsActiveVault(t *testing.T) {
 		{Name: "active"},
 	}}
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults, nil)
 	s.Start(context.Background())
 	time.Sleep(30 * time.Millisecond)
 	s.Stop()
@@ -383,7 +383,7 @@ func TestPurgeExpiredVaults_NilVaultPurger_NoOp(t *testing.T) {
 	createPurgeTables(rawDB)
 	conn := newTestConn(t, rawDB)
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), nil, nil)
 	assert.NotPanics(t, func() {
 		s.Start(context.Background())
 		time.Sleep(20 * time.Millisecond)
@@ -417,7 +417,7 @@ func TestPurgeExpired_DeletesCertificateVersions(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	s := NewPurgeScheduler(newTestConn(t, rawDB), testConfig(), testLogger(), nil)
+	s := NewPurgeScheduler(newTestConn(t, rawDB), testConfig(), testLogger(), nil, nil)
 	s.purgeExpired(context.Background())
 
 	count := func(id string) int {
@@ -442,7 +442,7 @@ func TestPurgeExpiredVaults_PassesSystemActor(t *testing.T) {
 	deletedAt := time.Now().AddDate(0, 0, -40)
 	vaults := &fakeVaultPurger{vaults: []model.Vault{{Name: "expired", DeletedAt: &deletedAt, RetentionDays: 30}}}
 
-	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults)
+	s := NewPurgeScheduler(conn, testConfig(), testLogger(), vaults, nil)
 	s.Start(context.Background())
 	time.Sleep(30 * time.Millisecond)
 	s.Stop()

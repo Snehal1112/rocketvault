@@ -326,7 +326,7 @@ func (b *bootstrap) setup(ctx context.Context, cfg *Config) error {
 	if softDeleteCfg.Enabled {
 		dialect := db.DialectFromDriver(viper.GetString("database.driver"))
 		conn := db.NewConn(database.GetDB(), dialect)
-		b.purgeScheduler = softdelete.NewPurgeScheduler(conn, softDeleteCfg, b.cfg.Logger, b.serviceContainer.GetVaultService())
+		b.purgeScheduler = newPurgeScheduler(conn, softDeleteCfg, b.cfg.Logger, b.serviceContainer)
 		b.purgeScheduler.Start(ctx)
 		b.cfg.Logger.Info("Soft-delete purge scheduler started")
 	}
@@ -454,6 +454,13 @@ func (b *bootstrap) initializeAPI(cfg *Config, app *app.App) error {
 
 // Shutdown performs graceful application shutdown.
 // This method follows SRP by handling only shutdown concerns.
+// newPurgeScheduler builds the soft-delete purge scheduler from sc: vaults
+// are purged through its vault service, and every table purge is audited
+// first through its audit service.
+func newPurgeScheduler(conn db.DB, cfg config.SoftDeleteConfig, log *logging.Logger, sc container.ServiceContainerInterface) *softdelete.PurgeScheduler {
+	return softdelete.NewPurgeScheduler(conn, cfg, log, sc.GetVaultService(), sc.GetAuditService())
+}
+
 func (b *bootstrap) Shutdown(ctx context.Context) error {
 	logrus.Info("Starting application shutdown")
 

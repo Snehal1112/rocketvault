@@ -219,7 +219,7 @@ func TestShutdown_WithPurgeScheduler_StopsCleanly(t *testing.T) {
 
 	logger := newTestLogger()
 	sdCfg := config.SoftDeleteConfig{RetentionDays: 30}
-	ps := softdelete.NewPurgeScheduler(conn, sdCfg, logger, nil)
+	ps := softdelete.NewPurgeScheduler(conn, sdCfg, logger, nil, nil)
 	ps.Start(context.Background())
 
 	bs := &bootstrap{purgeScheduler: ps}
