@@ -320,6 +320,10 @@ func (e *retryableError) Retryable() bool {
 	return e.retryable
 }
 
+// Unwrap exposes the wrapped error, so errors.Is still finds a sentinel such
+// as audit.ErrAuditUnavailable behind NonRetryable.
+func (e *retryableError) Unwrap() error { return e.err }
+
 // IsRetryable determines if an error should be retried based on the policy.
 func IsRetryable(err error, policy Policy) bool {
 	if err == nil {

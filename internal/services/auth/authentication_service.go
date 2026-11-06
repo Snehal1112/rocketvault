@@ -362,6 +362,45 @@ func (s *authenticationService) issueSession(ctx context.Context, user *model.Us
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
+	var accessToken string
+	mint := func(ctx context.Context) error {
+		var err error
+		accessToken, err = s.createSessionAndToken(ctx, user, auditAction, refreshToken)
+		return err
+	}
+
+	if s.auditService != nil {
+		// The attempt row must be written before a session exists. A failed
+		// write returns audit.ErrAuditUnavailable and issues nothing.
+		err = auditServices.WithCritical(ctx, s.auditService, auditServices.AuditEvent{
+			UserID: user.ID.String(), Action: auditAction,
+			Source: "system", ResourceType: "user", ResourceID: user.ID.String(),
+		}, mint)
+	} else {
+		err = mint(ctx)
+		if err == nil {
+			s.logger.LogAuditInfo(user.ID.String(), auditAction, "success", "Session issued successfully")
+		}
+	}
+	if err != nil {
+		if errors.Is(err, auditServices.ErrAuditUnavailable) {
+			s.logger.WithField("user_id", user.ID.String()).Error("Session refused: audit unavailable")
+		}
+		return nil, err
+	}
+
+	return &AuthenticationResult{
+		Token:        accessToken,
+		RefreshToken: refreshToken,
+		UserID:       user.ID,
+		Username:     user.Username,
+		Roles:        user.Roles,
+	}, nil
+}
+
+// createSessionAndToken stores a session for user and returns an access token
+// whose jti is the session ID.
+func (s *authenticationService) createSessionAndToken(ctx context.Context, user *model.User, auditAction, refreshToken string) (string, error) {
 	// Create session in database first so we have a session.ID for the JWT jti.
 	session := &model.Session{
 		ID:               uuid.New(),
@@ -379,7 +418,7 @@ func (s *authenticationService) issueSession(ctx context.Context, user *model.Us
 	if err := s.sessionRepo.CreateSession(ctx, session); err != nil {
 		s.logger.LogAuditError(user.ID.String(), auditAction, "failed", "Failed to create session", err)
 		s.logger.WithError(err).Error("Failed to create session")
-		return nil, fmt.Errorf("authentication failed: %w", err)
+		return "", fmt.Errorf("authentication failed: %w", err)
 	}
 
 	// Generate access token (short-lived) with session.ID as jti for revocation checks.
@@ -387,25 +426,10 @@ func (s *authenticationService) issueSession(ctx context.Context, user *model.Us
 	if err != nil {
 		s.logger.LogAuditError(user.ID.String(), auditAction, "failed", "Failed to generate JWT token", err)
 		s.logger.WithError(err).Error("Failed to generate JWT token")
-		return nil, fmt.Errorf("authentication failed: %w", err)
+		return "", fmt.Errorf("authentication failed: %w", err)
 	}
 
-	if s.auditService != nil {
-		_ = s.auditService.RecordEvent(ctx, auditServices.AuditEvent{
-			UserID: user.ID.String(), Action: auditAction, Outcome: "success",
-			Source: "system", ResourceType: "user", ResourceID: user.ID.String(),
-		})
-	} else {
-		s.logger.LogAuditInfo(user.ID.String(), auditAction, "success", "Session issued successfully")
-	}
-
-	return &AuthenticationResult{
-		Token:        accessToken,
-		RefreshToken: refreshToken,
-		UserID:       user.ID,
-		Username:     user.Username,
-		Roles:        user.Roles,
-	}, nil
+	return accessToken, nil
 }
 
 // IssueSessionForUser creates a session and issues an access/refresh token
