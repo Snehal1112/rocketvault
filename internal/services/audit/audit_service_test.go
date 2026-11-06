@@ -20,15 +20,10 @@ import (
 	auditSvc "rocketvault/internal/services/audit"
 )
 
-// openTestDB creates a file-backed SQLite DB with the chained audit schema.
-func openTestDB(t *testing.T) *sql.DB {
+// createAuditSchema builds the chained audit schema and seeds the chain head.
+func createAuditSchema(t *testing.T, db *sql.DB) {
 	t.Helper()
-	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "audit.db"))
-	require.NoError(t, err)
-	// One connection serialises writers, so SQLite never reports a busy lock here.
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() }) //nolint:errcheck,gosec
-	_, err = db.Exec(`CREATE TABLE audit_logs (
+	_, err := db.Exec(`CREATE TABLE audit_logs (
 		id TEXT PRIMARY KEY, user_id TEXT, action TEXT NOT NULL,
 		details TEXT, timestamp TIMESTAMP,
 		resource_type TEXT, resource_id TEXT, ip_address TEXT,
@@ -44,6 +39,17 @@ func openTestDB(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TABLE audit_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
 	require.NoError(t, err)
+}
+
+// openTestDB creates a file-backed SQLite DB with the chained audit schema.
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "audit.db"))
+	require.NoError(t, err)
+	// One connection serialises writers, so SQLite never reports a busy lock here.
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { db.Close() }) //nolint:errcheck,gosec
+	createAuditSchema(t, db)
 	return db
 }
 

@@ -540,11 +540,17 @@ func TestPG_AppendChained_Concurrent(t *testing.T) {
 	const n = 20
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
+	// build runs under the head lock, but the mutex keeps the race detector happy.
+	var mu sync.Mutex
+	seenPrev := map[int64]string{}
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- repo.AppendChained(ctx, func(nextSeq int64, _ string, _ time.Time) repositories.AuditLog {
+			errs <- repo.AppendChained(ctx, func(nextSeq int64, prevHash string, _ time.Time) repositories.AuditLog {
+				mu.Lock()
+				seenPrev[nextSeq] = prevHash
+				mu.Unlock()
 				return repositories.AuditLog{ID: uuid.New().String(), Action: "a", PrevHash: fmt.Sprintf("h%d", nextSeq)}
 			})
 		}()
@@ -567,5 +573,11 @@ func TestPG_AppendChained_Concurrent(t *testing.T) {
 	require.Len(t, got, n)
 	for i, s := range got {
 		require.Equal(t, int64(i+1), s)
+		// Each row must be built from the previous row's stored hash.
+		want := ""
+		if s > 1 {
+			want = fmt.Sprintf("h%d", s-1)
+		}
+		require.Equal(t, want, seenPrev[s], "prev hash passed to build at seq %d", s)
 	}
 }
