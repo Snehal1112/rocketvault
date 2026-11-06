@@ -750,6 +750,8 @@ func (c *ServiceContainer) initializeServices() error {
 		CertRepository:     c.certificateRepository,
 		CertificateService: c.certificateService,
 		Logger:             c.logger,
+		// Grants say nothing about whether the owner still exists (B99).
+		OwnerChecker: certServices.NewOwnerChecker(c.userRepository, c.oauth2ClientRepository),
 		// The same two-stage keys/sign check the CLI and HTTP handlers run,
 		// applied to each certificate's owner (B77). Both services are built
 		// above, in the authorization block.

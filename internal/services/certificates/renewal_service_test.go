@@ -218,6 +218,7 @@ func TestCheckAndRenewCertificates_AutoRenew(t *testing.T) {
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             newTestLogger(),
+		OwnerChecker:       activeOwner,
 		SignAuthorizer:     allowSign,
 	})
 
@@ -310,6 +311,9 @@ func (m *mockCertSvcForRenewal) ExportCertificate(context.Context, model.Scope, 
 // allowSign is a KeySignAuthorizer that grants every request.
 func allowSign(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
+// activeOwner is an OwnerChecker that reports every owner as active.
+func activeOwner(context.Context, uuid.UUID) error { return nil }
+
 // dueAutoRenewCert returns a certificate inside its renewal window with
 // auto-renew on, in vaultID, owned by userID.
 func dueAutoRenewCert(userID, vaultID uuid.UUID) model.Certificate {
@@ -356,6 +360,7 @@ func TestCheckAndRenewCertificates_RefusesWhenOwnerCannotSign(t *testing.T) {
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             logger,
+		OwnerChecker:       activeOwner,
 		SignAuthorizer: func(_ context.Context, principalID, vaultID uuid.UUID) error {
 			calls++
 			gotPrincipal, gotVault = principalID, vaultID
@@ -386,6 +391,7 @@ func TestCheckAndRenewCertificates_RefusesWithoutSignAuthorizer(t *testing.T) {
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             logger,
+		OwnerChecker:       activeOwner,
 	})
 
 	renewed, _, err := svc.CheckAndRenewCertificates(context.Background())
@@ -393,6 +399,116 @@ func TestCheckAndRenewCertificates_RefusesWithoutSignAuthorizer(t *testing.T) {
 	assert.Equal(t, 0, renewed)
 	assert.Equal(t, []string{"failed"}, autoRenewStatuses(hook))
 	certSvc.AssertNotCalled(t, "RenewCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestCheckAndRenewCertificates_OwnerCheckRefuses is the scheduler half of
+// B99: an owner that is gone or inactive is not renewed for, even with a
+// stale keys/sign grant. A nil checker and a failed lookup refuse the same way.
+func TestCheckAndRenewCertificates_OwnerCheckRefuses(t *testing.T) {
+	tests := []struct {
+		name    string
+		checker certificates.OwnerChecker
+	}{
+		{"inactive owner", func(context.Context, uuid.UUID) error {
+			return fmt.Errorf("%w: deleted", certificates.ErrOwnerInactive)
+		}},
+		{"lookup fault", func(context.Context, uuid.UUID) error { return errors.New("db down") }},
+		{"no checker", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &mockCertRepoForRenewal{}
+			repo.On("ListAll", mock.Anything).Return([]model.Certificate{dueAutoRenewCert(uuid.New(), uuid.New())}, nil)
+			certSvc := &mockCertSvcForRenewal{}
+			logger, hook := newHookedLogger()
+
+			signChecks := 0
+			svc := certificates.NewCertificateRenewalService(certificates.RenewalServiceConfig{
+				CertRepository:     repo,
+				CertificateService: certSvc,
+				Logger:             logger,
+				OwnerChecker:       tt.checker,
+				SignAuthorizer: func(context.Context, uuid.UUID, uuid.UUID) error {
+					signChecks++
+					return nil
+				},
+			})
+
+			renewed, _, err := svc.CheckAndRenewCertificates(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, 0, renewed)
+			assert.Zero(t, signChecks, "the owner check runs before the keys/sign check")
+			assert.Equal(t, []string{"failed"}, autoRenewStatuses(hook))
+			certSvc.AssertNotCalled(t, "RenewCertificate", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// fakeOwnerUsers answers user lookups with a fixed error.
+type fakeOwnerUsers struct{ err error }
+
+func (f fakeOwnerUsers) Read(context.Context, uuid.UUID) (*model.User, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &model.User{}, nil
+}
+
+// fakeOwnerClients answers client lookups with a fixed client or error.
+type fakeOwnerClients struct {
+	client *model.OAuth2Client
+	err    error
+}
+
+func (f fakeOwnerClients) GetByID(context.Context, uuid.UUID) (*model.OAuth2Client, error) {
+	return f.client, f.err
+}
+
+// TestNewOwnerChecker_Outcomes pins each outcome of the check the container
+// wires in. Only ErrOwnerInactive means the owner is gone; a lookup failure
+// stays a fault.
+func TestNewOwnerChecker_Outcomes(t *testing.T) {
+	notFound := fmt.Errorf("gone: %w", repositories.ErrNotFound)
+	lookup := errors.New("db down")
+	past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+	noUser := fakeOwnerUsers{err: notFound}
+
+	tests := []struct {
+		name         string
+		users        certificates.OwnerUserReader
+		clients      certificates.OwnerClientReader
+		wantInactive bool
+		wantErr      error
+		wantFault    bool
+	}{
+		{name: "existing user", users: fakeOwnerUsers{}, clients: fakeOwnerClients{err: notFound}},
+		{name: "user lookup fault", users: fakeOwnerUsers{err: lookup}, clients: fakeOwnerClients{err: notFound}, wantErr: lookup},
+		{name: "deleted principal", users: noUser, clients: fakeOwnerClients{err: notFound}, wantInactive: true},
+		{name: "client lookup fault", users: noUser, clients: fakeOwnerClients{err: lookup}, wantErr: lookup},
+		{name: "enabled client", users: noUser, clients: fakeOwnerClients{client: &model.OAuth2Client{Enabled: true}}},
+		{name: "unexpired client", users: noUser, clients: fakeOwnerClients{client: &model.OAuth2Client{Enabled: true, ExpiresAt: &future}}},
+		{name: "disabled client", users: noUser, clients: fakeOwnerClients{client: &model.OAuth2Client{}}, wantInactive: true},
+		{name: "expired client", users: noUser, clients: fakeOwnerClients{client: &model.OAuth2Client{Enabled: true, ExpiresAt: &past}}, wantInactive: true},
+		{name: "no user reader", clients: fakeOwnerClients{err: notFound}, wantFault: true},
+		{name: "no client reader", users: noUser, wantFault: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := certificates.NewOwnerChecker(tt.users, tt.clients)(context.Background(), uuid.New())
+			switch {
+			case tt.wantInactive:
+				require.ErrorIs(t, err, certificates.ErrOwnerInactive)
+			case tt.wantErr != nil:
+				require.ErrorIs(t, err, tt.wantErr)
+				assert.NotErrorIs(t, err, certificates.ErrOwnerInactive)
+			case tt.wantFault:
+				require.Error(t, err)
+				assert.NotErrorIs(t, err, certificates.ErrOwnerInactive)
+			default:
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 // TestCheckAndRenewCertificates_AuthorizerFaultSkipsAsFailure pins that a
@@ -415,6 +531,7 @@ func TestCheckAndRenewCertificates_AuthorizerFaultSkipsAsFailure(t *testing.T) {
 				CertRepository:     repo,
 				CertificateService: certSvc,
 				Logger:             logger,
+				OwnerChecker:       activeOwner,
 				SignAuthorizer:     func(context.Context, uuid.UUID, uuid.UUID) error { return fault },
 			})
 
@@ -450,6 +567,7 @@ func TestCheckAndRenewCertificates_ChecksSignBeforeRenewing(t *testing.T) {
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             newTestLogger(),
+		OwnerChecker:       activeOwner,
 		SignAuthorizer: func(context.Context, uuid.UUID, uuid.UUID) error {
 			order = append(order, "authorize")
 			return nil
@@ -482,6 +600,7 @@ func TestCheckAndRenewCertificates_SkippedRowDoesNotStopLaterRows(t *testing.T) 
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             newTestLogger(),
+		OwnerChecker:       activeOwner,
 		SignAuthorizer: func(_ context.Context, principalID, _ uuid.UUID) error {
 			if principalID == deniedOwner {
 				return fmt.Errorf("%w: no role grants keys/sign in this vault", authorization.ErrDataPlaneDenied)
@@ -560,6 +679,7 @@ func TestNewKeySignAuthorizer_ExplicitKeySignDenyWins(t *testing.T) {
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             logger,
+		OwnerChecker:       activeOwner,
 		SignAuthorizer:     certificates.NewKeySignAuthorizer(policies, roles),
 	})
 
@@ -631,6 +751,7 @@ func TestCheckAndRenewCertificates_ClampsPreCapValidity(t *testing.T) {
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             newTestLogger(),
+		OwnerChecker:       activeOwner,
 		SignAuthorizer:     allowSign,
 	})
 

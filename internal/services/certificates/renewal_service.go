@@ -6,6 +6,7 @@ package certificates
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,11 +41,68 @@ func NewKeySignAuthorizer(policies authorization.AccessPolicyService, roles auth
 	}
 }
 
+// ErrOwnerInactive marks a certificate owner that no longer exists or is a
+// disabled or expired service account (B99).
+var ErrOwnerInactive = errors.New("certificate owner is inactive")
+
+// OwnerChecker returns nil when ownerID is a principal that may still act. A
+// refusal wraps ErrOwnerInactive. Any other error is a fault, such as a failed
+// lookup, and is never treated as permission to renew.
+type OwnerChecker func(ctx context.Context, ownerID uuid.UUID) error
+
+// OwnerUserReader is the user lookup an OwnerChecker needs.
+type OwnerUserReader interface {
+	Read(ctx context.Context, id uuid.UUID) (*model.User, error)
+}
+
+// OwnerClientReader is the service-account lookup an OwnerChecker needs.
+type OwnerClientReader interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*model.OAuth2Client, error)
+}
+
+// NewOwnerChecker returns the OwnerChecker the container wires into the
+// scheduler. An owner is a users row or an oauth2_clients row. A user has no
+// disabled or expiry state, so finding one is enough. A service account must
+// also be enabled and unexpired, as session validation requires. Nil readers
+// make every call fail closed with a fault.
+func NewOwnerChecker(users OwnerUserReader, clients OwnerClientReader) OwnerChecker {
+	return func(ctx context.Context, ownerID uuid.UUID) error {
+		if users == nil || clients == nil {
+			return errors.New("owner lookups are not configured")
+		}
+		_, err := users.Read(ctx, ownerID)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, repositories.ErrNotFound) {
+			return fmt.Errorf("look up user owner: %w", err)
+		}
+		client, err := clients.GetByID(ctx, ownerID)
+		if errors.Is(err, repositories.ErrNotFound) {
+			return fmt.Errorf("%w: no such user or service account", ErrOwnerInactive)
+		}
+		if err != nil {
+			return fmt.Errorf("look up service account owner: %w", err)
+		}
+		if !client.Enabled {
+			return fmt.Errorf("%w: service account disabled", ErrOwnerInactive)
+		}
+		if client.ExpiresAt != nil && client.ExpiresAt.Before(time.Now()) {
+			return fmt.Errorf("%w: service account expired", ErrOwnerInactive)
+		}
+		return nil
+	}
+}
+
 // RenewalServiceConfig holds dependencies for the renewal service.
 type RenewalServiceConfig struct {
 	CertRepository     repositories.CertificateRepositoryInterface
 	CertificateService CertificateService
 	Logger             *logging.Logger
+	// OwnerChecker confirms, before every unattended renewal, that the
+	// certificate's owner still exists and may act (B99). Nil refuses every
+	// renewal rather than skipping the check.
+	OwnerChecker OwnerChecker
 	// SignAuthorizer re-checks, before every unattended renewal, that the
 	// certificate's owner may still sign with keys in its vault (B77). Nil
 	// refuses every renewal rather than skipping the check.
@@ -52,19 +110,21 @@ type RenewalServiceConfig struct {
 }
 
 type certRenewalService struct {
-	certRepo  repositories.CertificateRepositoryInterface
-	certSvc   CertificateService
-	logger    *logging.Logger
-	signAuthz KeySignAuthorizer
+	certRepo   repositories.CertificateRepositoryInterface
+	certSvc    CertificateService
+	logger     *logging.Logger
+	ownerCheck OwnerChecker
+	signAuthz  KeySignAuthorizer
 }
 
 // NewCertificateRenewalService constructs the renewal service with the given configuration.
 func NewCertificateRenewalService(cfg RenewalServiceConfig) CertificateRenewalService {
 	return &certRenewalService{
-		certRepo:  cfg.CertRepository,
-		certSvc:   cfg.CertificateService,
-		logger:    cfg.Logger,
-		signAuthz: cfg.SignAuthorizer,
+		certRepo:   cfg.CertRepository,
+		certSvc:    cfg.CertificateService,
+		logger:     cfg.Logger,
+		ownerCheck: cfg.OwnerChecker,
+		signAuthz:  cfg.SignAuthorizer,
 	}
 }
 
@@ -112,6 +172,12 @@ func (s *certRenewalService) CheckAndRenewCertificates(ctx context.Context) (int
 				continue
 			}
 
+			// A role grant says nothing about whether its holder still
+			// exists, so this check runs first (B99).
+			if !s.ownerIsActive(ctx, &cert) {
+				continue
+			}
+
 			// Renewal re-signs with the certificate's key on its owner's
 			// behalf, so the owner must still hold keys/sign in the vault
 			// (B77). The check runs before RenewCertificate, and every
@@ -143,6 +209,29 @@ func (s *certRenewalService) CheckAndRenewCertificates(ctx context.Context) (int
 	}
 
 	return renewed, warned, nil
+}
+
+// ownerIsActive reports whether cert's owner still exists and may act. It logs
+// every refusal and fault, and fails closed: a missing checker and a failed
+// lookup both answer false.
+func (s *certRenewalService) ownerIsActive(ctx context.Context, cert *model.Certificate) bool {
+	if s.ownerCheck == nil {
+		s.logger.LogAuditError(cert.UserID.String(), "cert_auto_renew", "failed",
+			"Auto-renewal refused, no owner check is configured: "+cert.Name, nil)
+		return false
+	}
+	err := s.ownerCheck(ctx, cert.UserID)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, ErrOwnerInactive) {
+		s.logger.LogAuditError(cert.UserID.String(), "cert_auto_renew", "failed",
+			"Auto-renewal skipped, owner no longer exists or is inactive: "+cert.Name, err)
+		return false
+	}
+	s.logger.LogAuditError(cert.UserID.String(), "cert_auto_renew", "failed",
+		"Auto-renewal skipped, the owner check could not be completed: "+cert.Name, err)
+	return false
 }
 
 // ownerMaySign reports whether cert's owner may still sign with keys in

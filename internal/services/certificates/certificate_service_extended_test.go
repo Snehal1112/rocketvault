@@ -1050,6 +1050,7 @@ func TestCheckAndRenewCertificates_AutoRenewFailureSkipped(t *testing.T) {
 		CertRepository:     repo,
 		CertificateService: certSvc,
 		Logger:             newTestCertLogger(),
+		OwnerChecker:       activeOwner,
 		SignAuthorizer:     allowSign,
 	})
 

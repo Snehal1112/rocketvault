@@ -411,6 +411,60 @@ func TestPostgres_DeleteUser_KeepsVaultItems(t *testing.T) {
 	}
 }
 
+// B99: deleting a user removes its grants against the real schema, and a
+// service account's delete does the same.
+func TestPostgres_DeletePrincipals_RemovesGrants(t *testing.T) {
+	conn, cleanup := newPostgresConn(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	var vaultID string
+	require.NoError(t, conn.QueryRowContext(ctx, "SELECT id FROM vaults LIMIT 1").Scan(&vaultID))
+
+	seedGrants := func(principal uuid.UUID) {
+		t.Helper()
+		_, err := conn.ExecContext(ctx,
+			"INSERT INTO role_assignments (id, principal_id, principal_type, role, vault_id, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+			uuid.NewString(), principal.String(), "user", model.RoleKeyVaultCryptoUser, vaultID, principal.String())
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO access_policies (id, principal_id, principal_type, resource_type, operation, effect) VALUES (?, ?, ?, ?, ?, ?)",
+			uuid.NewString(), principal.String(), "user", "keys", "sign", "allow")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx,
+			"INSERT INTO vault_provisioning_grants (id, principal_id, quota, created_by) VALUES (?, ?, ?, ?)",
+			uuid.NewString(), principal.String(), 1, principal.String())
+		require.NoError(t, err)
+	}
+	assertGrants := func(principal uuid.UUID, want int) {
+		t.Helper()
+		for _, table := range []string{"role_assignments", "access_policies", "vault_provisioning_grants"} {
+			var got int
+			require.NoError(t, conn.QueryRowContext(ctx,
+				"SELECT COUNT(*) FROM "+table+" WHERE principal_id = ?", principal.String()).Scan(&got))
+			require.Equal(t, want, got, table)
+		}
+	}
+
+	user, bystander := uuid.New(), uuid.New()
+	seedUser(t, conn, user)
+	seedGrants(user)
+	seedGrants(bystander)
+
+	require.NoError(t, repositories.NewUserRepository(conn, logging.InitLogger()).Delete(ctx, user))
+	assertGrants(user, 0)
+	assertGrants(bystander, 1)
+
+	clients := repositories.NewOAuth2ClientRepository(conn)
+	client := &model.OAuth2Client{ID: uuid.New(), Name: "departing-sa", ClientSecret: "h", Enabled: true, CreatedAt: time.Now().UTC()}
+	require.NoError(t, clients.Create(ctx, client))
+	seedGrants(client.ID)
+
+	require.NoError(t, clients.Delete(ctx, client.ID))
+	assertGrants(client.ID, 0)
+	assertGrants(bystander, 1)
+}
+
 // cascadingUserFKTables lists the tables whose foreign key to users(id)
 // deletes their rows together with the user.
 func cascadingUserFKTables(t *testing.T, conn *rvdb.Conn) []string {

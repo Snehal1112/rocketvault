@@ -338,6 +338,7 @@ func TestCheckAndRenewCertificates_SigningKeyLifecycle(t *testing.T) {
 				CertRepository:     f.certRepo,
 				CertificateService: f.svc,
 				Logger:             newTestCertLogger(),
+				OwnerChecker:       activeOwner,
 				SignAuthorizer:     allowSign,
 			})
 			renewed, warned, err := renewalSvc.CheckAndRenewCertificates(context.Background())
@@ -694,6 +695,7 @@ func TestCheckAndRenewCertificates_CAKeyLifecycle(t *testing.T) {
 				CertRepository:     f.certRepo,
 				CertificateService: f.svc,
 				Logger:             newTestCertLogger(),
+				OwnerChecker:       activeOwner,
 				SignAuthorizer:     allowSign,
 			})
 			renewed, warned, err := renewalSvc.CheckAndRenewCertificates(context.Background())
@@ -794,6 +796,9 @@ func TestCreateCASignedCertificate_RechecksReReadKey(t *testing.T) {
 
 // allowSign is a KeySignAuthorizer that grants every request.
 func allowSign(context.Context, uuid.UUID, uuid.UUID) error { return nil }
+
+// activeOwner is an OwnerChecker that reports every owner as active.
+func activeOwner(context.Context, uuid.UUID) error { return nil }
 
 // TestValidators_ReturnSentinels lets the HTTP layer map these refusals by
 // identity instead of reporting them as server faults (B78). Each message is

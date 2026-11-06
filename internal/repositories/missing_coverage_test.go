@@ -72,6 +72,7 @@ func setupUserDB(t *testing.T) *sql.DB {
 		);
 	`)
 	require.NoError(t, err)
+	createPrincipalGrantTables(t, db)
 	t.Cleanup(func() { db.Close() }) //nolint:errcheck,gosec
 	return db
 }

@@ -81,6 +81,7 @@ func TestCheckAndRenewCertificates_CASignedKeepsIssuer(t *testing.T) {
 		CertRepository:     certRepo,
 		CertificateService: certSvc,
 		Logger:             logger,
+		OwnerChecker:       activeOwner,
 		SignAuthorizer:     allowSign,
 	})
 

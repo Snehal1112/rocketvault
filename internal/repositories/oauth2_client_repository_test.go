@@ -32,6 +32,7 @@ expires_at    TIMESTAMP NULL
 )
 	`)
 	require.NoError(t, err)
+	createPrincipalGrantTables(t, db)
 	t.Cleanup(func() { db.Close() }) //nolint:errcheck,gosec
 	return db
 }

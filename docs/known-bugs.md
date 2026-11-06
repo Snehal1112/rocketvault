@@ -5731,8 +5731,8 @@ a database fault reading it answers 500.
   bypass, over HTTP, the CLI or the scheduler.
 - The check trusts `role_assignments` alone. A deleted owner, or a deleted,
   disabled or expired service account, whose grant was never removed keeps
-  passing it, so the scheduler keeps re-signing that owner's certificates;
-  see § B99.
+  passing it. Since § B99 the scheduler runs a separate owner check first, so
+  it no longer re-signs for such an owner.
 
 **Pinned by**: `TestValidateKeyOwnership_RefusesUnusableKey`,
 `TestCreateSelfSignedCertificate_RefusesRevokedKey`,
@@ -5769,7 +5769,7 @@ a database fault reading it answers 500.
 
 ### B99 — Deleted principals keep their role assignments, so auto-renew keeps re-signing their certificates
 
-**Status**: Open, found 2026-10-03 (GitHub #66)
+**Status**: Fixed 2026-11-06 on `fix/deleted-principal-grants`, found 2026-10-03 (GitHub #66)
 **Severity**: Medium — a principal that no longer exists keeps passing every
 vault data-plane check, and the auto-renew scheduler keeps re-signing its
 certificates with no time limit
@@ -5813,13 +5813,42 @@ session validation consult them, and no service, HTTP or CLI path sets
 `enabled` to false (`oauth2_clients` rows are only created, rotated or
 deleted).
 
-**Fix recipe**: on user delete and on service-account delete, delete the
-principal's `role_assignments` and `access_policies` rows in the same
-transaction (repository methods by principal ID). Have the scheduler also
-confirm, before the `keys/sign` check, that the owner still exists and, for
-a service account, is enabled and unexpired, and skip the row with a
-`failed` audit row otherwise. Consider a one-off cleanup of rows already
-orphaned.
+**B101 widened this**: the Symptom above describes the state when this entry
+was filed. Since § B101 a deleted user's certificates also stay on Postgres, so
+the stale-grant renewal applied there as well until this fix.
+
+**Fix**: `UserRepository.Delete` and `oauth2ClientRepository.Delete` now call
+`deletePrincipalGrants` (`internal/repositories/principal_grants.go`) in the
+transaction that deletes the principal. It clears `role_assignments`,
+`access_policies` and `vault_provisioning_grants`, so a failed cleanup keeps the
+principal. The third table was not in the original recipe, but it has the same
+missing foreign key. The scheduler also runs a new `OwnerChecker` before the
+`keys/sign` check (`NewOwnerChecker`, `renewal_service.go`). An owner must be a
+`users` row, or an `oauth2_clients` row that is enabled and unexpired. Any other
+outcome skips the row with a `failed` audit row, and a nil checker or a failed
+lookup refuses too.
+
+**Behavior after the fix**: a certificate whose owner is gone stays in its vault
+but no longer auto-renews, and it expires unless someone renews or reissues it.
+Each scheduler run logs a `failed` `cert_auto_renew` row for it while it is in
+its renewal window. `HasDataAction` still reads only `role_assignments`, because
+every caller other than the scheduler has already passed session validation.
+
+**Not covered**: rows orphaned before this fix are not cleaned up. They grant
+nothing reachable, because sessions and the scheduler both reject the principal.
+Restoring a database backup can bring such rows back, with the same result.
+
+**Tests**: `TestUserRepository_Delete_RemovesPrincipalGrants`,
+`TestUserRepository_Delete_KeepsUserWhenGrantCleanupFails`,
+`TestOAuth2ClientRepository_Delete_RemovesPrincipalGrants`,
+`TestOAuth2ClientRepository_Delete_KeepsClientWhenGrantCleanupFails`
+(`internal/repositories/principal_grants_delete_test.go`);
+`TestPostgres_DeletePrincipals_RemovesGrants`
+(`internal/repositories/pg_integration_test.go`, `-tags integration`);
+`TestCheckAndRenewCertificates_OwnerCheckRefuses`, `TestNewOwnerChecker_Outcomes`
+(`internal/services/certificates/renewal_service_test.go`);
+`TestRenewalScheduler_DeletedUser`, `TestRenewalScheduler_InactiveServiceAccount`
+(`internal/container/deleted_principal_renewal_test.go`).
 
 **Not a regression of B77**: before B77 the scheduler renewed for any owner
 with no check at all. B77 only narrows renewal; this entry is the case it
@@ -6019,8 +6048,8 @@ of those tables.
 (`internal/repositories/pg_integration_test.go`, `-tags integration`). All three
 fail without the fix. Note that CI does not run the integration tag yet.
 
-**Not covered**: § B99 (role assignments survive the delete, so auto-renew can
-keep signing as the deleted user). Secret auto-rotation iterates users
+**Not covered**: § B99 (role assignments survived the delete, so auto-renew could
+keep signing as the deleted user; fixed since). Secret auto-rotation iterates users
 (`internal/services/secrets/scheduler_service.go:133,157`), so items whose
 creator was deleted stop rotating; the scheduler should iterate policies.
 

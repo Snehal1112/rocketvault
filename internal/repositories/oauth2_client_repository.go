@@ -93,8 +93,21 @@ func (r *oauth2ClientRepository) Update(ctx context.Context, c *model.OAuth2Clie
 }
 
 func (r *oauth2ClientRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	_, err := r.db.ExecContext(ctx, `DELETE FROM oauth2_clients WHERE id=?`, id.String())
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("oauth2ClientRepository.Delete: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// Nothing else removes these rows, and a stale grant keeps passing
+	// data-plane checks (B99).
+	if err := deletePrincipalGrants(ctx, tx, id); err != nil {
+		return fmt.Errorf("oauth2ClientRepository.Delete: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM oauth2_clients WHERE id=?`, id.String()); err != nil {
+		return fmt.Errorf("oauth2ClientRepository.Delete: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("oauth2ClientRepository.Delete: %w", err)
 	}
 	return nil

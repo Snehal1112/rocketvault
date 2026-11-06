@@ -298,6 +298,14 @@ func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
 			return fmt.Errorf("failed to delete user_roles: %w", err)
 		}
 
+		// Nothing else removes these rows, and a stale grant keeps passing
+		// data-plane checks (B99).
+		if err := deletePrincipalGrants(ctx, tx, id); err != nil {
+			_ = tx.Rollback()
+			r.log.LogAuditError(id.String(), "delete_user", "failed", "Failed to delete principal grants", err)
+			return err
+		}
+
 		// Delete the user. Only user_roles and user_sessions cascade from users.
 		// Vault items keep their user_id as "created by" history (B101).
 		result, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id.String())
