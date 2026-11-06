@@ -5449,7 +5449,7 @@ match.
 
 ### B98 — `PersistAudit` never sets an outcome and always records source `system`
 
-**Status**: Open; GitHub #64
+**Status**: Fixed 2026-11-06 (GitHub #64)
 **Severity**: Low to Medium — accountability and queryability; nothing is
 lost, but the rows cannot be filtered or counted the way operators expect.
 **Files**: `internal/services/audit/audit_service.go` (`PersistAudit`),
@@ -5472,6 +5472,14 @@ passed through.
 `Outcome` (`denied`, `failure`, `success`) in `PersistAudit`, and give the
 scheduler its own source value. Add tests for `--outcome denied` and the SOC 2
 counts.
+
+**Fix**: `PersistAudit` now sets `Outcome` from the `status=` token in the
+details: `success` to `success`, `failure`, `failed` and `error` to `failure`,
+`denied` to `denied`, anything else (or no token) to `warning`, and sets
+`Source` to `system`. `TestPersistAudit_SetsSourceAndOutcome` covers each case.
+The soft-delete scheduler did not get a distinct `source` value: its audit rows
+use the action `auto_purge_<table>` with source `system`, which already tells
+them apart.
 
 ---
 
@@ -6108,6 +6116,143 @@ email is stored in the new nullable `users.email` column.
 `api/oidc_test.go`, `internal/services/auth/oidc_service_test.go`.
 
 **Related**: § B102.
+
+---
+
+### B102 — A `GetLastHash` error silently reset the audit hash chain and the compliance report showed a false integrity break
+
+**Status**: Fixed 2026-11-06 (GitHub: to be filed)
+**Severity**: Medium — a transient database error corrupted the tamper-evidence
+chain, and the compliance report then reported a break that was not an attack.
+**Files**: `internal/services/audit/audit_service.go` (`RecordEvent`),
+`internal/repositories/audit_repository.go` (`AppendChained`)
+
+**Symptom**: after one failed read of the newest audit row, the next audit row
+was written with an empty `prev_hash`. The chain restarted from nothing, and
+the audit logs query and the compliance report then reported
+`integrity_ok: false` for a log nobody had touched.
+
+**Root cause**: `RecordEvent` called `GetLastHash` and on any error set
+`prevHash = ""` and carried on ("Non-fatal: proceed without hash chain
+continuity"), then inserted the row.
+
+**Fix**: `GetLastHash` is gone. `AppendChained` reads and advances the head in
+the `audit_chain_head` table inside one transaction. A failure to read the head
+fails the write instead of resetting the chain, and critical events refuse the
+operation (HTTP 503 `audit unavailable`). Failures are counted in
+`rocketvault_audit_write_failures_total{action}`.
+
+**Related**: § B103.
+
+---
+
+### B103 — The audit hash chain forked when more than one replica wrote to it
+
+**Status**: Fixed 2026-11-06 (GitHub: to be filed)
+**Severity**: Medium — with two or more replicas the chain could not be
+verified, so tamper evidence failed exactly where high availability is used.
+**Files**: `internal/services/audit/audit_service.go` (`RecordEvent`),
+`internal/repositories/audit_repository.go`, `internal/db/db.go`
+
+**Symptom**: two replicas writing at the same time produced rows whose
+`prev_hash` pointed at the same parent. Verification reported a break on a log
+that was never tampered with.
+
+**Root cause**: ordering relied on four process-local things. A
+`sync.Mutex` serialised writers inside one process only. The timestamp came
+from the application clock, so replicas disagreed on order. Rows were ordered
+by timestamp with the random UUID `id` as the tie-break. The newest hash was
+read and the new row inserted as two steps outside a transaction.
+
+**Fix**: each row now has a `seq` and the single-row `audit_chain_head` table
+holds the last `seq` and hash. `AppendChained` takes the write lock on the head row,
+assigns `seq + 1`, takes the timestamp from the database clock on Postgres,
+computes the hash over `seq` and inserts the row in one transaction, so concurrent writers on any number of replicas form one chain.
+`audit_logs.seq` has a unique index. The mutex is removed. Rows from before the
+upgrade have no `seq` and keep the old hash formula; the first chained row
+must be `seq` 1. Verification reports the first break as
+`integrity_break_seq` and `integrity_break_reason` (`gap` or `hash_mismatch`).
+
+**Tests**: `TestAuditChain_ConcurrentWriters`
+(`internal/services/audit/audit_chain_concurrency_test.go`).
+
+**Related**: § B102.
+
+---
+
+### B104 — Filtered audit queries are reported as a broken hash chain
+
+**Status**: Open (GitHub: to be filed)
+**Severity**: Low to Medium — false tamper warnings; the data is intact, but an
+operator can be told the log may have been tampered with.
+**Files**: `internal/services/audit/compliance_report_service.go`
+(`QueryLogs`, `verifyChain`), `api/audit.go`, `cmd/audit/logs.go`,
+`internal/mcpserver/tools_audit.go`
+
+**Symptom**: `audit logs --action`, `--outcome`, a user filter or a resource
+filter returns only some rows. `verifyChain` treats the page as contiguous, so
+a valid chain is reported as `gap` or `hash_mismatch`. The API returns
+`integrity_ok: false`, the CLI prints "hash chain integrity check failed ...
+may have been tampered with", and the MCP `query_audit_log` tool sets
+`integrity_warning`.
+
+**Root cause**: `QueryLogs` runs `verifyChain` over whatever page the filter
+returned. A filtered page skips rows, so neighbours are not chain neighbours.
+This pre-dates the seq work (the old check had the same false positives). The
+new `gap` and `hash_mismatch` labels make it more visible.
+
+**Fix recipe**: verify only unfiltered pages or pages filtered by time window
+alone, and for any other filter report "not verifiable" instead of a break.
+Add tests for each filter on a valid chain.
+
+---
+
+### B105 — First-boot `os_store` signing-key generation is not written to the audit chain
+
+**Status**: Open (GitHub: to be filed)
+**Severity**: Low — a signing key is created with no audit row. The
+`self_pki` provider is covered.
+**Files**: `internal/signing/os_store.go`, `internal/container/service_container.go`
+
+**Symptom**: with the default `jwt.key_source: os_store`, the first start
+generates the JWT signing key and stores it in the OS keychain, or in a PEM
+file when the keychain is unavailable. No `signing_key_generate` row is
+written. `self_pki` writes one before it stores a key.
+
+**Root cause**: the `os_store` provider keeps the key outside the vault key
+store, in code that has no audit service, so the critical-event wiring for
+key generation did not reach it.
+
+**Fix recipe**: have the provider report that it generated a key. Write a
+critical `signing_key_generate` row from the container after the provider is
+built. The row is post-hoc, because the key already exists by then, so a failed
+write should fail startup rather than hand out the key unaudited.
+
+---
+
+### B106 — SOC 2 report counts double count critical operations
+
+**Status**: Open (GitHub: to be filed)
+**Severity**: Low — report numbers are inflated; no data is lost.
+**Files**: `internal/services/audit/compliance_report_service.go`
+(`GenerateSOC2Report`), `internal/services/audit/critical.go`
+
+**Symptom**: a critical operation writes an `attempt` row, then a `success` or
+`failure` row with the same action, user and resource. `GenerateSOC2Report`
+counts every row. For these operations `TotalEvents` and the per-action
+`TopActions` counts include both rows. `KeyOperations` (resource type `key`)
+and `DataAccessEvents` (resource type `secret`) count both rows. For logins
+(`authenticate*` actions) the `attempt` row has an outcome other than
+`success`, so every login adds one to `AuthFailures`, and the `success` row
+adds one to `AuthSuccesses`. `AdminActions` counts both `delete_user` rows.
+
+**Root cause**: `GenerateSOC2Report` does not look at `attempt` outcomes.
+Before the audit-first change those operations wrote one row.
+
+**Fix recipe**: skip rows with outcome `attempt` in `GenerateSOC2Report`, or
+count them as a separate figure, and add a test with an attempt/success pair.
+The GDPR report counts `AuthEvents` and `Deletions` the same way and needs the
+same change.
 
 ---
 

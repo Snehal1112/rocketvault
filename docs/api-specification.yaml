@@ -5854,6 +5854,19 @@ components:
         integrity_ok:
           type: boolean
           description: False when the audit hash chain fails verification
+        integrity_break_seq:
+          type: integer
+          format: int64
+          description: |
+            The seq of the first row that failed verification. Present only
+            when integrity_ok is false and the break is on a chained row.
+        integrity_break_reason:
+          type: string
+          enum: [gap, hash_mismatch]
+          description: |
+            Why verification failed. gap: a seq is missing or out of order.
+            hash_mismatch: a row's hash does not match its content. Present
+            only when integrity_ok is false.
         next_cursor:
           type: string
 

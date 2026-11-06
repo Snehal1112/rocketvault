@@ -1769,7 +1769,8 @@ curl -s -X POST $BASE/api/v1/keys -H "Authorization: Bearer $TOKEN" \
     <div class="tab-pane active"><pre class="code">curl -s -X PATCH $BASE/api/v1/audit/config -H "Authorization: Bearer $TOKEN" -d '{"retention_days":365}'</pre></div>
   </div>
 
-  <div class="callout callout-warn"><div class="callout-label">Note</div><p>The logs response carries an <code>integrity_ok</code> flag — the result of verifying the hash chain.</p></div>
+  <div class="callout callout-warn"><div class="callout-label">Note</div><p>The logs response carries an <code>integrity_ok</code> flag — the result of verifying the hash chain. When it is <code>false</code>, the response also has <code>integrity_break_seq</code> (the <code>seq</code> of the first bad row, when known) and <code>integrity_break_reason</code>: <code>gap</code> (a <code>seq</code> is missing or out of order) or <code>hash_mismatch</code> (a row's hash does not match its content). Filtered queries (action, outcome, user or resource) skip rows and can report a false break; verify on unfiltered pages.</p></div>
+  <div class="callout callout-warn"><div class="callout-label">Audit failures</div><p>Critical operations (login and token issue, exports, purges, user and vault delete, key and role changes, secret rotation) write an audit row first. If it cannot be written the request fails with <code>503</code> and the body <code>audit unavailable</code>. Alert on <code>increase(rocketvault_audit_write_failures_total[5m]) &gt; 0</code>. With <code>jwt.key_source: self_pki</code>, startup also fails when the key-generation row cannot be written.</p></div>
   <p class="see-also">See also: <a href="../MANUAL_TESTING.html">Manual Testing</a></p>
 </section>
 
