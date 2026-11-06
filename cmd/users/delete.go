@@ -70,7 +70,7 @@ resource.`,
 		}
 
 		userSvc := serviceContainer.GetUserService()
-		if err := userSvc.DeleteUser(ctx, id); err != nil {
+		if err := userSvc.DeleteUser(ctx, id, claims.UserID); err != nil {
 			return fmt.Errorf("failed to delete user: %w", err)
 		}
 

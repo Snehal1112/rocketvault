@@ -87,8 +87,8 @@ func TestDeleteUser_AuditUnavailable_Returns503(t *testing.T) {
 	svc := &mockUserService{}
 	targetID := uuid.New()
 	svc.On("GetUser", mock.Anything, targetID).Return(&model.User{ID: targetID, Username: "target", CreatedAt: time.Now()}, nil)
-	svc.On("DeleteUser", mock.Anything, targetID).Return(realAuditUnavailableErr(t))
-	c := newUserCtx(svc, nil, uAdminClaims("aaa"))
+	svc.On("DeleteUser", mock.Anything, targetID, mock.Anything).Return(realAuditUnavailableErr(t))
+	c := newUserCtx(svc, nil, uAdminClaims(uuid.NewString()))
 	c.Params = &ApiParams{UserID: targetID.String(), PerPage: 60}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/users/"+targetID.String(), nil)

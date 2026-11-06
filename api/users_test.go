@@ -105,8 +105,8 @@ func (m *mockUserService) ListUsers(ctx context.Context) ([]model.User, error) {
 	return args.Get(0).([]model.User), args.Error(1)
 }
 
-func (m *mockUserService) DeleteUser(ctx context.Context, userID uuid.UUID) error {
-	args := m.Called(ctx, userID)
+func (m *mockUserService) DeleteUser(ctx context.Context, userID, actorID uuid.UUID) error {
+	args := m.Called(ctx, userID, actorID)
 	return args.Error(0)
 }
 
@@ -1247,9 +1247,9 @@ func TestDeleteUser_DeleteError_Returns500(t *testing.T) {
 	svc.On("GetUser", mock.Anything, targetID).Return(&model.User{
 		ID: targetID, Username: "target", CreatedAt: time.Now(),
 	}, nil)
-	svc.On("DeleteUser", mock.Anything, targetID).Return(errors.New("db error"))
+	svc.On("DeleteUser", mock.Anything, targetID, mock.Anything).Return(errors.New("db error"))
 
-	c := newUserCtx(svc, nil, uAdminClaims("aaa"))
+	c := newUserCtx(svc, nil, uAdminClaims(uuid.NewString()))
 	c.Params = &ApiParams{UserID: targetID.String(), PerPage: 60}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/users/"+targetID.String(), nil)
@@ -1269,9 +1269,11 @@ func TestDeleteUser_Success_Returns200(t *testing.T) {
 	svc.On("GetUser", mock.Anything, targetID).Return(&model.User{
 		ID: targetID, Username: "target", CreatedAt: time.Now(),
 	}, nil)
-	svc.On("DeleteUser", mock.Anything, targetID).Return(nil)
+	adminID := uuid.New()
+	// The handler names the calling admin as the actor of the delete.
+	svc.On("DeleteUser", mock.Anything, targetID, adminID).Return(nil)
 
-	c := newUserCtx(svc, nil, uAdminClaims("aaa"))
+	c := newUserCtx(svc, nil, uAdminClaims(adminID.String()))
 	c.Params = &ApiParams{UserID: targetID.String(), PerPage: 60}
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodDelete, "/users/"+targetID.String(), nil)

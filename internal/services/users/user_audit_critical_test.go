@@ -60,7 +60,7 @@ func TestDeleteUser_AuditFailureLeavesUserInPlace(t *testing.T) {
 	audit := &fakeUserAudit{criticalErr: errors.New("pq: disk full on audit_logs")}
 	svc := newAuditedUserService(repo, revoker, audit)
 
-	err := svc.DeleteUser(context.Background(), uuid.New())
+	err := svc.DeleteUser(context.Background(), uuid.New(), uuid.New())
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, auditServices.ErrAuditUnavailable), "%v", err)
@@ -79,10 +79,26 @@ func TestDeleteUser_WritesAttemptBeforeDelete(t *testing.T) {
 	repo.On("Delete", mock.Anything, userID).Run(func(mock.Arguments) { audit.note("delete") }).Return(nil)
 	svc := newAuditedUserService(repo, revoker, audit)
 
-	require.NoError(t, svc.DeleteUser(context.Background(), userID))
+	actor := uuid.New()
+	require.NoError(t, svc.DeleteUser(context.Background(), userID, actor))
 
 	assert.Equal(t, []string{"critical:attempt", "revoke", "delete", "event:success"}, audit.calls)
 	assert.Equal(t, "delete_user", audit.critical[0].Action)
 	assert.Equal(t, "user", audit.critical[0].ResourceType)
-	assert.Equal(t, userID.String(), audit.critical[0].ResourceID)
+	assert.Equal(t, actor.String(), audit.critical[0].UserID, "the row names who deleted")
+	assert.Equal(t, userID.String(), audit.critical[0].ResourceID, "the row names who was deleted")
+}
+
+// TestDeleteUser_NilActorIsRecordedAsSystem pins the actor for a caller
+// with no principal, matching the vault service.
+func TestDeleteUser_NilActorIsRecordedAsSystem(t *testing.T) {
+	repo := &mockUserRepository{}
+	audit := &fakeUserAudit{}
+	userID := uuid.New()
+	repo.On("Delete", mock.Anything, userID).Return(nil)
+	svc := newAuditedUserService(repo, acceptingRevoker(), audit)
+
+	require.NoError(t, svc.DeleteUser(context.Background(), userID, uuid.Nil))
+
+	assert.Equal(t, "system", audit.critical[0].UserID)
 }

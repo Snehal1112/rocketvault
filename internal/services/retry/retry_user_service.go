@@ -73,9 +73,9 @@ func (s *retryUserService) ListUsers(ctx context.Context) ([]model.User, error) 
 }
 
 // DeleteUser deletes a user with retry logic for database operations
-func (s *retryUserService) DeleteUser(ctx context.Context, userID uuid.UUID) error {
+func (s *retryUserService) DeleteUser(ctx context.Context, userID, actorID uuid.UUID) error {
 	return s.retryService.ExecuteDatabaseOperation(ctx, func() error {
-		return s.baseService.DeleteUser(ctx, userID)
+		return s.baseService.DeleteUser(ctx, userID, actorID)
 	})
 }
 

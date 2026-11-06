@@ -917,7 +917,7 @@ func TestDeleteUser_Success(t *testing.T) {
 	userID := uuid.New()
 	repo.On("Delete", mock.Anything, userID).Return(nil)
 
-	err := svc.DeleteUser(context.Background(), userID)
+	err := svc.DeleteUser(context.Background(), userID, uuid.New())
 	require.NoError(t, err)
 }
 
@@ -932,7 +932,7 @@ func TestDeleteUser_RepoFails(t *testing.T) {
 	userID := uuid.New()
 	repo.On("Delete", mock.Anything, userID).Return(errors.New("constraint error"))
 
-	err := svc.DeleteUser(context.Background(), userID)
+	err := svc.DeleteUser(context.Background(), userID, uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to delete user")
@@ -1327,7 +1327,7 @@ func TestDeleteUser_SystemUser_Refused(t *testing.T) {
 	repo := &mockUserRepository{}
 	svc := newService(repo, &mockPasswordService{}, &mockTOTPService{})
 
-	err := svc.DeleteUser(context.Background(), uuid.MustParse(model.SystemUserID))
+	err := svc.DeleteUser(context.Background(), uuid.MustParse(model.SystemUserID), uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reserved system user")
@@ -1360,7 +1360,7 @@ func TestDeleteUser_OrdinaryUser_Allowed(t *testing.T) {
 	repo.On("Delete", mock.Anything, id).Return(nil)
 	svc := newService(repo, &mockPasswordService{}, &mockTOTPService{})
 
-	require.NoError(t, svc.DeleteUser(context.Background(), id))
+	require.NoError(t, svc.DeleteUser(context.Background(), id, uuid.New()))
 	repo.AssertExpectations(t)
 }
 
@@ -1738,7 +1738,7 @@ func TestDeleteUser_RevokesSessionsFirst(t *testing.T) {
 	repo.On("Delete", mock.Anything, userID).
 		Run(func(mock.Arguments) { order = append(order, "delete") }).Return(nil)
 
-	require.NoError(t, svc.DeleteUser(context.Background(), userID))
+	require.NoError(t, svc.DeleteUser(context.Background(), userID, uuid.New()))
 	assert.Equal(t, []string{"revoke", "delete"}, order)
 }
 
@@ -1751,7 +1751,7 @@ func TestDeleteUser_RevocationFails_DoesNotDelete(t *testing.T) {
 	userID := uuid.New()
 	revoker.On("RevokeAllUserSessions", mock.Anything, userID, "user deleted").Return(errors.New("db error"))
 
-	err := svc.DeleteUser(context.Background(), userID)
+	err := svc.DeleteUser(context.Background(), userID, uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to revoke user sessions")
@@ -1782,7 +1782,7 @@ func TestDeleteUser_NoRevokerConfigured_FailsClosed(t *testing.T) {
 	repo := &mockUserRepository{}
 	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger()})
 
-	err := svc.DeleteUser(context.Background(), uuid.New())
+	err := svc.DeleteUser(context.Background(), uuid.New(), uuid.New())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "session revocation is not configured")

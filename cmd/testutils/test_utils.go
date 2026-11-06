@@ -446,8 +446,8 @@ func (m *MockUserService) UpdateUser(ctx context.Context, req userServices.Updat
 	return args.Get(0).(*userServices.UpdateUserResult), args.Error(1)
 }
 
-func (m *MockUserService) DeleteUser(ctx context.Context, userID uuid.UUID) error {
-	args := m.Called(ctx, userID)
+func (m *MockUserService) DeleteUser(ctx context.Context, userID, actorID uuid.UUID) error {
+	args := m.Called(ctx, userID, actorID)
 	return args.Error(0)
 }
 

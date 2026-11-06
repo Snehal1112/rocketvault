@@ -400,8 +400,15 @@ func deleteUser(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The calling admin is the actor the audit trail records.
+	_, actorID, ok := callerIdentity(c)
+	if !ok {
+		c.SetInternalError(nil)
+		return
+	}
+
 	// Delete user.
-	if err := userSvc.DeleteUser(r.Context(), userID); err != nil {
+	if err := userSvc.DeleteUser(r.Context(), userID, actorID); err != nil {
 		c.SetInternalError(err)
 		return
 	}

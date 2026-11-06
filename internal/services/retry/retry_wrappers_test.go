@@ -167,8 +167,8 @@ func (m *MockUserService) ListUsers(ctx context.Context) ([]model.User, error) {
 	return args.Get(0).([]model.User), args.Error(1)
 }
 
-func (m *MockUserService) DeleteUser(ctx context.Context, userID uuid.UUID) error {
-	args := m.Called(ctx, userID)
+func (m *MockUserService) DeleteUser(ctx context.Context, userID, actorID uuid.UUID) error {
+	args := m.Called(ctx, userID, actorID)
 	return args.Error(0)
 }
 
@@ -1015,22 +1015,22 @@ func TestRetryUser_ListUsers_Error(t *testing.T) {
 
 func TestRetryUser_DeleteUser_Success(t *testing.T) {
 	base := &MockUserService{}
-	userID := uuid.New()
-	base.On("DeleteUser", mock.Anything, userID).Return(nil)
+	userID, actorID := uuid.New(), uuid.New()
+	base.On("DeleteUser", mock.Anything, userID, actorID).Return(nil)
 
 	svc := NewRetryUserService(base, newNoop())
-	err := svc.DeleteUser(ctx, userID)
+	err := svc.DeleteUser(ctx, userID, actorID)
 	assert.NoError(t, err)
 	base.AssertExpectations(t)
 }
 
 func TestRetryUser_DeleteUser_Error(t *testing.T) {
 	base := &MockUserService{}
-	userID := uuid.New()
-	base.On("DeleteUser", mock.Anything, userID).Return(fmt.Errorf("delete failed"))
+	userID, actorID := uuid.New(), uuid.New()
+	base.On("DeleteUser", mock.Anything, userID, actorID).Return(fmt.Errorf("delete failed"))
 
 	svc := NewRetryUserService(base, newNoop())
-	err := svc.DeleteUser(ctx, userID)
+	err := svc.DeleteUser(ctx, userID, actorID)
 	assert.Error(t, err)
 	base.AssertExpectations(t)
 }

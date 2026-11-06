@@ -824,7 +824,7 @@ func TestNewServiceContainer_UserServiceRevokesSessions(t *testing.T) {
 
 	// A delete ends the user's sessions too.
 	userID, sessionID = newUserWithSession("revoke-del-" + uuid.NewString()[:8])
-	require.NoError(t, container.GetUserService().DeleteUser(ctx, userID))
+	require.NoError(t, container.GetUserService().DeleteUser(ctx, userID, uuid.Nil))
 	revoked, err = sessions.IsSessionRevoked(ctx, sessionID)
 	require.NoError(t, err)
 	assert.True(t, revoked, "deleting a user must revoke their sessions")

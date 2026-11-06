@@ -138,7 +138,9 @@ type UserService interface {
 	// performs no credential check itself.
 	FindOrCreateExternalUser(ctx context.Context, req FindOrCreateExternalUserRequest) (*model.User, error)
 	ListUsers(ctx context.Context) ([]model.User, error)
-	DeleteUser(ctx context.Context, userID uuid.UUID) error
+	// DeleteUser deletes userID. actorID is the principal doing the delete,
+	// for the audit trail; uuid.Nil is recorded as "system".
+	DeleteUser(ctx context.Context, userID, actorID uuid.UUID) error
 	ValidateBootstrapToken(ctx context.Context, token string) (bool, error)
 	InvalidateBootstrapToken(ctx context.Context, token string) error
 }
@@ -545,7 +547,7 @@ func (s *userService) ListUsers(ctx context.Context) ([]model.User, error) {
 // Returns:
 //
 //	An error if deletion fails.
-func (s *userService) DeleteUser(ctx context.Context, userID uuid.UUID) error {
+func (s *userService) DeleteUser(ctx context.Context, userID, actorID uuid.UUID) error {
 	if err := guardSystemUser(userID, "deleted"); err != nil {
 		return err
 	}
@@ -568,15 +570,24 @@ func (s *userService) DeleteUser(ctx context.Context, userID uuid.UUID) error {
 		// row is deleted. A failed write returns audit.ErrAuditUnavailable and
 		// the user stays.
 		return auditServices.WithCritical(ctx, s.auditService, auditServices.AuditEvent{
-			UserID: userID.String(), Action: "delete_user",
+			UserID: auditActor(actorID), Action: "delete_user",
 			ResourceType: "user", ResourceID: userID.String(), Source: "system",
 		}, remove)
 	}
 	if err := remove(ctx); err != nil {
 		return err
 	}
-	s.logger.LogAuditInfo(userID.String(), "delete_user", "success", "User deleted successfully")
+	s.logger.LogAuditInfo(auditActor(actorID), "delete_user", "success", fmt.Sprintf("User deleted: %s", userID))
 	return nil
+}
+
+// auditActor names actorID in an audit row. uuid.Nil is a caller with no
+// principal and is recorded as "system", as the vault service does.
+func auditActor(actorID uuid.UUID) string {
+	if actorID == uuid.Nil {
+		return "system"
+	}
+	return actorID.String()
 }
 
 // ValidateBootstrapToken validates a bootstrap token for initial admin user creation.

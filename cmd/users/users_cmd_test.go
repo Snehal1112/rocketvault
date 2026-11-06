@@ -105,7 +105,7 @@ func TestDeleteCmd_NonAdminDeleteSelf(t *testing.T) {
 	callerID := uuid.New()
 	ctx := newUsersTestCtxWithRole(tc.MockContainer, callerID, model.RoleUser)
 
-	tc.MockUserService.On("DeleteUser", mock.Anything, callerID).Return(nil)
+	tc.MockUserService.On("DeleteUser", mock.Anything, callerID, callerID).Return(nil)
 
 	cmd := &cobra.Command{Use: "delete", Args: cobra.ExactArgs(1), RunE: deleteCmd.RunE}
 	cmd.SetContext(ctx)
@@ -118,9 +118,11 @@ func TestDeleteCmd_NonAdminDeleteSelf(t *testing.T) {
 func TestDeleteCmd_AdminDeleteAnyUser(t *testing.T) {
 	tc := testutils.NewTestContext(t)
 	targetID := uuid.New()
-	ctx := newUsersTestCtx(tc.MockContainer)
+	adminID := uuid.New()
+	ctx := newUsersTestCtxWithRole(tc.MockContainer, adminID, model.RoleAdmin)
 
-	tc.MockUserService.On("DeleteUser", mock.Anything, targetID).Return(nil)
+	// The CLI names the caller as the actor of the delete.
+	tc.MockUserService.On("DeleteUser", mock.Anything, targetID, adminID).Return(nil)
 
 	cmd := &cobra.Command{Use: "delete", Args: cobra.ExactArgs(1), RunE: deleteCmd.RunE}
 	cmd.SetContext(ctx)
@@ -135,7 +137,7 @@ func TestDeleteCmd_ServiceError(t *testing.T) {
 	targetID := uuid.New()
 	ctx := newUsersTestCtx(tc.MockContainer)
 
-	tc.MockUserService.On("DeleteUser", mock.Anything, targetID).Return(fmt.Errorf("db error"))
+	tc.MockUserService.On("DeleteUser", mock.Anything, targetID, mock.Anything).Return(fmt.Errorf("db error"))
 
 	cmd := &cobra.Command{Use: "delete", Args: cobra.ExactArgs(1), RunE: deleteCmd.RunE}
 	cmd.SetContext(ctx)

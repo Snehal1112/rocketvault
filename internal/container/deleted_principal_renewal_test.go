@@ -127,7 +127,7 @@ func TestRenewalScheduler_DeletedUser(t *testing.T) {
 
 	assert.Equal(t, 1, w.renewAfterAging(t, certID), "a live owner with keys/sign renews")
 
-	require.NoError(t, w.c.GetUserService().DeleteUser(ctx, user.UserID))
+	require.NoError(t, w.c.GetUserService().DeleteUser(ctx, user.UserID, uuid.Nil))
 	assert.Zero(t, w.assignmentCount(t, user.UserID), "deleting the user removes its grants")
 	assert.Zero(t, w.renewAfterAging(t, certID), "no grant remains to renew on")
 
