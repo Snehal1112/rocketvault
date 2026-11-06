@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -17,6 +18,11 @@ type OIDCIdentity struct {
 	Subject           string
 	Email             string
 	PreferredUsername string
+	// EmailVerified is taken from the same source as Email (ID token or
+	// userinfo), never mixed across sources.
+	EmailVerified bool
+	// Claims holds the verified ID token's claims, undecoded beyond JSON.
+	Claims map[string]any
 }
 
 // oidcClaims is the subset of standard OIDC claims OIDCService reads from a
@@ -27,6 +33,7 @@ type OIDCIdentity struct {
 type oidcClaims struct {
 	Subject           string `json:"sub"`
 	Email             string `json:"email"`
+	EmailVerified     any    `json:"email_verified"`
 	PreferredUsername string `json:"preferred_username"`
 	Name              string `json:"name"`
 	GivenName         string `json:"given_name"`
@@ -48,6 +55,20 @@ func (c oidcClaims) displayName() string {
 		return c.FamilyName
 	default:
 		return ""
+	}
+}
+
+// parseEmailVerified reports whether v is a true email_verified claim. Some
+// providers send it as the string "true" instead of a JSON bool. Anything
+// else, including numbers and absent values, is false.
+func parseEmailVerified(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return strings.EqualFold(t, "true")
+	default:
+		return false
 	}
 }
 
@@ -118,11 +139,13 @@ type OIDCConfig struct {
 type OIDCService interface {
 	// AuthCodeURL builds the provider's authorization endpoint URL for state
 	// and nonce, both of which the caller must independently store (e.g. in
-	// short-lived cookies) and re-verify in HandleCallback.
-	AuthCodeURL(state, nonce string) string
-	// HandleCallback exchanges code for tokens and verifies the returned ID
-	// token, including that its nonce claim equals expectedNonce.
-	HandleCallback(ctx context.Context, code, expectedNonce string) (*OIDCIdentity, error)
+	// short-lived cookies) and re-verify in HandleCallback. The PKCE S256
+	// challenge is derived from verifier, which the caller also stores.
+	AuthCodeURL(state, nonce, verifier string) string
+	// HandleCallback exchanges code (proving possession of verifier) for
+	// tokens and verifies the returned ID token, including that its nonce
+	// claim equals expectedNonce.
+	HandleCallback(ctx context.Context, code, expectedNonce, verifier string) (*OIDCIdentity, error)
 }
 
 type oidcService struct {
@@ -216,14 +239,14 @@ func httpClientWithExtraCA(path string) (*http.Client, error) {
 }
 
 // AuthCodeURL builds the provider's authorization endpoint URL.
-func (s *oidcService) AuthCodeURL(state, nonce string) string {
-	return s.oauth2Config.AuthCodeURL(state, oidc.Nonce(nonce))
+func (s *oidcService) AuthCodeURL(state, nonce, verifier string) string {
+	return s.oauth2Config.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
 }
 
 // HandleCallback exchanges code for tokens, verifies the ID token's
 // signature and claims (including that its nonce matches expectedNonce), and
 // returns the caller's identity.
-func (s *oidcService) HandleCallback(ctx context.Context, code, expectedNonce string) (*OIDCIdentity, error) {
+func (s *oidcService) HandleCallback(ctx context.Context, code, expectedNonce, verifier string) (*OIDCIdentity, error) {
 	if s.httpClient != nil {
 		ctx = oidc.ClientContext(ctx, s.httpClient)
 	}
@@ -235,7 +258,7 @@ func (s *oidcService) HandleCallback(ctx context.Context, code, expectedNonce st
 	// actually a successful exchange into a failed login. Call it exactly
 	// once; on failure the user can simply retry the login from the start,
 	// which obtains a fresh code.
-	token, err := s.oauth2Config.Exchange(ctx, code)
+	token, err := s.oauth2Config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, fmt.Errorf("oidc: code exchange failed: %w", err)
 	}
@@ -272,6 +295,12 @@ func (s *oidcService) HandleCallback(ctx context.Context, code, expectedNonce st
 		preferredUsername = claims.displayName()
 	}
 	email := claims.Email
+	emailVerified := parseEmailVerified(claims.EmailVerified)
+
+	var rawClaims map[string]any
+	if err := idToken.Claims(&rawClaims); err != nil {
+		return nil, fmt.Errorf("oidc: failed to parse id_token claims: %w", err)
+	}
 
 	// Some providers (e.g. Kopano/Konnect) leave name/email out of the ID
 	// token and only return them from userinfo. Best-effort: a failure here
@@ -284,7 +313,11 @@ func (s *oidcService) HandleCallback(ctx context.Context, code, expectedNonce st
 		return err
 	}); uiErr == nil {
 		var uiClaims oidcClaims
-		if err := userInfo.Claims(&uiClaims); err == nil {
+		if err := userInfo.Claims(&uiClaims); err == nil && uiClaims.Subject != claims.Subject {
+			// OIDC Core 5.3.2: a userinfo sub that differs must not be used.
+			// The log line never includes claim values.
+			fmt.Fprintln(os.Stderr, "oidc: userinfo subject does not match the id_token subject, ignoring userinfo")
+		} else if err == nil {
 			if preferredUsername == "" {
 				preferredUsername = uiClaims.PreferredUsername
 			}
@@ -293,6 +326,7 @@ func (s *oidcService) HandleCallback(ctx context.Context, code, expectedNonce st
 			}
 			if email == "" {
 				email = uiClaims.Email
+				emailVerified = parseEmailVerified(uiClaims.EmailVerified)
 			}
 		}
 	}
@@ -300,6 +334,8 @@ func (s *oidcService) HandleCallback(ctx context.Context, code, expectedNonce st
 	return &OIDCIdentity{
 		Subject:           claims.Subject,
 		Email:             email,
+		EmailVerified:     emailVerified,
 		PreferredUsername: preferredUsername,
+		Claims:            rawClaims,
 	}, nil
 }

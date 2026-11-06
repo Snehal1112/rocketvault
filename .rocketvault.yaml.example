@@ -314,6 +314,22 @@ oidc:
   # store, for issuers whose TLS certificate is signed by a private CA. Leave
   # unset to use the system trust store only.
   ca_cert_path: ""
+  # Login policy. JIT provisioning is OFF by default: a new OIDC identity is
+  # denied until jit_enabled is true. Identities link by (provider, subject)
+  # only, never by email. See docs/contributing/configuration.md.
+  jit_enabled: false
+  # Allowed email domains, for example ["example.com"]. Empty allows any domain.
+  # A non-empty list also requires the provider to send email_verified: true.
+  # Some providers (for example Microsoft Entra ID) omit it by default.
+  allowed_email_domains: []
+  require_email_verified: false
+  # Claims that must match exactly, as name: value pairs. Empty requires none.
+  # Array-valued claims match by membership. Values must be strings.
+  required_claims: {}
+  # Role given to a newly created user. Only "user" is accepted.
+  default_role: "user"
+  # Re-check the policy when an already-linked user logs in.
+  enforce_on_existing: true
 
 # Vault client configuration for secret consumption.
 # Used by OTHER applications that need to fetch secrets from this RocketVault

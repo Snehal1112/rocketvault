@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"rocketvault/internal/logging"
+	"rocketvault/internal/repositories"
 	"rocketvault/internal/retry"
 	"rocketvault/model"
 )
@@ -59,6 +63,11 @@ func (m *mockUserRepository) ReadByExternalSubject(ctx context.Context, provider
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*model.User), args.Error(1)
+}
+
+func (m *mockUserRepository) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	args := m.Called(ctx, id, email)
+	return args.Error(0)
 }
 
 func (m *mockUserRepository) List(ctx context.Context) ([]model.User, error) {
@@ -1033,12 +1042,50 @@ func TestUpdateUser_AllValidRoles_Accepted(t *testing.T) {
 // FindOrCreateExternalUser tests
 // ---------------------------------------------------------------------------
 
+// jitPolicy returns a policy with JIT on and enforcement on existing users.
+func jitPolicy(t *testing.T, cfg ExternalUserPolicyConfig) *ExternalUserPolicy {
+	t.Helper()
+	cfg.JITEnabled = true
+	cfg.EnforceOnExisting = true
+	p, err := NewExternalUserPolicy(cfg)
+	require.NoError(t, err)
+	return p
+}
+
+// auditCapture records audit events written through the logger.
+type auditCapture struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (c *auditCapture) PersistAudit(userID, action, details string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, action+"|"+userID+"|"+details)
+	return nil
+}
+
+func (c *auditCapture) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.events...)
+}
+
+func capturingLogger() (*logging.Logger, *auditCapture) {
+	l := testLogger()
+	c := &auditCapture{}
+	l.SetAuditPersister(c)
+	return l, c
+}
+
+func notFound() error { return fmt.Errorf("user not found: %w", repositories.ErrNotFound) }
+
 func TestFindOrCreateExternalUser_ExistingUser_ReturnsIt(t *testing.T) {
 	repo := &mockUserRepository{}
 	existing := &model.User{ID: uuid.New(), Username: "existing", AuthProvider: model.AuthProviderOIDC, ExternalIDPSubject: "sub-1"}
 	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-1").Return(existing, nil)
 
-	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger()})
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger(), ExternalUserPolicy: jitPolicy(t, ExternalUserPolicyConfig{})})
 
 	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
 		Provider: model.AuthProviderOIDC, Subject: "sub-1", PreferredUsername: "existing",
@@ -1051,13 +1098,13 @@ func TestFindOrCreateExternalUser_ExistingUser_ReturnsIt(t *testing.T) {
 func TestFindOrCreateExternalUser_NewUser_CreatesWithDefaultRole(t *testing.T) {
 	repo := &mockUserRepository{}
 	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-2").
-		Return(nil, errors.New("user not found"))
+		Return(nil, notFound())
 	repo.On("Create", mock.Anything, mock.MatchedBy(func(u *model.User) bool {
 		return u.AuthProvider == model.AuthProviderOIDC && u.ExternalIDPSubject == "sub-2" &&
 			len(u.Roles) == 1 && u.Roles[0] == model.RoleUser && u.PasswordHash == "" && u.TOTPSecret == ""
 	})).Return(nil)
 
-	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger()})
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger(), ExternalUserPolicy: jitPolicy(t, ExternalUserPolicyConfig{})})
 
 	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
 		Provider: model.AuthProviderOIDC, Subject: "sub-2", PreferredUsername: "new-user",
@@ -1070,12 +1117,10 @@ func TestFindOrCreateExternalUser_NewUser_CreatesWithDefaultRole(t *testing.T) {
 func TestFindOrCreateExternalUser_NewUser_GetsLeastPrivilegeRole(t *testing.T) {
 	t.Parallel()
 	repo := &mockUserRepository{}
-	pw := &mockPasswordService{}
-	totpSvc := &mockTOTPService{}
-	svc := newService(repo, pw, totpSvc)
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger(), ExternalUserPolicy: jitPolicy(t, ExternalUserPolicyConfig{})})
 
 	repo.On("ReadByExternalSubject", mock.Anything, "oidc", "sub-123").
-		Return(nil, errors.New("not found"))
+		Return(nil, notFound())
 	repo.On("Create", mock.Anything, mock.MatchedBy(func(u *model.User) bool {
 		return assert.ObjectsAreEqualValues([]string{model.RoleUser}, u.Roles)
 	})).Return(nil)
@@ -1092,7 +1137,7 @@ func TestFindOrCreateExternalUser_NewUser_GetsLeastPrivilegeRole(t *testing.T) {
 func TestFindOrCreateExternalUser_UsernameCollision_Suffixes(t *testing.T) {
 	repo := &mockUserRepository{}
 	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-3").
-		Return(nil, errors.New("user not found"))
+		Return(nil, notFound())
 	// First Create attempt collides on username; service must retry with a
 	// disambiguated username rather than failing the login outright.
 	repo.On("Create", mock.Anything, mock.MatchedBy(func(u *model.User) bool { return u.Username == "taken" })).
@@ -1100,7 +1145,7 @@ func TestFindOrCreateExternalUser_UsernameCollision_Suffixes(t *testing.T) {
 	repo.On("Create", mock.Anything, mock.MatchedBy(func(u *model.User) bool { return u.Username != "taken" })).
 		Return(nil).Once()
 
-	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger()})
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger(), ExternalUserPolicy: jitPolicy(t, ExternalUserPolicyConfig{})})
 
 	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
 		Provider: model.AuthProviderOIDC, Subject: "sub-3", PreferredUsername: "taken",
@@ -1108,6 +1153,165 @@ func TestFindOrCreateExternalUser_UsernameCollision_Suffixes(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, "taken", got.Username)
 	repo.AssertExpectations(t)
+}
+
+func TestFindOrCreateExternalUser_LookupDBError_CreatesNothing(t *testing.T) {
+	repo := &mockUserRepository{}
+	dbErr := errors.New("connection refused")
+	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-4").Return(nil, dbErr)
+
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger(), ExternalUserPolicy: jitPolicy(t, ExternalUserPolicyConfig{})})
+
+	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
+		Provider: model.AuthProviderOIDC, Subject: "sub-4", PreferredUsername: "x",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, dbErr)
+	assert.Nil(t, got)
+	repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+}
+
+func TestFindOrCreateExternalUser_JITOff_NewUserDenied(t *testing.T) {
+	repo := &mockUserRepository{}
+	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-5").Return(nil, notFound())
+	logger, audit := capturingLogger()
+	policy, err := NewExternalUserPolicy(ExternalUserPolicyConfig{EnforceOnExisting: true})
+	require.NoError(t, err)
+
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: logger, ExternalUserPolicy: policy})
+
+	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
+		Provider: model.AuthProviderOIDC, Subject: "sub-5", PreferredUsername: "x", Email: "secret@example.com",
+	})
+	require.ErrorIs(t, err, ErrExternalUserNotAllowed)
+	assert.Nil(t, got)
+	repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+
+	events := audit.all()
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0], "oidc_login_denied")
+	assert.Contains(t, events[0], "sub-5")
+	assert.Contains(t, events[0], reasonJITDisabled)
+	assert.NotContains(t, events[0], "secret@example.com")
+}
+
+func TestFindOrCreateExternalUser_NilPolicy_DeniesNew(t *testing.T) {
+	repo := &mockUserRepository{}
+	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-6").Return(nil, notFound())
+
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger()})
+
+	_, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
+		Provider: model.AuthProviderOIDC, Subject: "sub-6", PreferredUsername: "x",
+	})
+	require.ErrorIs(t, err, ErrExternalUserNotAllowed)
+	repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+}
+
+func TestFindOrCreateExternalUser_ExistingUser_DeniedWhenEnforced(t *testing.T) {
+	repo := &mockUserRepository{}
+	existing := &model.User{ID: uuid.New(), Username: "e", AuthProvider: model.AuthProviderOIDC, ExternalIDPSubject: "sub-7"}
+	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-7").Return(existing, nil)
+	logger, audit := capturingLogger()
+	policy := jitPolicy(t, ExternalUserPolicyConfig{AllowedEmailDomains: []string{"corp.com"}})
+
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: logger, ExternalUserPolicy: policy})
+
+	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
+		Provider: model.AuthProviderOIDC, Subject: "sub-7", Email: "a@other.com", EmailVerified: true,
+	})
+	require.ErrorIs(t, err, ErrExternalUserNotAllowed)
+	assert.Nil(t, got)
+	repo.AssertNotCalled(t, "UpdateEmail", mock.Anything, mock.Anything, mock.Anything)
+	events := audit.all()
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0], "oidc_login_denied")
+	assert.Contains(t, events[0], reasonDomain)
+}
+
+func TestFindOrCreateExternalUser_ExistingUser_NotChecked_WhenEnforceOff(t *testing.T) {
+	repo := &mockUserRepository{}
+	existing := &model.User{ID: uuid.New(), Username: "e", AuthProvider: model.AuthProviderOIDC, ExternalIDPSubject: "sub-8"}
+	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-8").Return(existing, nil)
+	repo.On("UpdateEmail", mock.Anything, existing.ID, "a@other.com").Return(nil)
+	policy, err := NewExternalUserPolicy(ExternalUserPolicyConfig{AllowedEmailDomains: []string{"corp.com"}})
+	require.NoError(t, err)
+
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger(), ExternalUserPolicy: policy})
+
+	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
+		Provider: model.AuthProviderOIDC, Subject: "sub-8", Email: "a@other.com",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, existing.ID, got.ID)
+	repo.AssertExpectations(t)
+}
+
+func TestFindOrCreateExternalUser_ExistingUser_RefreshesEmail(t *testing.T) {
+	repo := &mockUserRepository{}
+	existing := &model.User{ID: uuid.New(), Username: "e", Email: "old@corp.com", AuthProvider: model.AuthProviderOIDC, ExternalIDPSubject: "sub-9"}
+	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-9").Return(existing, nil)
+	repo.On("UpdateEmail", mock.Anything, existing.ID, "new@corp.com").Return(nil).Once()
+
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger(), ExternalUserPolicy: jitPolicy(t, ExternalUserPolicyConfig{})})
+	req := FindOrCreateExternalUserRequest{Provider: model.AuthProviderOIDC, Subject: "sub-9", Email: "new@corp.com"}
+
+	got, err := svc.FindOrCreateExternalUser(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "new@corp.com", got.Email)
+
+	// An unchanged email and an empty email do not write.
+	existing.Email = "new@corp.com"
+	_, err = svc.FindOrCreateExternalUser(context.Background(), req)
+	require.NoError(t, err)
+	req.Email = ""
+	_, err = svc.FindOrCreateExternalUser(context.Background(), req)
+	require.NoError(t, err)
+	repo.AssertNumberOfCalls(t, "UpdateEmail", 1)
+}
+
+func TestFindOrCreateExternalUser_EmailRefreshFailure_DoesNotFailLogin(t *testing.T) {
+	repo := &mockUserRepository{}
+	existing := &model.User{ID: uuid.New(), Username: "e", AuthProvider: model.AuthProviderOIDC, ExternalIDPSubject: "sub-10"}
+	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-10").Return(existing, nil)
+	repo.On("UpdateEmail", mock.Anything, existing.ID, "a@corp.com").Return(errors.New("db down"))
+
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: testLogger(), ExternalUserPolicy: jitPolicy(t, ExternalUserPolicyConfig{})})
+
+	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
+		Provider: model.AuthProviderOIDC, Subject: "sub-10", Email: "a@corp.com",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, existing.ID, got.ID)
+	// The stored email stays as the repo returned it.
+	assert.Empty(t, got.Email)
+	repo.AssertExpectations(t)
+}
+
+func TestFindOrCreateExternalUser_NewUser_StoresEmailAndDefaultRole(t *testing.T) {
+	repo := &mockUserRepository{}
+	repo.On("ReadByExternalSubject", mock.Anything, model.AuthProviderOIDC, "sub-11").Return(nil, notFound())
+	repo.On("Create", mock.Anything, mock.MatchedBy(func(u *model.User) bool {
+		return u.Email == "n@corp.com" && len(u.Roles) == 1 && u.Roles[0] == model.RoleUser
+	})).Return(nil)
+	logger, audit := capturingLogger()
+
+	svc := NewUserService(UserServiceConfig{UserRepository: repo, Logger: logger, ExternalUserPolicy: jitPolicy(t, ExternalUserPolicyConfig{})})
+
+	got, err := svc.FindOrCreateExternalUser(context.Background(), FindOrCreateExternalUserRequest{
+		Provider: model.AuthProviderOIDC, Subject: "sub-11", PreferredUsername: "n", Email: "n@corp.com",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "n@corp.com", got.Email)
+	repo.AssertExpectations(t)
+	found := false
+	for _, e := range audit.all() {
+		if strings.HasPrefix(e, "oidc_user_provisioned|") && strings.Contains(e, got.ID.String()) && strings.Contains(e, model.RoleUser) {
+			found = true
+		}
+	}
+	assert.True(t, found, "expected oidc_user_provisioned audit event")
 }
 
 // ---------------------------------------------------------------------------

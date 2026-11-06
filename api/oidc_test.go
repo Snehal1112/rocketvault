@@ -4,6 +4,8 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,11 +20,13 @@ import (
 	rvconfig "rocketvault/config"
 	"rocketvault/internal/backup"
 	"rocketvault/internal/cache"
+	"rocketvault/internal/certcache"
 	"rocketvault/internal/crypto"
 	"rocketvault/internal/keycache"
 	"rocketvault/internal/logging"
 	"rocketvault/internal/metrics"
 	"rocketvault/internal/repositories"
+	"rocketvault/internal/retry"
 	auditServices "rocketvault/internal/services/audit"
 	authServices "rocketvault/internal/services/auth"
 	authzServices "rocketvault/internal/services/authorization"
@@ -35,7 +39,6 @@ import (
 	userServices "rocketvault/internal/services/users"
 	vaultServices "rocketvault/internal/services/vaults"
 	"rocketvault/internal/signing"
-	"rocketvault/internal/certcache"
 	"rocketvault/internal/vaultcache"
 	"rocketvault/model"
 )
@@ -44,13 +47,13 @@ type mockOIDCService struct {
 	mock.Mock
 }
 
-func (m *mockOIDCService) AuthCodeURL(state, nonce string) string {
-	args := m.Called(state, nonce)
+func (m *mockOIDCService) AuthCodeURL(state, nonce, verifier string) string {
+	args := m.Called(state, nonce, verifier)
 	return args.String(0)
 }
 
-func (m *mockOIDCService) HandleCallback(ctx context.Context, code, expectedNonce string) (*authServices.OIDCIdentity, error) {
-	args := m.Called(ctx, code, expectedNonce)
+func (m *mockOIDCService) HandleCallback(ctx context.Context, code, expectedNonce, verifier string) (*authServices.OIDCIdentity, error) {
+	args := m.Called(ctx, code, expectedNonce, verifier)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -250,7 +253,7 @@ func TestOIDCLogin_ServiceUnavailable_Returns503(t *testing.T) {
 
 func TestOIDCLogin_SetsStateAndNonceCookiesAndRedirects(t *testing.T) {
 	oidcSvc := &mockOIDCService{}
-	oidcSvc.On("AuthCodeURL", mock.AnythingOfType("string"), mock.AnythingOfType("string")).
+	oidcSvc.On("AuthCodeURL", mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string")).
 		Return("https://idp.example.com/authorize?state=x")
 
 	api := newOIDCHAPI(oidcSvc, nil, nil)
@@ -293,17 +296,18 @@ func TestOIDCCallback_StateMismatch_Returns400(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=wrong&code=y", nil)
 	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
 	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
 
 	api.oidcCallbackHandler(w, r)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	oidcSvc.AssertNotCalled(t, "HandleCallback", mock.Anything, mock.Anything, mock.Anything)
+	oidcSvc.AssertNotCalled(t, "HandleCallback", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestOIDCCallback_Success_ReturnsLoginResponse(t *testing.T) {
 	identity := &authServices.OIDCIdentity{Subject: "sub-1", PreferredUsername: "jdoe", Email: "jdoe@example.com"}
 	oidcSvc := &mockOIDCService{}
-	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1").Return(identity, nil)
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
 
 	userSvc := &mockUserServiceForOIDC{}
 	user := &model.User{ID: uuid.New(), Username: "jdoe", Roles: []string{model.RoleUser}}
@@ -319,6 +323,7 @@ func TestOIDCCallback_Success_ReturnsLoginResponse(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=auth-code", nil)
 	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
 	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
 
 	api.oidcCallbackHandler(w, r)
 
@@ -337,12 +342,12 @@ func TestOIDCLogin_InvalidCLIRedirectURI_Returns400(t *testing.T) {
 	api.oidcLoginHandler(w, r)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	oidcSvc.AssertNotCalled(t, "AuthCodeURL", mock.Anything, mock.Anything)
+	oidcSvc.AssertNotCalled(t, "AuthCodeURL", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestOIDCLogin_ValidCLIRedirectURI_SetsCookie(t *testing.T) {
 	oidcSvc := &mockOIDCService{}
-	oidcSvc.On("AuthCodeURL", mock.AnythingOfType("string"), mock.AnythingOfType("string")).
+	oidcSvc.On("AuthCodeURL", mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string")).
 		Return("https://idp.example.com/authorize?state=x")
 	api := newOIDCHAPI(oidcSvc, nil, nil)
 	w := httptest.NewRecorder()
@@ -364,7 +369,7 @@ func TestOIDCLogin_ValidCLIRedirectURI_SetsCookie(t *testing.T) {
 func TestOIDCCallback_WithCLIRedirect_RedirectsWithExchangeCode(t *testing.T) {
 	identity := &authServices.OIDCIdentity{Subject: "sub-1", PreferredUsername: "jdoe"}
 	oidcSvc := &mockOIDCService{}
-	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1").Return(identity, nil)
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
 
 	userSvc := &mockUserServiceForOIDC{}
 	user := &model.User{ID: uuid.New(), Username: "jdoe", Roles: []string{model.RoleUser}}
@@ -380,6 +385,7 @@ func TestOIDCCallback_WithCLIRedirect_RedirectsWithExchangeCode(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=auth-code", nil)
 	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
 	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
 	r.AddCookie(&http.Cookie{Name: "oidc_cli_redirect", Value: "http://127.0.0.1:54321/callback"})
 
 	api.oidcCallbackHandler(w, r)
@@ -397,16 +403,193 @@ func TestOIDCCallback_WithCLIRedirect_RedirectsWithExchangeCode(t *testing.T) {
 
 func TestOIDCCallback_InvalidCLIRedirectCookie_Returns400(t *testing.T) {
 	oidcSvc := &mockOIDCService{}
-	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1").
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").
 		Return(&authServices.OIDCIdentity{Subject: "sub-1"}, nil)
 	api := newOIDCHAPI(oidcSvc, nil, nil)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=auth-code", nil)
 	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
 	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
 	r.AddCookie(&http.Cookie{Name: "oidc_cli_redirect", Value: "https://evil.example.com/callback"})
 
 	api.oidcCallbackHandler(w, r)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestOIDCLogin_SetsPKCECookie(t *testing.T) {
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("AuthCodeURL", mock.Anything, mock.Anything, mock.AnythingOfType("string")).
+		Return("https://idp.example.com/authorize")
+	api := newOIDCHAPI(oidcSvc, nil, nil)
+	w := httptest.NewRecorder()
+
+	api.oidcLoginHandler(w, httptest.NewRequest(http.MethodGet, "/oidc/login", nil))
+
+	var verifier string
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == "oidc_pkce" {
+			verifier = ck.Value
+			assert.True(t, ck.HttpOnly)
+			assert.True(t, ck.Secure)
+		}
+	}
+	require.NotEmpty(t, verifier, "oidc_pkce cookie must be set")
+	oidcSvc.AssertCalled(t, "AuthCodeURL", mock.Anything, mock.Anything, verifier)
+}
+
+func TestOIDCCallback_MissingPKCECookie_400(t *testing.T) {
+	oidcSvc := &mockOIDCService{}
+	api := newOIDCHAPI(oidcSvc, nil, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=y", nil)
+	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
+	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+
+	api.oidcCallbackHandler(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	oidcSvc.AssertNotCalled(t, "HandleCallback", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestOIDCCallback_PassesVerifierToService(t *testing.T) {
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").
+		Return(nil, errors.New("boom"))
+	api := newOIDCHAPI(oidcSvc, nil, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=auth-code", nil)
+	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
+	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
+
+	api.oidcCallbackHandler(w, r)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	oidcSvc.AssertExpectations(t)
+}
+
+func TestOIDCCallback_StateMismatch_ClearsAllCookies(t *testing.T) {
+	api := newOIDCHAPI(&mockOIDCService{}, nil, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=wrong&code=y", nil)
+	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
+	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
+
+	api.oidcCallbackHandler(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	cleared := map[string]bool{}
+	for _, ck := range w.Result().Cookies() {
+		if ck.MaxAge < 0 {
+			cleared[ck.Name] = true
+		}
+	}
+	for _, name := range []string{"oidc_state", "oidc_nonce", "oidc_pkce", "oidc_cli_redirect"} {
+		assert.True(t, cleared[name], "%s must be cleared", name)
+	}
+}
+
+// oidcCallbackRequest builds a callback request with valid cookies.
+func oidcCallbackRequest() *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=auth-code", nil)
+	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
+	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
+	return r
+}
+
+func TestOIDCCallback_PolicyDenied_403(t *testing.T) {
+	identity := &authServices.OIDCIdentity{Subject: "sub-1", PreferredUsername: "jdoe"}
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
+	userSvc := &mockUserServiceForOIDC{}
+	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.Anything).
+		Return(nil, fmt.Errorf("%w: %w", retry.ErrNonRetryable, &userServices.NotAllowedError{Reason: "domain"}))
+	authSvc := &mockAuthServiceForOIDC{}
+
+	api := newOIDCHAPI(oidcSvc, userSvc, authSvc)
+	w := httptest.NewRecorder()
+	api.oidcCallbackHandler(w, oidcCallbackRequest())
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, "access denied", strings.TrimSpace(w.Body.String()))
+	assertOIDCCookiesCleared(t, w)
+	authSvc.AssertNotCalled(t, "IssueSessionForUser", mock.Anything, mock.Anything)
+}
+
+func TestOIDCCallback_LookupError_500(t *testing.T) {
+	identity := &authServices.OIDCIdentity{Subject: "sub-1", PreferredUsername: "jdoe"}
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
+	userSvc := &mockUserServiceForOIDC{}
+	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.Anything).
+		Return(nil, errors.New("db down"))
+	authSvc := &mockAuthServiceForOIDC{}
+
+	api := newOIDCHAPI(oidcSvc, userSvc, authSvc)
+	w := httptest.NewRecorder()
+	api.oidcCallbackHandler(w, oidcCallbackRequest())
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, "internal error", strings.TrimSpace(w.Body.String()))
+	assertOIDCCookiesCleared(t, w)
+	authSvc.AssertNotCalled(t, "IssueSessionForUser", mock.Anything, mock.Anything)
+}
+
+func TestOIDCCallback_EmptyStateCookieAndParam_400(t *testing.T) {
+	oidcSvc := &mockOIDCService{}
+	api := newOIDCHAPI(oidcSvc, nil, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=&code=auth-code", nil)
+	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: ""})
+	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
+
+	api.oidcCallbackHandler(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	oidcSvc.AssertNotCalled(t, "HandleCallback", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// assertOIDCCookiesCleared checks all four single-use cookies are expired.
+func assertOIDCCookiesCleared(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	cleared := map[string]bool{}
+	for _, ck := range w.Result().Cookies() {
+		if ck.MaxAge < 0 {
+			cleared[ck.Name] = true
+		}
+	}
+	for _, name := range []string{"oidc_state", "oidc_nonce", "oidc_pkce", "oidc_cli_redirect"} {
+		assert.True(t, cleared[name], "%s must be cleared", name)
+	}
+}
+
+func TestOIDCCallback_PassesEmailAndClaims(t *testing.T) {
+	claims := map[string]any{"groups": []any{"admins"}}
+	identity := &authServices.OIDCIdentity{
+		Subject: "sub-1", PreferredUsername: "jdoe",
+		Email: "jdoe@example.com", EmailVerified: true, Claims: claims,
+	}
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
+	user := &model.User{ID: uuid.New(), Username: "jdoe", Roles: []string{model.RoleUser}}
+	userSvc := &mockUserServiceForOIDC{}
+	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.MatchedBy(func(req userServices.FindOrCreateExternalUserRequest) bool {
+		return req.Email == "jdoe@example.com" && req.EmailVerified && assert.ObjectsAreEqual(claims, req.Claims)
+	})).Return(user, nil)
+	authSvc := &mockAuthServiceForOIDC{}
+	authSvc.On("IssueSessionForUser", mock.Anything, user).Return(&authServices.AuthenticationResult{
+		Token: "t", RefreshToken: "r", UserID: user.ID, Username: user.Username, Roles: user.Roles,
+	}, nil)
+
+	api := newOIDCHAPI(oidcSvc, userSvc, authSvc)
+	w := httptest.NewRecorder()
+	api.oidcCallbackHandler(w, oidcCallbackRequest())
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	userSvc.AssertExpectations(t)
 }

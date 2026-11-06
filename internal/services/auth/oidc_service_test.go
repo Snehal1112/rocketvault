@@ -9,14 +9,17 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/oauth2"
 )
 
 // countingRetryExecutor is a minimal RetryExecutor fake for testing that
@@ -82,6 +85,19 @@ type callbackFakeIdP struct {
 	// request time, not at server-start time, so setting it after
 	// newCallbackFakeIdP returns but before calling HandleCallback is safe.
 	idToken string
+
+	// userInfoBody, if set, replaces the default userinfo response.
+	userInfoBody map[string]any
+
+	formMu        sync.Mutex
+	lastTokenForm url.Values
+}
+
+// tokenForm returns the form values of the last token endpoint request.
+func (f *callbackFakeIdP) tokenForm() url.Values {
+	f.formMu.Lock()
+	defer f.formMu.Unlock()
+	return f.lastTokenForm
 }
 
 // newCallbackFakeIdP starts the fake IdP's HTTP server. Callers must set
@@ -122,6 +138,10 @@ func newCallbackFakeIdP(t *testing.T) *callbackFakeIdP {
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		n := atomic.AddInt32(&f.tokenCalls, 1)
+		_ = r.ParseForm()
+		f.formMu.Lock()
+		f.lastTokenForm = r.PostForm
+		f.formMu.Unlock()
 		if n <= atomic.LoadInt32(&f.tokenFailUntil) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -141,10 +161,14 @@ func newCallbackFakeIdP(t *testing.T) *callbackFakeIdP {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		body := map[string]any{
 			"sub":   "user-123",
 			"email": "userinfo@example.com",
-		})
+		}
+		if f.userInfoBody != nil {
+			body = f.userInfoBody
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	})
 
 	f.srv = httptest.NewServer(mux)
@@ -158,6 +182,12 @@ func newCallbackFakeIdP(t *testing.T) *callbackFakeIdP {
 // OIDCService.HandleCallback's verifier accepts it.
 func (f *callbackFakeIdP) signIDToken(t *testing.T, clientID, subject, nonce string) string {
 	t.Helper()
+	return f.signIDTokenWith(t, clientID, subject, nonce, nil)
+}
+
+// signIDTokenWith is signIDToken with extra claims merged into the payload.
+func (f *callbackFakeIdP) signIDTokenWith(t *testing.T, clientID, subject, nonce string, extra map[string]any) string {
+	t.Helper()
 	claims := map[string]any{
 		"iss":   f.issuer,
 		"aud":   clientID,
@@ -165,6 +195,9 @@ func (f *callbackFakeIdP) signIDToken(t *testing.T, clientID, subject, nonce str
 		"nonce": nonce,
 		"exp":   time.Now().Add(time.Hour).Unix(),
 		"iat":   time.Now().Unix(),
+	}
+	for k, v := range extra {
+		claims[k] = v
 	}
 	payload, err := json.Marshal(claims)
 	require.NoError(t, err)
@@ -281,7 +314,7 @@ func TestOIDCService_AuthCodeURL_IncludesStateAndNonce(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	url := svc.AuthCodeURL("state-123", "nonce-456")
+	url := svc.AuthCodeURL("state-123", "nonce-456", "verifier-789")
 	require.Contains(t, url, "state=state-123")
 	require.Contains(t, url, "nonce=nonce-456")
 	require.Contains(t, url, "client_id=client-1")
@@ -397,7 +430,7 @@ func TestHandleCallback_RetriesExchangeAndVerifyIndependently(t *testing.T) {
 	// be a real bug).
 	atomic.StoreInt32(&f.jwksFailUntil, 1)
 
-	identity, err := svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc")
+	identity, err := svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc", "verifier-1")
 	require.NoError(t, err)
 	require.Equal(t, "user-123", identity.Subject)
 
@@ -441,7 +474,7 @@ func TestHandleCallback_ExchangeIsNeverRetried(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc")
+	_, err = svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc", "verifier-1")
 	require.Error(t, err, "Exchange failing must fail the login outright, not be silently retried")
 
 	require.Equal(t, int32(2), atomic.LoadInt32(&f.tokenCalls),
@@ -466,7 +499,7 @@ func TestHandleCallback_VerifyAndUserInfoUseInteractivePolicy(t *testing.T) {
 	// only observes calls made by HandleCallback itself.
 	executor.calls = 0
 
-	identity, err := svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc")
+	identity, err := svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc", "verifier-1")
 	require.NoError(t, err)
 	require.Equal(t, "user-123", identity.Subject)
 
@@ -489,9 +522,139 @@ func TestHandleCallback_UserInfoFailureIsSwallowed(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	identity, err := svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc")
+	identity, err := svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc", "verifier-1")
 	require.NoError(t, err, "UserInfo failing on every attempt must not fail the overall login")
 	require.Equal(t, "user-123", identity.Subject)
 	require.GreaterOrEqual(t, atomic.LoadInt32(&f.userInfoCalls), int32(3),
 		"UserInfo should have been retried up to maxAttempts before its failure was swallowed")
+}
+
+func newCallbackTestService(t *testing.T, f *callbackFakeIdP) OIDCService {
+	t.Helper()
+	svc, err := NewOIDCService(context.Background(), OIDCConfig{
+		IssuerURL: f.issuer, ClientID: "client-1", ClientSecret: "secret",
+		RedirectURL: "http://localhost/callback", Scopes: []string{"openid"},
+	})
+	require.NoError(t, err)
+	return svc
+}
+
+func TestOIDCService_AuthCodeURL_IncludesS256Challenge(t *testing.T) {
+	srv, _ := newTestOIDCProvider(t)
+	svc, err := NewOIDCService(context.Background(), OIDCConfig{
+		IssuerURL: srv.URL, ClientID: "client-1", ClientSecret: "secret",
+		RedirectURL: "http://localhost/callback", Scopes: []string{"openid"},
+	})
+	require.NoError(t, err)
+
+	v := oauth2.GenerateVerifier()
+	u, err := url.Parse(svc.AuthCodeURL("s", "n", v))
+	require.NoError(t, err)
+	require.Equal(t, "S256", u.Query().Get("code_challenge_method"))
+	require.Equal(t, oauth2.S256ChallengeFromVerifier(v), u.Query().Get("code_challenge"))
+}
+
+func TestHandleCallback_SendsCodeVerifier(t *testing.T) {
+	f := newCallbackFakeIdP(t)
+	f.idToken = f.signIDToken(t, "client-1", "user-123", "nonce-abc")
+	svc := newCallbackTestService(t, f)
+
+	_, err := svc.HandleCallback(context.Background(), "auth-code-xyz", "nonce-abc", "my-verifier")
+	require.NoError(t, err)
+	require.Equal(t, "my-verifier", f.tokenForm().Get("code_verifier"))
+}
+
+func TestHandleCallback_ParsesEmailVerified(t *testing.T) {
+	cases := []struct {
+		name string
+		val  any
+		set  bool
+		want bool
+	}{
+		{"bool true", true, true, true},
+		{"bool false", false, true, false},
+		{"string true", "true", true, true},
+		{"string TRUE", "TRUE", true, true},
+		{"string false", "false", true, false},
+		{"string yes", "yes", true, false},
+		{"number one", 1, true, false},
+		{"absent", nil, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCallbackFakeIdP(t)
+			extra := map[string]any{"email": "a@example.com"}
+			if tc.set {
+				extra["email_verified"] = tc.val
+			}
+			f.idToken = f.signIDTokenWith(t, "client-1", "user-123", "nonce-abc", extra)
+			svc := newCallbackTestService(t, f)
+
+			identity, err := svc.HandleCallback(context.Background(), "c", "nonce-abc", "v")
+			require.NoError(t, err)
+			require.Equal(t, "a@example.com", identity.Email)
+			require.Equal(t, tc.want, identity.EmailVerified)
+		})
+	}
+}
+
+func TestHandleCallback_EmailFromUserInfoUsesUserInfoVerified(t *testing.T) {
+	f := newCallbackFakeIdP(t)
+	// The ID token has no email but claims email_verified; it must be ignored.
+	f.idToken = f.signIDTokenWith(t, "client-1", "user-123", "nonce-abc", map[string]any{"email_verified": true})
+	f.userInfoBody = map[string]any{"sub": "user-123", "email": "ui@example.com", "email_verified": false}
+	svc := newCallbackTestService(t, f)
+
+	identity, err := svc.HandleCallback(context.Background(), "c", "nonce-abc", "v")
+	require.NoError(t, err)
+	require.Equal(t, "ui@example.com", identity.Email)
+	require.False(t, identity.EmailVerified)
+
+	f.userInfoBody = map[string]any{"sub": "user-123", "email": "ui@example.com", "email_verified": true}
+	identity, err = svc.HandleCallback(context.Background(), "c", "nonce-abc", "v")
+	require.NoError(t, err)
+	require.True(t, identity.EmailVerified)
+}
+
+func TestHandleCallback_ReturnsRawClaims(t *testing.T) {
+	f := newCallbackFakeIdP(t)
+	f.idToken = f.signIDTokenWith(t, "client-1", "user-123", "nonce-abc", map[string]any{
+		"groups": []string{"eng", "ops"}, "hd": "example.com",
+	})
+	svc := newCallbackTestService(t, f)
+
+	identity, err := svc.HandleCallback(context.Background(), "c", "nonce-abc", "v")
+	require.NoError(t, err)
+	require.Equal(t, "user-123", identity.Claims["sub"])
+	require.Equal(t, "example.com", identity.Claims["hd"])
+	require.Equal(t, []any{"eng", "ops"}, identity.Claims["groups"])
+}
+
+func TestHandleCallback_UserInfoSubjectMismatch_IgnoresUserInfo(t *testing.T) {
+	f := newCallbackFakeIdP(t)
+	f.idToken = f.signIDTokenWith(t, "client-1", "user-123", "nonce-abc", nil)
+	f.userInfoBody = map[string]any{
+		"sub": "someone-else", "email": "evil@example.com",
+		"email_verified": true, "preferred_username": "evil",
+	}
+	svc := newCallbackTestService(t, f)
+
+	identity, err := svc.HandleCallback(context.Background(), "c", "nonce-abc", "v")
+	require.NoError(t, err)
+	require.Equal(t, "user-123", identity.Subject)
+	require.Empty(t, identity.Email)
+	require.False(t, identity.EmailVerified)
+	require.NotEqual(t, "evil", identity.PreferredUsername)
+}
+
+func TestHandleCallback_UserInfoSubjectMatch_Supplies(t *testing.T) {
+	f := newCallbackFakeIdP(t)
+	f.idToken = f.signIDTokenWith(t, "client-1", "user-123", "nonce-abc", nil)
+	f.userInfoBody = map[string]any{"sub": "user-123", "email": "ui@example.com", "email_verified": true}
+	svc := newCallbackTestService(t, f)
+
+	identity, err := svc.HandleCallback(context.Background(), "c", "nonce-abc", "v")
+	require.NoError(t, err)
+	require.Equal(t, "ui@example.com", identity.Email)
+	require.True(t, identity.EmailVerified)
 }

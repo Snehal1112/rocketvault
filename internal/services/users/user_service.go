@@ -35,6 +35,9 @@ type FindOrCreateExternalUserRequest struct {
 	Provider          string // e.g. model.AuthProviderOIDC
 	Subject           string // The provider's stable subject (sub claim)
 	PreferredUsername string // Best-effort display name; disambiguated on collision
+	Email             string // The provider's email claim, empty when absent
+	EmailVerified     bool   // Whether the provider verified the email
+	Claims            map[string]any
 }
 
 // CreateUserResult represents the result of creating a new user.
@@ -153,6 +156,7 @@ type userService struct {
 	totpService     authService.TOTPService
 	sessionRevoker  SessionRevoker
 	logger          *logging.Logger
+	externalPolicy  *ExternalUserPolicy
 }
 
 // UserServiceConfig holds the dependencies for user service.
@@ -163,6 +167,8 @@ type UserServiceConfig struct {
 	// SessionRevoker ends a user's sessions on password, role and delete changes.
 	SessionRevoker SessionRevoker
 	Logger         *logging.Logger
+	// ExternalUserPolicy gates external (OIDC) sign-in. Nil means JIT is off.
+	ExternalUserPolicy *ExternalUserPolicy
 }
 
 // NewUserService creates a new UserService with the provided dependencies.
@@ -182,6 +188,7 @@ func NewUserService(config UserServiceConfig) UserService {
 		totpService:     config.TOTPService,
 		sessionRevoker:  config.SessionRevoker,
 		logger:          config.Logger,
+		externalPolicy:  config.ExternalUserPolicy,
 	}
 }
 
@@ -267,15 +274,40 @@ func (s *userService) CreateUser(ctx context.Context, req CreateUserRequest) (*C
 }
 
 // FindOrCreateExternalUser looks up a user by (provider, subject), creating
-// one with model.RoleUser (least privilege — an admin must grant vault roles
-// separately, exactly as a fresh Entra ID identity has no Key Vault access
-// until an RBAC role assignment is made) if none exists.
+// one with the policy's default role (least privilege — an admin must grant
+// vault roles separately, exactly as a fresh Entra ID identity has no Key
+// Vault access until an RBAC role assignment is made) if none exists and the
+// external user policy allows it. A refused identity returns a
+// *NotAllowedError that matches ErrExternalUserNotAllowed.
 func (s *userService) FindOrCreateExternalUser(ctx context.Context, req FindOrCreateExternalUserRequest) (*model.User, error) {
+	identity := ExternalIdentity{Email: req.Email, EmailVerified: req.EmailVerified, Claims: req.Claims}
+
 	existing, err := s.userRepo.ReadByExternalSubject(ctx, req.Provider, req.Subject)
 	if err == nil {
+		if err := s.externalPolicy.Evaluate(identity, false); err != nil {
+			s.auditDenied(existing.ID.String(), req, err)
+			return nil, err
+		}
+		// A failed email refresh must not block the login.
+		if req.Email != "" && req.Email != existing.Email {
+			if upErr := s.userRepo.UpdateEmail(ctx, existing.ID, req.Email); upErr != nil {
+				s.logger.WithError(upErr).Warn("Failed to refresh external user email")
+			} else {
+				existing.Email = req.Email
+			}
+		}
 		return existing, nil
 	}
+	if !errors.Is(err, repositories.ErrNotFound) {
+		return nil, fmt.Errorf("failed to look up external user: %w", err)
+	}
 
+	if err := s.externalPolicy.Evaluate(identity, true); err != nil {
+		s.auditDenied("", req, err)
+		return nil, err
+	}
+
+	role := s.externalPolicy.DefaultRole()
 	username := req.PreferredUsername
 	if username == "" {
 		username = req.Subject
@@ -286,7 +318,8 @@ func (s *userService) FindOrCreateExternalUser(ctx context.Context, req FindOrCr
 		Username:           username,
 		PasswordHash:       "",
 		TOTPSecret:         "",
-		Roles:              []string{model.RoleUser},
+		Email:              req.Email,
+		Roles:              []string{role},
 		AuthProvider:       req.Provider,
 		ExternalIDPSubject: req.Subject,
 		CreatedAt:          time.Now(),
@@ -305,7 +338,21 @@ func (s *userService) FindOrCreateExternalUser(ctx context.Context, req FindOrCr
 
 	s.logger.LogAuditInfo(user.ID.String(), "find_or_create_external_user", "success",
 		fmt.Sprintf("Created externally-authenticated user: %s (provider=%s)", user.Username, req.Provider))
+	s.logger.LogAuditInfo(user.ID.String(), "oidc_user_provisioned", "success",
+		fmt.Sprintf("Provisioned external user (provider=%s, subject=%s, role=%s)", req.Provider, req.Subject, role))
 	return user, nil
+}
+
+// auditDenied records a refused external login. It logs the reason only,
+// never the email or claim values.
+func (s *userService) auditDenied(userID string, req FindOrCreateExternalUserRequest, err error) {
+	reason := "unknown"
+	var na *NotAllowedError
+	if errors.As(err, &na) {
+		reason = na.Reason
+	}
+	s.logger.LogAuditError(userID, "oidc_login_denied", "denied",
+		fmt.Sprintf("External login denied (provider=%s, subject=%s, reason=%s)", req.Provider, req.Subject, reason), err)
 }
 
 // UpdateUser updates an existing user with the provided information.

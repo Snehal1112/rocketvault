@@ -6055,6 +6055,60 @@ creator was deleted stop rotating; the scheduler should iterate policies.
 
 **Related**: § B99, § B100.
 
+### B102 — The OIDC login flow has no PKCE
+
+**Status**: Fixed on branch `feat/oidc-jit-policy` (commit `2457a2bc`), GitHub #70
+**Severity**: Medium — an authorization code intercepted in transit could be
+redeemed at the token endpoint without proof that the same client started the
+flow. The login flow still used `state` and `nonce`.
+**Files**: `internal/services/auth/oidc_service.go`, `api/oidc.go`
+
+**Symptom**: the authorization request carried no `code_challenge` and the
+token exchange carried no `code_verifier`, so the provider could not bind the
+code to the client that began the login.
+
+**Root cause**: the OIDC transport was written without PKCE support.
+
+**Fix**: every login now generates a verifier, sends an S256 challenge in the
+authorization request and sends the verifier in the code exchange. PKCE is
+always on and has no config switch.
+
+**Tests**: `internal/services/auth/oidc_service_test.go` and `api/oidc_test.go`.
+
+**Related**: § B103.
+
+### B103 — OIDC ignores `email_verified` and provisions on any lookup error
+
+**Status**: Fixed on branch `feat/oidc-jit-policy` (commits `2457a2bc`,
+`ddda8803`, `64e68548`, policy wired by `cfeb67f0`), GitHub #71
+**Severity**: Medium — any identity the provider authenticated was provisioned
+as a local user, whether or not its email was verified or in an allowed domain,
+and a transient lookup failure could also lead to a create attempt.
+**Files**: `internal/services/auth/oidc_service.go`,
+`internal/services/users/user_service.go` (`FindOrCreateExternalUser`),
+`api/oidc.go`
+
+**Symptom**: the `email_verified` claim was never read, there was no way to
+restrict sign-in by email domain or claim, and JIT provisioning was always on.
+`FindOrCreateExternalUser` created a user for any error from the lookup, not
+only "not found".
+
+**Root cause**: the OIDC transport dropped the email claims, and
+`FindOrCreateExternalUser` treated every lookup error as "no such user".
+
+**Fix**: the transport now returns `email_verified` and the raw claims. A new
+`ExternalUserPolicy` (config keys under `oidc:`, see
+`docs/contributing/configuration.md`) gates new and, by default, existing
+users. A user is created only on `repositories.ErrNotFound`; any other lookup
+error is returned. A denial answers a generic 403 and the reason goes to the
+audit log. JIT provisioning is now off by default (`oidc.jit_enabled`). The
+email is stored in the new nullable `users.email` column.
+
+**Tests**: `internal/services/users/user_service_test.go`,
+`api/oidc_test.go`, `internal/services/auth/oidc_service_test.go`.
+
+**Related**: § B102.
+
 ---
 
 ## Deferred Refactors

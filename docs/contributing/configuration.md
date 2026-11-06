@@ -29,6 +29,45 @@ Moved verbatim out of the project CLAUDE.md on 2026-10-20 to keep it short.
   `docs/known-bugs.md` § B10); `.rocketvault.yaml.example` is the committed
   template. Never add a real secret value to the `.example` file.
 
+## OIDC login policy
+
+OIDC login is gated by `oidc.enabled` (default `false`). When it is on, these
+keys under `oidc:` control who may sign in. Invalid values (for example a
+malformed domain or a `default_role` other than `user`) make startup fail.
+
+| Key | Default | Rule |
+|---|---|---|
+| `jit_enabled` | `false` | A new OIDC identity is created only when `true`. |
+| `allowed_email_domains` | `[]` | When set, the email domain must match one entry (case-insensitive), and the provider must send `email_verified: true`. A missing email is denied. |
+| `require_email_verified` | `false` | The provider must report `email_verified` as true. |
+| `required_claims` | `{}` | Each named claim must match the configured value. A claim that holds a list matches when it contains the value. Claims are read from the ID token only, never from userinfo. |
+| `default_role` | `user` | Role of a newly created user. Only `user` is accepted. |
+| `enforce_on_existing` | `true` | Also apply the domain, verified and claim checks to already-linked users. |
+
+Evaluation order:
+
+1. A new identity while `jit_enabled` is `false` is denied.
+2. The domain, verified and required-claims checks always apply to new users.
+   They apply to existing users only when `enforce_on_existing` is `true`.
+3. A missing or empty email is denied when a domain list is set. A domain list
+   also requires `email_verified` to be true, like `require_email_verified`.
+
+The client sees a generic 403. The reason is recorded in the audit log only.
+
+Notes:
+
+- Identities link only by `(provider, subject)`, never by email.
+- PKCE with S256 is always on for the login flow.
+- Some providers, for example Microsoft Entra ID, do not send `email_verified`
+  in ID tokens by default. With a domain list set, everyone is denied there
+  until the claim is configured.
+- Sessions and refresh tokens issued before a policy is tightened stay valid
+  until they expire.
+- **Upgrade warning**: JIT provisioning is now off by default. New OIDC
+  identities are denied until you set `oidc.jit_enabled: true`. Users that are
+  already linked keep logging in, unless `enforce_on_existing` is `true` and
+  they fail the configured checks.
+
 ## Admin User Setup
 
 ### Initial Admin Creation

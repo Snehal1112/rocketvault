@@ -459,6 +459,11 @@ func (m *MockUserRepo) ReadByExternalSubject(ctx context.Context, provider, subj
 	return args.Get(0).(*model.User), args.Error(1)
 }
 
+func (m *MockUserRepo) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	args := m.Called(ctx, id, email)
+	return args.Error(0)
+}
+
 func (m *MockUserRepo) List(ctx context.Context) ([]model.User, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
@@ -889,6 +894,28 @@ func TestRetryUser_CreateUser_Error(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Error(t, err)
 	base.AssertExpectations(t)
+}
+
+func TestRetryUser_FindOrCreateExternalUser_Denial_NotRetried(t *testing.T) {
+	v := viper.New()
+	v.Set("retry.database.enabled", true)
+	v.Set("retry.database.max_attempts", 3)
+	v.Set("retry.database.initial_delay", "1ms")
+	v.Set("retry.database.max_delay", "1ms")
+	v.Set("retry.database.backoff_multiplier", 1.0)
+	rs, err := NewRetryService(v)
+	assert.NoError(t, err)
+
+	base := &MockUserService{}
+	req := users.FindOrCreateExternalUserRequest{Provider: model.AuthProviderOIDC, Subject: "sub-1"}
+	denied := &users.NotAllowedError{Reason: "jit_disabled"}
+	base.On("FindOrCreateExternalUser", mock.Anything, req).Return(nil, denied)
+
+	svc := NewRetryUserService(base, rs)
+	result, err := svc.FindOrCreateExternalUser(ctx, req)
+	assert.Nil(t, result)
+	assert.ErrorIs(t, err, users.ErrExternalUserNotAllowed)
+	base.AssertNumberOfCalls(t, "FindOrCreateExternalUser", 1)
 }
 
 func TestRetryUser_UpdateUser_Success(t *testing.T) {

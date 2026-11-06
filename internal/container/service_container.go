@@ -585,13 +585,21 @@ func (c *ServiceContainer) initializeServices() error {
 		TokenExpiry:     oauth2TokenExpiry,
 	})
 
+	// Build the OIDC login policy. Invalid policy config fails startup, unlike
+	// the warn-only OIDC discovery failure above.
+	externalUserPolicy, err := buildExternalUserPolicy(viperCfg)
+	if err != nil {
+		return fmt.Errorf("oidc policy: %w", err)
+	}
+
 	// Initialize user service
 	baseUserService := userServices.NewUserService(userServices.UserServiceConfig{
-		UserRepository:  c.userRepository,
-		PasswordService: c.passwordService,
-		TOTPService:     c.totpService,
-		SessionRevoker:  c.sessionRepository,
-		Logger:          c.logger,
+		UserRepository:     c.userRepository,
+		PasswordService:    c.passwordService,
+		TOTPService:        c.totpService,
+		SessionRevoker:     c.sessionRepository,
+		Logger:             c.logger,
+		ExternalUserPolicy: externalUserPolicy,
 	})
 
 	// Wrap with retry logic if retry service is available
