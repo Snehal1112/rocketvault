@@ -20,7 +20,7 @@
   <div class="doc-meta"><span class="doc-chip">docs/release-notes/v4.12.0-audit-reliability.md</span></div>
   <hr/>
 </header>
-<nav class="doc-toc"><div class="doc-toc-label">On this page</div><ol><li><a href="#breaking-changes">Breaking changes</a></li><li><a href="#what-changed">What changed</a></li><li><a href="#upgrade-procedure">Upgrade procedure</a></li><li><a href="#what-did-not-change">What did not change</a></li><li><a href="#known-issues">Known issues</a></li></ol></nav>
+<nav class="doc-toc"><div class="doc-toc-label">On this page</div><ol><li><a href="#breaking-changes">Breaking changes</a></li><li><a href="#what-changed">What changed</a></li><li><a href="#upgrade-procedure">Upgrade procedure</a></li><li><a href="#upgrade-and-operations">Upgrade and operations</a></li><li><a href="#what-did-not-change">What did not change</a></li><li><a href="#known-issues">Known issues</a></li></ol></nav>
 <main class="doc">
 <blockquote>
 <p>The version number is provisional and may change before tagging.</p>
@@ -85,6 +85,44 @@ first new row is <code>seq</code> 1.</li>
 <li>If you use <code>self_pki</code>, make sure the database accepts writes before the
 first start, or the server will not come up.</li>
 </ol>
+<h2 id="upgrade-and-operations">Upgrade and operations</h2>
+<ul>
+<li><strong>Stop every old replica first.</strong> Stop all pre-v4.12 replicas before the
+upgrade starts. A v4.11 writer that keeps running after the migration
+writes rows with no <code>seq</code> that chain from a chained row, and verification
+reports them as <code>hash_mismatch</code>. A downgrade followed by a re-upgrade does
+the same to the rows written while downgraded.</li>
+<li><strong>Backup and restore.</strong> <code>backup create</code> now reads every table in one
+transaction (a read-only <code>REPEATABLE READ</code> snapshot on Postgres), so
+<code>audit_chain_head</code> and <code>audit_logs</code> always agree in the file. <code>backup restore</code> recomputes the chain head from the restored <code>audit_logs</code> in the
+same transaction: the head becomes the <code>seq</code> and hash of the row with the
+highest <code>seq</code>, or <code>seq</code> 0 and the hash of the newest legacy row when no
+restored row has a <code>seq</code> (an empty hash when there are none). This covers
+pre-v4.12 backups, which have no <code>audit_chain_head</code> table. At startup the
+server also moves a head that lags behind the highest <code>seq</code> forward to that
+row; it never moves the head backwards. A backup taken by an older build
+while the server was writing can have a head that lags its rows, so on an
+older build take backups with the server quiesced.</li>
+<li><strong>Load and latency.</strong> Login, token refresh, token issue (OIDC callback),
+wrap and unwrap now write two chained rows each, an <code>attempt</code> row and a
+result row. Every chained write takes the lock on the single
+<code>audit_chain_head</code> row, so audit writes from all replicas run one at a
+time. Size the database for the extra writes and expect login latency to
+include two serialized audit inserts.</li>
+<li><strong>Sustained audit outage.</strong> Login and token refresh run behind the database
+retry circuit breaker, and an <code>audit unavailable</code> failure counts toward it.
+After <code>retry.circuit_breaker.failure_threshold</code> failures (default 5) the
+breaker opens, and requests on that breaker get <code>503</code> with
+<code>Service temporarily unavailable, please retry</code> instead of <code>audit unavailable</code> until <code>retry.circuit_breaker.timeout</code> (default 60 s) passes.</li>
+<li><strong>SQLite.</strong> SQLite runs in its default rollback-journal mode with the
+driver's default 5 second busy timeout. A long reader, such as a backup
+export or a large report, or a burst of writes, can make audit writes wait
+for the lock. If the wait runs out, a critical operation returns <code>503</code>
+<code>audit unavailable</code> and does not run, instead of running with its audit row
+silently dropped.</li>
+<li><strong>Open follow-ups</strong> are tracked in <code>docs/known-bugs.md</code>: § B104, § B105,
+§ B107 and § B108 (see Known issues below).</li>
+</ul>
 <h2 id="what-did-not-change">What did not change</h2>
 <ul>
 <li>Existing audit rows are not rewritten.</li>
@@ -97,6 +135,11 @@ first start, or the server will not come up.</li>
 <code>gap</code> or <code>hash_mismatch</code> on a valid chain.</li>
 <li><strong>B105</strong>: first-boot signing-key generation under the default
 <code>jwt.key_source: os_store</code> is not written to the audit chain.</li>
+<li><strong>B107</strong>: account-level authorization changes (user create and update,
+explicit-deny policies, provisioning grants) are still best-effort audit
+events, not fail-closed critical ones.</li>
+<li><strong>B108</strong>: an unfiltered audit query sorts the whole <code>audit_logs</code> table,
+because its <code>seq</code> ordering cannot use an index.</li>
 </ul>
 
 </main>

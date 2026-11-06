@@ -151,7 +151,8 @@ principal must also own a usable key.</li>
 Each row's details carry <code>status=denied</code> or <code>status=failed</code> and name the
 certificate that stopped renewing. The audit outcome column is never set
 for these rows (§ B98), so <code>--outcome</code> cannot select them; filter by
-action and read the status in the details.</li>
+action and read the status in the details.
+Fixed in v4.12.0 (B98): these rows now carry an outcome.</li>
 <li>A CA certificate that now refuses to sign because it records no signing
 key, or whose key is purged, cannot be repaired. Re-issue it with
 <code>rocketvault certificate create --is-ca --key-id &lt;key-id&gt; ...</code> over a key

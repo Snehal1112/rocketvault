@@ -6267,6 +6267,76 @@ are kept), so it is exact whatever page the attempt rows would fall on.
 
 ---
 
+### B107 — Account-level authorization changes are not fail-closed critical audit events
+
+**Status**: Open (GitHub: to be filed)
+**Severity**: Medium — an escalation can succeed with no audit row when the
+audit store is down, and some rows name the wrong actor.
+**Files**: `internal/services/users/user_service.go` (`CreateUser`,
+`UpdateUser`), `internal/services/authorization/access_policy_service.go`
+(`CreatePolicy`, `UpdatePolicy`, `DeletePolicy`, `audit`),
+`internal/services/provisioning/grant_service.go` (`IssueGrant`,
+`RevokeGrant`); callers `cmd/users/create.go`, `cmd/users/admin.go`,
+`api/users.go`, `cmd/vault-provisioning/`, `api/vault_provisioning_grants.go`
+
+**Symptom**: v4.12.0 made role grant and revoke, user delete and vault delete
+critical: an `attempt` row is written first and the operation is refused with
+`audit unavailable` if that write fails. The account-level changes that can
+grant the same or more power still write one best-effort row through the
+logger after the change:
+
+- `UpdateUser` can give a user the global `admin` role.
+- `CreateUser` creates accounts, including the first admin through
+  `users admin` with the bootstrap token.
+- `CreatePolicy`, `UpdatePolicy` and `DeletePolicy` change explicit-deny
+  policies. Removing or weakening a deny is an escalation.
+- `IssueGrant` and `RevokeGrant` change who may create vaults.
+
+If the audit write fails, the change still happens and nothing records it.
+`CreateUser` and `UpdateUser` also log the target user's ID as the actor, not
+the caller.
+
+**Root cause**: the audit-first conversion covered the operations listed in
+the v4.12.0 spec. These services were not in that list and still use
+`logging.Logger.LogAuditInfo`.
+
+**Fix recipe**: wrap each change in `audit.WithCritical`, with the acting
+principal as the actor and the changed user, policy or grant as the
+resource, as `DeleteUser` and `RoleAssignmentService` do now. Pass the actor
+into `CreateUser` and `UpdateUser`; the bootstrap path has no session, so
+record it as `system` with the bootstrap token use in the details. Add tests
+that a failing audit service refuses each change and that the row names the
+caller.
+
+---
+
+### B108 — Unfiltered audit queries sort the whole `audit_logs` table
+
+**Status**: Open (GitHub: to be filed)
+**Severity**: Low to Medium — performance only; grows with the trail.
+**Files**: `internal/repositories/audit_repository.go` (`QueryAuditLogs`),
+`internal/db/db.go` (audit indexes)
+
+**Symptom**: `QueryAuditLogs` orders by
+`COALESCE(seq, 0) DESC, timestamp DESC, id DESC`. No index matches that
+expression, so even an unfiltered `LIMIT 100` reads and sorts every row.
+SQLite's plan is `SCAN audit_logs` plus `USE TEMP B-TREE FOR ORDER BY`.
+Before v4.12.0 the query ordered by `timestamp DESC` and could read
+`idx_audit_logs_timestamp`. The audit log listing, the CLI, the MCP tool and
+the reports all go through this query.
+
+**Root cause**: the `COALESCE` puts legacy rows (no `seq`) after chained rows
+so `verifyChain` sees chain order, but an expression in `ORDER BY` cannot use
+the plain `idx_audit_logs_seq` index.
+
+**Fix recipe**: keep the same order with a form an index can serve, for
+example `ORDER BY seq DESC NULLS LAST, timestamp DESC, id DESC` with a
+matching index on Postgres, or an expression index on `COALESCE(seq, 0)` (both
+engines support expression indexes). Measure the query plan and latency on a
+trail of at least a million rows on both engines before and after.
+
+---
+
 ## Deferred Refactors
 
 Both items formerly tracked here (H3, M2) were re-investigated on 2026-08-14 and
