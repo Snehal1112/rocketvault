@@ -121,6 +121,10 @@ func (r *recorder) RecordEvent(_ context.Context, e auditServices.AuditEvent) er
 	return nil
 }
 
+func (r *recorder) RecordCritical(ctx context.Context, e auditServices.AuditEvent) error {
+	return r.RecordEvent(ctx, e)
+}
+
 func (r *recorder) PersistAudit(string, string, string) error { return nil }
 
 func TestRecord_WritesTheExactEventAndToleratesANilService(t *testing.T) {

@@ -126,14 +126,6 @@ func openAuditTestDBFull(t *testing.T) *sql.DB {
 	return db
 }
 
-func TestAuditRepository_GetLastHash_EmptyTable(t *testing.T) {
-	db := openAuditTestDBFull(t)
-	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
-	hash, err := repo.GetLastHash(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, "", hash)
-}
-
 func TestAuditRepository_QueryAuditLogs_FilterByOutcome(t *testing.T) {
 	db := openAuditTestDBFull(t)
 	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))

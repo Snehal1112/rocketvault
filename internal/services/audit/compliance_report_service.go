@@ -257,15 +257,21 @@ func verifyChain(logs []repositories.AuditLog) bool {
 			// Pre-dates hash chaining — skip.
 			continue
 		}
-		// newer.PrevHash should equal computeHash(older.PrevHash, newer.Timestamp, event from newer).
-		expected := computeHash(older.PrevHash, newer.Timestamp, AuditEvent{
+		ev := AuditEvent{
 			UserID:       newer.UserID,
 			Action:       newer.Action,
 			Details:      newer.Details,
 			ResourceType: newer.ResourceType,
 			ResourceID:   newer.ResourceID,
 			Outcome:      newer.Outcome,
-		})
+		}
+		// Chained rows hash their seq; legacy rows use the old formula.
+		var expected string
+		if newer.Seq != nil {
+			expected = computeChainHash(older.PrevHash, *newer.Seq, newer.Timestamp, ev)
+		} else {
+			expected = computeHash(older.PrevHash, newer.Timestamp, ev)
+		}
 		if newer.PrevHash != expected {
 			return false
 		}

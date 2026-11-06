@@ -47,6 +47,10 @@ func (a *keyExportAudit) RecordEvent(_ context.Context, e auditServices.AuditEve
 	return nil
 }
 
+func (a *keyExportAudit) RecordCritical(ctx context.Context, e auditServices.AuditEvent) error {
+	return a.RecordEvent(ctx, e)
+}
+
 func (a *keyExportAudit) PersistAudit(string, string, string) error { return nil }
 
 // only returns the single event an attempt must have recorded.

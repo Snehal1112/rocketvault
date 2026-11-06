@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -499,21 +500,27 @@ func TestAuthenticationService_AuthenticateUser_InvalidTOTP(t *testing.T) {
 	mockJWTService.AssertNotCalled(t, "GenerateToken")
 }
 
-// newAuditTestRepo creates an in-memory SQLite-backed audit repository for
+// newAuditTestRepo creates a file-backed SQLite audit repository for
 // exercising the real AuditService.RecordEvent write path end-to-end,
-// mirroring the audit_logs schema used by internal/services/audit's own
+// mirroring the chained audit schema used by internal/services/audit's own
 // openTestDB test helper.
 func newAuditTestRepo(t *testing.T) repositories.AuditRepositoryExtended {
 	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "audit.db"))
 	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() }) //nolint:errcheck,gosec
 	_, err = db.Exec(`CREATE TABLE audit_logs (
 		id TEXT PRIMARY KEY, user_id TEXT, action TEXT NOT NULL,
 		details TEXT, timestamp TIMESTAMP,
 		resource_type TEXT, resource_id TEXT, ip_address TEXT,
-		outcome TEXT, source TEXT, prev_hash TEXT
+		outcome TEXT, source TEXT, prev_hash TEXT, seq BIGINT
 	)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`CREATE TABLE audit_chain_head (
+		id INT PRIMARY KEY CHECK (id = 1), last_seq BIGINT NOT NULL, last_hash TEXT NOT NULL)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO audit_chain_head (id, last_seq, last_hash) VALUES (1, 0, '')`)
 	require.NoError(t, err)
 	return repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
 }

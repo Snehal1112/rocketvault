@@ -401,6 +401,8 @@ func (c *ServiceContainer) initializeServices() error {
 	})
 	c.totpStepRepository = repositories.NewTOTPStepRepository(c.conn)
 	c.auditRepository = repositories.NewAuditRepository(c.conn)
+	// Failed audit writes are exported as rocketvault_audit_write_failures_total.
+	auditServices.SetWriteFailureRecorder(metrics.NewDefaultPrometheusAuditWriteFailures())
 	c.auditService = auditServices.NewAuditService(c.auditRepository)
 	c.complianceReportService = auditServices.NewComplianceReportService(c.auditRepository)
 	c.logger.SetAuditPersister(c.auditService)

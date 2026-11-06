@@ -37,6 +37,10 @@ func (r *exportAuditRecorder) RecordEvent(_ context.Context, e auditServices.Aud
 	return nil
 }
 
+func (r *exportAuditRecorder) RecordCritical(ctx context.Context, e auditServices.AuditEvent) error {
+	return r.RecordEvent(ctx, e)
+}
+
 func (r *exportAuditRecorder) PersistAudit(string, string, string) error { return nil }
 
 // exportSession builds an unauthorized Session whose context carries a

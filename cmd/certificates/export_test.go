@@ -49,6 +49,10 @@ func (a *certExportAudit) RecordEvent(_ context.Context, e auditServices.AuditEv
 	return nil
 }
 
+func (a *certExportAudit) RecordCritical(ctx context.Context, e auditServices.AuditEvent) error {
+	return a.RecordEvent(ctx, e)
+}
+
 func (a *certExportAudit) PersistAudit(string, string, string) error { return nil }
 
 // only returns the single event an attempt must have recorded.

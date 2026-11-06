@@ -1070,7 +1070,7 @@ func TestAccessPolicyRepository_List_WithVaultScoped(t *testing.T) {
 
 // ---------------------------------------------------------------------------
 // AuditRepository – additional uncovered paths
-// (Note: TestAuditRepository_PersistAudit, TestAuditRepository_GetLastHash_EmptyTable,
+// (Note: TestAuditRepository_PersistAudit,
 // TestAuditRepository_DeleteBefore and TestAuditRepository_AuditConfig_RoundTrip are
 // already covered in audit_repository_test.go — these tests cover different filter
 // combinations and edge cases not yet exercised.)
@@ -1152,21 +1152,6 @@ func TestAuditRepository_InsertAuditLog_PreservesProvidedID(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, logs, 1)
 	assert.Equal(t, id, logs[0].ID)
-}
-
-func TestAuditRepository_GetLastHash_ReturnsLatest(t *testing.T) {
-	t.Parallel()
-	db := setupAuditDBFull(t)
-	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
-	ctx := context.Background()
-
-	require.NoError(t, repo.InsertAuditLog(ctx, repositories.AuditLog{Action: "a1", PrevHash: "hash1"}))
-	require.NoError(t, repo.InsertAuditLog(ctx, repositories.AuditLog{Action: "a2", PrevHash: "hash2"}))
-
-	hash, err := repo.GetLastHash(ctx)
-	require.NoError(t, err)
-	// The last-inserted row's prev_hash is returned
-	assert.NotEmpty(t, hash)
 }
 
 func TestAuditRepository_QueryAuditLogs_AllFilters(t *testing.T) {

@@ -43,6 +43,10 @@ func (a *captureAudit) RecordEvent(_ context.Context, e auditServices.AuditEvent
 	return nil
 }
 
+func (a *captureAudit) RecordCritical(ctx context.Context, e auditServices.AuditEvent) error {
+	return a.RecordEvent(ctx, e)
+}
+
 func (a *captureAudit) PersistAudit(userID, action, details string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()

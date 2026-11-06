@@ -483,6 +483,11 @@ func (m *MockAuditService) RecordEvent(ctx context.Context, event auditSvc.Audit
 	return args.Error(0)
 }
 
+func (m *MockAuditService) RecordCritical(ctx context.Context, event auditSvc.AuditEvent) error {
+	args := m.Called(ctx, event)
+	return args.Error(0)
+}
+
 func (m *MockAuditService) PersistAudit(userID, action, details string) error {
 	args := m.Called(userID, action, details)
 	return args.Error(0)

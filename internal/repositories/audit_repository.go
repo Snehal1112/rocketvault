@@ -36,7 +36,6 @@ type AuditRepositoryInterface interface {
 type AuditRepositoryExtended interface {
 	AuditRepositoryInterface
 	InsertAuditLog(ctx context.Context, entry AuditLog) error
-	GetLastHash(ctx context.Context) (string, error)
 	AppendChained(ctx context.Context, build func(nextSeq int64, prevHash string, now time.Time) AuditLog) error
 	QueryAuditLogs(ctx context.Context, filter AuditFilter) ([]AuditLog, int64, error)
 	DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error)
@@ -164,23 +163,6 @@ func (r *AuditRepository) AppendChained(ctx context.Context, build func(nextSeq 
 	}
 	committed = true
 	return nil
-}
-
-// GetLastHash returns the prev_hash of the most recently inserted row,
-// or "" if the table is empty.
-func (r *AuditRepository) GetLastHash(ctx context.Context) (string, error) {
-	var hash sql.NullString
-	err := r.db.QueryRowContext(
-		ctx,
-		`SELECT prev_hash FROM audit_logs ORDER BY timestamp DESC, id DESC LIMIT 1`,
-	).Scan(&hash)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return hash.String, nil
 }
 
 // QueryAuditLogs returns audit log rows matching filter, along with the total
