@@ -100,9 +100,10 @@ highest <code>seq</code>, or <code>seq</code> 0 and the hash of the newest legac
 restored row has a <code>seq</code> (an empty hash when there are none). This covers
 pre-v4.12 backups, which have no <code>audit_chain_head</code> table. At startup the
 server also moves a head that lags behind the highest <code>seq</code> forward to that
-row; it never moves the head backwards. A backup taken by an older build
-while the server was writing can have a head that lags its rows, so on an
-older build take backups with the server quiesced.</li>
+row; it never moves the head backwards. Because restore recomputes the head,
+a backup whose head lags its rows is safe to restore. Quiesce the server
+before a restore: a restore onto a live server that is writing audit rows
+can race with those writes.</li>
 <li><strong>Load and latency.</strong> Login, token refresh, token issue (OIDC callback),
 wrap and unwrap now write two chained rows each, an <code>attempt</code> row and a
 result row. Every chained write takes the lock on the single
@@ -112,8 +113,11 @@ include two serialized audit inserts.</li>
 <li><strong>Sustained audit outage.</strong> Login and token refresh run behind the database
 retry circuit breaker, and an <code>audit unavailable</code> failure counts toward it.
 After <code>retry.circuit_breaker.failure_threshold</code> failures (default 5) the
-breaker opens, and requests on that breaker get <code>503</code> with
-<code>Service temporarily unavailable, please retry</code> instead of <code>audit unavailable</code> until <code>retry.circuit_breaker.timeout</code> (default 60 s) passes.</li>
+breaker opens. It is the shared database breaker, so it also covers session
+validation and other retried database operations: while it is open, every
+authenticated request gets <code>503</code> with <code>Service temporarily unavailable, please retry</code> instead of <code>audit unavailable</code>, until
+<code>retry.circuit_breaker.timeout</code> (default 60 s) passes. The OIDC callback
+answers a generic <code>500</code> while the breaker is open.</li>
 <li><strong>SQLite.</strong> SQLite runs in its default rollback-journal mode with the
 driver's default 5 second busy timeout. A long reader, such as a backup
 export or a large report, or a burst of writes, can make audit writes wait
