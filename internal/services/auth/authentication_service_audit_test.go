@@ -8,6 +8,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -164,4 +165,62 @@ func TestIssueSessionForUser_AuditUnavailable_IssuesNoSession(t *testing.T) {
 	assert.ErrorIs(t, err, auditServices.ErrAuditUnavailable)
 	assert.NotContains(t, err.Error(), auditCause)
 	f.sessions.AssertNotCalled(t, "CreateSession", mock.Anything, mock.Anything)
+}
+
+// newAuditRefreshFixture wires a refresh for a live session of "carol".
+func newAuditRefreshFixture(audit *fakeAuditService) (AuthenticationService, *MockSessionRepository, *MockJWTService, *model.Session) {
+	userID := uuid.New()
+	session := &model.Session{ID: uuid.New(), UserID: userID, ExpiresAt: time.Now().Add(time.Hour)}
+	users := &MockUserRepository{}
+	users.On("Read", mock.Anything, userID).Return(&model.User{ID: userID, Username: "carol", Roles: []string{model.RoleUser}}, nil)
+	sessions := &MockSessionRepository{}
+	sessions.On("GetSessionByRefreshToken", mock.Anything, mock.AnythingOfType("string")).Return(session, nil)
+	jwt := &MockJWTService{}
+	svc := NewAuthenticationService(AuthenticationConfig{
+		UserRepository:    users,
+		SessionRepository: sessions,
+		PasswordService:   &MockPasswordService{},
+		TOTPService:       &MockTOTPService{},
+		JWTService:        jwt,
+		Logger:            logging.InitLogger(),
+		AuditService:      audit,
+	})
+	return svc, sessions, jwt, session
+}
+
+func TestRefreshAccessToken_AuditUnavailable_IssuesNoToken(t *testing.T) {
+	t.Parallel()
+	audit := &fakeAuditService{criticalErr: errors.New(auditCause)}
+	svc, sessions, jwt, _ := newAuditRefreshFixture(audit)
+
+	result, err := svc.RefreshAccessToken(context.Background(), "refresh-token-value")
+
+	require.Error(t, err)
+	assert.Nil(t, result, "no token may be returned when the audit write fails")
+	assert.ErrorIs(t, err, auditServices.ErrAuditUnavailable)
+	assert.NotContains(t, err.Error(), auditCause)
+	jwt.AssertNotCalled(t, "GenerateToken", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	sessions.AssertNotCalled(t, "UpdateSessionLastUsed", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestRefreshAccessToken_AuditAttemptPrecedesToken(t *testing.T) {
+	t.Parallel()
+	audit := &fakeAuditService{}
+	svc, sessions, jwt, session := newAuditRefreshFixture(audit)
+	var seenAtMint []string
+	jwt.On("GenerateToken", session.UserID, "carol", []string{model.RoleUser}, session.ID).
+		Run(func(mock.Arguments) { seenAtMint = audit.snapshot() }).Return("new-access-token", nil)
+	sessions.On("UpdateSessionLastUsed", mock.Anything, session.ID, mock.AnythingOfType("time.Time")).Return(nil)
+
+	result, err := svc.RefreshAccessToken(context.Background(), "refresh-token-value")
+
+	require.NoError(t, err)
+	assert.Equal(t, "new-access-token", result.Token)
+	assert.Equal(t, []string{"critical:attempt"}, seenAtMint)
+	assert.Equal(t, []string{"critical:attempt", "event:success"}, audit.snapshot())
+	require.Len(t, audit.critical, 1)
+	assert.Equal(t, "refresh_access_token", audit.critical[0].Action)
+	assert.Equal(t, "session", audit.critical[0].ResourceType)
+	assert.Equal(t, session.ID.String(), audit.critical[0].ResourceID)
+	assert.Equal(t, session.UserID.String(), audit.critical[0].UserID)
 }

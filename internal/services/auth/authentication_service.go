@@ -574,26 +574,48 @@ func (s *authenticationService) RefreshAccessToken(ctx context.Context, refreshT
 		return nil, errors.New("user not found")
 	}
 
-	// Generate new access token with the existing session.ID as jti.
-	accessToken, err := s.jwtService.GenerateToken(user.ID, user.Username, user.Roles, session.ID)
-	if err != nil {
-		s.logger.LogAuditError(user.ID.String(), "refresh_access_token", "failed", "Failed to generate access token", err)
-		s.logger.WithError(err).Error("Token refresh failed: could not generate access token")
-		return nil, fmt.Errorf("failed to generate access token")
+	var accessToken string
+	mint := func(ctx context.Context) error {
+		// Generate new access token with the existing session.ID as jti.
+		var err error
+		accessToken, err = s.jwtService.GenerateToken(user.ID, user.Username, user.Roles, session.ID)
+		if err != nil {
+			s.logger.LogAuditError(user.ID.String(), "refresh_access_token", "failed", "Failed to generate access token", err)
+			s.logger.WithError(err).Error("Token refresh failed: could not generate access token")
+			return fmt.Errorf("failed to generate access token")
+		}
+
+		// Update session last used time.
+		if err := s.sessionRepo.UpdateSessionLastUsed(ctx, session.ID, time.Now()); err != nil {
+			s.logger.LogAuditError(user.ID.String(), "refresh_access_token", "failed", "Failed to update session last used", err)
+			s.logger.WithError(err).Warn("Token refresh failed: could not update session last used")
+			// Continue with refresh even if this fails.
+		}
+		return nil
 	}
 
-	// Update session last used time
-	if err := s.sessionRepo.UpdateSessionLastUsed(ctx, session.ID, time.Now()); err != nil {
-		s.logger.LogAuditError(user.ID.String(), "refresh_access_token", "failed", "Failed to update session last used", err)
-		s.logger.WithError(err).Warn("Token refresh failed: could not update session last used")
-		// Continue with refresh even if this fails.
+	if s.auditService != nil {
+		// A new access token is handed out only after its attempt row is
+		// written. A failed write returns ErrAuditUnavailable.
+		err = auditServices.WithCritical(ctx, s.auditService, auditServices.AuditEvent{
+			UserID: user.ID.String(), Action: "refresh_access_token",
+			Source: "system", ResourceType: "session", ResourceID: session.ID.String(),
+		}, mint)
+	} else {
+		err = mint(ctx)
+		if err == nil {
+			s.logger.LogAuditInfo(user.ID.String(), "refresh_access_token", "success", "Access token refreshed successfully")
+		}
+	}
+	if err != nil {
+		if errors.Is(err, auditServices.ErrAuditUnavailable) {
+			s.logger.WithField("session_id", session.ID.String()).Error("Token refresh refused: audit unavailable")
+		}
+		return nil, err
 	}
 
 	// For now, we'll keep the same refresh token (no rotation).
 	// In a production system, you might want to implement refresh token rotation.
-
-	// Log successful token refresh
-	s.logger.LogAuditInfo(user.ID.String(), "refresh_access_token", "success", "Access token refreshed successfully")
 	s.logger.WithFields(logrus.Fields{
 		"user_id":    user.ID.String(),
 		"username":   user.Username,
