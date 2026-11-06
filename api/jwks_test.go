@@ -63,9 +63,11 @@ type rotatableStubProvider struct {
 	rotateKID   string
 	rotateUntil string
 	rotateErr   error
+	rotateCalls int
 }
 
 func (r *rotatableStubProvider) Rotate() (string, string, error) {
+	r.rotateCalls++
 	return r.rotateKID, r.rotateUntil, r.rotateErr
 }
 
@@ -377,6 +379,8 @@ func TestRotateJWKS_NonAdmin_Returns403(t *testing.T) {
 func TestRotateJWKS_Success_RecordsAuditEvent(t *testing.T) {
 	provider := &rotatableStubProvider{rotateKID: "new-kid", rotateUntil: "2026-01-01T00:00:00Z"}
 	mockAudit := &testutils.MockAuditService{}
+	// The handler may write a critical attempt row first.
+	mockAudit.On("RecordCritical", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
 		return e.Action == "jwks_rotate" && e.Outcome == "success" && e.ResourceID == "new-kid"
 	})).Return(nil)

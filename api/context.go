@@ -16,6 +16,7 @@ import (
 	"rocketvault/internal/logging"
 	"rocketvault/internal/middleware"
 	"rocketvault/internal/retry"
+	auditServices "rocketvault/internal/services/audit"
 	authServices "rocketvault/internal/services/auth"
 	certServices "rocketvault/internal/services/certificates"
 	keyServices "rocketvault/internal/services/keys"
@@ -169,6 +170,10 @@ func (c *Context) logInternalError(err error) {
 // A plain 500 also always carries the fixed internalErrorDetail, and the real
 // error is logged server-side keyed by the request id.
 func (c *Context) SetInternalError(err error) {
+	if errors.Is(err, auditServices.ErrAuditUnavailable) {
+		c.SetAuditUnavailable(err)
+		return
+	}
 	if err != nil && (errors.Is(err, retry.ErrCircuitBreakerOpen) || errors.Is(err, retry.ErrMaxRetriesExceeded)) {
 		c.Err = common.NewAppError("api.context.set_service_unavailable",
 			"Service temporarily unavailable, please retry", nil, "", http.StatusServiceUnavailable)
@@ -179,6 +184,29 @@ func (c *Context) SetInternalError(err error) {
 	c.logInternalError(err)
 	c.Err = common.NewAppError("api.context.set_internal_error", "Internal server error", nil,
 		internalErrorDetail, http.StatusInternalServerError)
+}
+
+// auditUnavailableMessage is the only text a client sees when a critical
+// audit write fails. The cause stays in server logs.
+const auditUnavailableMessage = "audit unavailable"
+
+// SetAuditUnavailable sets a 503 for an operation refused because its
+// critical audit row could not be written. The cause is logged, never sent.
+func (c *Context) SetAuditUnavailable(err error) {
+	c.logInternalError(err)
+	c.Err = common.NewAppError("api.context.set_audit_unavailable",
+		auditUnavailableMessage, nil, "", http.StatusServiceUnavailable)
+}
+
+// recordCriticalAttempt writes the attempt row for a critical operation
+// before it runs. It returns the write error, or nil when no audit service is
+// wired (test doubles only; the container always wires one).
+func recordCriticalAttempt(r *http.Request, svc auditServices.AuditServiceInterface, ev auditServices.AuditEvent) error {
+	if svc == nil {
+		return nil
+	}
+	ev.Outcome = "attempt"
+	return svc.RecordCritical(r.Context(), ev)
 }
 
 // ApiHandler wraps public (unauthenticated) handlers.

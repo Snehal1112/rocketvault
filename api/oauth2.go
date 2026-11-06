@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -102,6 +103,17 @@ func (api *API) tokenHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The credentials are valid, but the token is handed out only after its
+	// attempt row is written.
+	auditSvcInst := api.App.ServiceContainer.GetAuditService()
+	if err := recordCriticalAttempt(r, auditSvcInst, oauth2TokenAuditEvent(r, clientID)); err != nil {
+		if api.Logger != nil {
+			api.Logger.WithField("action", "oauth2_token_issue").Error("Token refused: audit unavailable")
+		}
+		writeTokenError(w, http.StatusServiceUnavailable, "temporarily_unavailable", auditUnavailableMessage)
+		return
+	}
+
 	api.recordOAuth2TokenAudit(r, clientID, "success")
 
 	writeJSONStatus(w, http.StatusOK, tokenResp)
@@ -130,7 +142,7 @@ func sanitizeAuditClientID(s string) string {
 	return b.String()
 }
 
-// recordOAuth2TokenAudit writes an audit entry for a token-issuance attempt.
+// recordOAuth2TokenAudit writes the result row for a token-issuance attempt.
 // clientID is the caller-supplied identifier — safe to log even on failure
 // since the response never reveals whether the ID or the secret was wrong
 // (RFC 6749 §5.2 non-enumerating error). Swallows a nil audit service.
@@ -145,16 +157,23 @@ func (api *API) recordOAuth2TokenAudit(r *http.Request, clientID, outcome string
 	if svc == nil {
 		return
 	}
+	ev := oauth2TokenAuditEvent(r, clientID)
+	ev.Outcome = outcome
+	// The row must survive a client that disconnects mid-response.
+	_ = svc.RecordEvent(context.WithoutCancel(r.Context()), ev)
+}
+
+// oauth2TokenAuditEvent builds the token-issue event without an outcome.
+func oauth2TokenAuditEvent(r *http.Request, clientID string) auditSvc.AuditEvent {
 	clientID = sanitizeAuditClientID(clientID)
-	_ = svc.RecordEvent(r.Context(), auditSvc.AuditEvent{
+	return auditSvc.AuditEvent{
 		UserID:       clientID,
 		Action:       "oauth2_token_issue",
-		Outcome:      outcome,
 		Source:       "api",
 		ResourceType: "oauth2_client",
 		ResourceID:   clientID,
 		IPAddress:    middleware.ExtractClientIP(r),
-	})
+	}
 }
 
 // extractClientCredentials resolves client_id and client_secret from the request.
@@ -189,22 +208,41 @@ func writeTokenError(w http.ResponseWriter, status int, errCode, description str
 	})
 }
 
-// recordServiceAccountAudit writes an audit entry for a service-account
+// recordServiceAccountAudit writes the result row for a service-account
 // lifecycle action. Swallows a nil audit service.
 func recordServiceAccountAudit(c *Context, r *http.Request, action, resourceID, outcome string) {
 	svc := c.App.ServiceContainer.GetAuditService()
 	if svc == nil {
 		return
 	}
-	_ = svc.RecordEvent(r.Context(), auditSvc.AuditEvent{
+	ev := serviceAccountAuditEvent(c, r, action, resourceID)
+	ev.Outcome = outcome
+	// The row must survive a client that disconnects after the change.
+	_ = svc.RecordEvent(context.WithoutCancel(r.Context()), ev)
+}
+
+// beginServiceAccountAudit writes the attempt row for a service-account
+// change. It returns false, with a 503 set on c, when the row cannot be
+// written, and the change must not run.
+func beginServiceAccountAudit(c *Context, r *http.Request, action, resourceID string) bool {
+	ev := serviceAccountAuditEvent(c, r, action, resourceID)
+	if err := recordCriticalAttempt(r, c.App.ServiceContainer.GetAuditService(), ev); err != nil {
+		c.SetAuditUnavailable(err)
+		return false
+	}
+	return true
+}
+
+// serviceAccountAuditEvent builds a service-account event without an outcome.
+func serviceAccountAuditEvent(c *Context, r *http.Request, action, resourceID string) auditSvc.AuditEvent {
+	return auditSvc.AuditEvent{
 		UserID:       c.Claims.UserID,
 		Action:       action,
-		Outcome:      outcome,
 		Source:       "api",
 		ResourceType: "oauth2_client",
 		ResourceID:   resourceID,
 		IPAddress:    middleware.ExtractClientIP(r),
-	})
+	}
 }
 
 // ─── Service-account management handlers (authenticated) ─────────────────────
@@ -226,6 +264,10 @@ func createServiceAccount(c *Context, w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 		c.SetInvalidParam("name is required")
+		return
+	}
+
+	if !beginServiceAccountAudit(c, r, "service_account_create", "") {
 		return
 	}
 
@@ -307,6 +349,10 @@ func deleteServiceAccount(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !beginServiceAccountAudit(c, r, "service_account_delete", id.String()) {
+		return
+	}
+
 	svc := c.App.ServiceContainer.GetOAuth2Service()
 	if err := svc.DeleteClient(r.Context(), id); err != nil {
 		recordServiceAccountAudit(c, r, "service_account_delete", id.String(), "failure")
@@ -330,6 +376,10 @@ func rotateServiceAccountSecret(c *Context, w http.ResponseWriter, r *http.Reque
 
 	id, ok := resourceID(c, c.Params.ServiceAccountID, "service_account_id")
 	if !ok {
+		return
+	}
+
+	if !beginServiceAccountAudit(c, r, "service_account_rotate_secret", id.String()) {
 		return
 	}
 

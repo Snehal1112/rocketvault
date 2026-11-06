@@ -34,6 +34,7 @@ import (
 
 	"rocketvault/common"
 	"rocketvault/internal/container"
+	auditServices "rocketvault/internal/services/audit"
 	authServices "rocketvault/internal/services/auth"
 	userService "rocketvault/internal/services/users"
 	"rocketvault/model"
@@ -434,6 +435,11 @@ func loginUser(c *Context, w http.ResponseWriter, r *http.Request) {
 	result, err := authSvc.AuthenticateUser(r.Context(), req.Username, req.Password, req.TOTPCode)
 	if err != nil {
 		c.Logger.Printf("Login failed for user %s: %v", req.Username, err)
+		// The credentials may have been right, but no session was issued.
+		if errors.Is(err, auditServices.ErrAuditUnavailable) {
+			c.SetAuditUnavailable(err)
+			return
+		}
 		// A throttled account gets 429 and a Retry-After rounded up to the
 		// second. The body is the same for every username, known or not.
 		var throttled *authServices.ThrottledError

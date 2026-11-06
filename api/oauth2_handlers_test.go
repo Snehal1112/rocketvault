@@ -393,6 +393,8 @@ func TestTokenHandler_Success_RecordsAuditEvent(t *testing.T) {
 		AccessToken: "tok", TokenType: "Bearer", ExpiresIn: 3600,
 	}, nil)
 	mockAudit := &testutils.MockAuditService{}
+	// The handler may write a critical attempt row first.
+	mockAudit.On("RecordCritical", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
 		return e.Action == "oauth2_token_issue" && e.Outcome == "success" && e.ResourceID == "good_client"
 	})).Return(nil)
@@ -415,6 +417,8 @@ func TestTokenHandler_InvalidCreds_RecordsFailureAuditEvent(t *testing.T) {
 	svc := &mockOAuth2Svc{}
 	svc.On("IssueToken", mock.Anything, "bad_client", "bad_sec").Return(nil, errors.New("invalid"))
 	mockAudit := &testutils.MockAuditService{}
+	// The handler may write a critical attempt row first.
+	mockAudit.On("RecordCritical", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
 		return e.Action == "oauth2_token_issue" && e.Outcome == "failure" && e.ResourceID == "bad_client"
 	})).Return(nil)
@@ -440,6 +444,8 @@ func TestTokenHandler_OversizedClientID_TruncatedInAuditEvent(t *testing.T) {
 	svc := &mockOAuth2Svc{}
 	svc.On("IssueToken", mock.Anything, oversized, "bad_sec").Return(nil, errors.New("invalid"))
 	mockAudit := &testutils.MockAuditService{}
+	// The handler may write a critical attempt row first.
+	mockAudit.On("RecordCritical", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
 		return e.UserID == truncated && e.ResourceID == truncated &&
 			len(e.UserID) == maxAuditClientIDLen && len(e.ResourceID) == maxAuditClientIDLen
@@ -621,6 +627,8 @@ func TestCreateSA_Success_RecordsAuditEvent(t *testing.T) {
 		ID: clientID, Name: "svcname", Enabled: true, CreatedAt: now,
 	}, "plain-secret", nil)
 	mockAudit := &testutils.MockAuditService{}
+	// The handler may write a critical attempt row first.
+	mockAudit.On("RecordCritical", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
 		return e.Action == "service_account_create" && e.Outcome == "success" && e.ResourceID == clientID.String()
 	})).Return(nil)
@@ -796,6 +804,8 @@ func TestDeleteSA_Success_RecordsAuditEvent(t *testing.T) {
 	svc := &mockOAuth2Svc{}
 	svc.On("DeleteClient", mock.Anything, saID).Return(nil)
 	mockAudit := &testutils.MockAuditService{}
+	// The handler may write a critical attempt row first.
+	mockAudit.On("RecordCritical", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
 		return e.Action == "service_account_delete" && e.Outcome == "success" && e.ResourceID == saID.String()
 	})).Return(nil)
@@ -877,6 +887,8 @@ func TestRotateSA_Success_RecordsAuditEvent(t *testing.T) {
 	svc := &mockOAuth2Svc{}
 	svc.On("RotateSecret", mock.Anything, saID).Return("new-secret", nil)
 	mockAudit := &testutils.MockAuditService{}
+	// The handler may write a critical attempt row first.
+	mockAudit.On("RecordCritical", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
 		return e.Action == "service_account_rotate_secret" && e.Outcome == "success" && e.ResourceID == saID.String()
 	})).Return(nil)
@@ -923,6 +935,8 @@ func TestTokenHandler_ControlCharsInClientIDAreStrippedFromAuditEvent(t *testing
 	// The lookup still receives the original value.
 	svc.On("IssueToken", mock.Anything, "evil\nname", "s").Return(nil, errors.New("invalid"))
 	mockAudit := &testutils.MockAuditService{}
+	// The handler may write a critical attempt row first.
+	mockAudit.On("RecordCritical", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAudit.On("RecordEvent", mock.Anything, mock.MatchedBy(func(e auditServices.AuditEvent) bool {
 		return e.UserID == "evilname" && e.ResourceID == "evilname"
 	})).Return(nil)

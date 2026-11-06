@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"rocketvault/common"
@@ -59,6 +60,12 @@ func rotateJWKS(c *Context, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The signing key rotates only after its attempt row is written.
+	if err := recordCriticalAttempt(r, c.App.ServiceContainer.GetAuditService(), jwksRotateAuditEvent(c, r, "")); err != nil {
+		c.SetAuditUnavailable(err)
+		return
+	}
+
 	newKID, overlapUntil, err := rotatable.Rotate()
 	if err != nil {
 		recordJWKSRotateAudit(c, r, "", "failure")
@@ -77,23 +84,30 @@ func rotateJWKS(c *Context, w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// recordJWKSRotateAudit writes an audit entry for a signing-key rotation attempt.
-// Swallows a nil audit service (test doubles, or a container without one wired) —
-// audit failures must never block vault operations.
+// recordJWKSRotateAudit writes the result row for a signing-key rotation.
+// Swallows a nil audit service (test doubles only). The attempt row, written
+// before the rotation, is the one that blocks it.
 func recordJWKSRotateAudit(c *Context, r *http.Request, newKID, outcome string) {
 	svc := c.App.ServiceContainer.GetAuditService()
 	if svc == nil {
 		return
 	}
-	_ = svc.RecordEvent(r.Context(), auditSvc.AuditEvent{
+	ev := jwksRotateAuditEvent(c, r, newKID)
+	ev.Outcome = outcome
+	// The row must survive a client that disconnects after the rotation.
+	_ = svc.RecordEvent(context.WithoutCancel(r.Context()), ev)
+}
+
+// jwksRotateAuditEvent builds a rotation event without an outcome.
+func jwksRotateAuditEvent(c *Context, r *http.Request, newKID string) auditSvc.AuditEvent {
+	return auditSvc.AuditEvent{
 		UserID:       c.Claims.UserID,
 		Action:       "jwks_rotate",
-		Outcome:      outcome,
 		Source:       "api",
 		ResourceType: "signing_key",
 		ResourceID:   newKID,
 		IPAddress:    middleware.ExtractClientIP(r),
-	})
+	}
 }
 
 // buildJWKSet converts a slice of PublicKeyInfo into a RFC 7517 JWK Set map.
