@@ -83,6 +83,26 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
+func TestEvaluate_ClaimKeysDifferingInCase_FailClosed(t *testing.T) {
+	p, err := NewExternalUserPolicy(ExternalUserPolicyConfig{
+		JITEnabled: true, RequiredClaims: map[string]string{"groups": "a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Map iteration order is random, so repeat to cover both orders.
+	for i := 0; i < 100; i++ {
+		deny := ExternalIdentity{Claims: map[string]any{"Groups": "a", "groups": "b"}}
+		if err := p.Evaluate(deny, true); reasonOf(t, err) != "claim" {
+			t.Fatalf("conflicting claims must be denied, got %v", err)
+		}
+		allow := ExternalIdentity{Claims: map[string]any{"Groups": "a", "groups": "a"}}
+		if err := p.Evaluate(allow, true); err != nil {
+			t.Fatalf("agreeing claims must be allowed, got %v", err)
+		}
+	}
+}
+
 func TestEvaluate_NilPolicy(t *testing.T) {
 	var p *ExternalUserPolicy
 	if err := p.Evaluate(ExternalIdentity{}, true); reasonOf(t, err) != "jit_disabled" {
@@ -106,6 +126,9 @@ func TestNewExternalUserPolicy_Invalid(t *testing.T) {
 		{"domain with space", ExternalUserPolicyConfig{AllowedEmailDomains: []string{"exa mple.com"}}},
 		{"empty claim key", ExternalUserPolicyConfig{RequiredClaims: map[string]string{"": "x"}}},
 		{"admin role", ExternalUserPolicyConfig{DefaultRole: "admin"}},
+		{"domain with star", ExternalUserPolicyConfig{AllowedEmailDomains: []string{"*.example.com"}}},
+		{"domain with scheme", ExternalUserPolicyConfig{AllowedEmailDomains: []string{"https://example.com"}}},
+		{"domain with slash", ExternalUserPolicyConfig{AllowedEmailDomains: []string{"example.com/"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2,9 +2,10 @@
 package api
 
 import (
-	"errors"
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,11 +20,13 @@ import (
 	rvconfig "rocketvault/config"
 	"rocketvault/internal/backup"
 	"rocketvault/internal/cache"
+	"rocketvault/internal/certcache"
 	"rocketvault/internal/crypto"
 	"rocketvault/internal/keycache"
 	"rocketvault/internal/logging"
 	"rocketvault/internal/metrics"
 	"rocketvault/internal/repositories"
+	"rocketvault/internal/retry"
 	auditServices "rocketvault/internal/services/audit"
 	authServices "rocketvault/internal/services/auth"
 	authzServices "rocketvault/internal/services/authorization"
@@ -36,7 +39,6 @@ import (
 	userServices "rocketvault/internal/services/users"
 	vaultServices "rocketvault/internal/services/vaults"
 	"rocketvault/internal/signing"
-	"rocketvault/internal/certcache"
 	"rocketvault/internal/vaultcache"
 	"rocketvault/model"
 )
@@ -505,7 +507,7 @@ func TestOIDCCallback_PolicyDenied_403(t *testing.T) {
 	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
 	userSvc := &mockUserServiceForOIDC{}
 	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.Anything).
-		Return(nil, userServices.ErrExternalUserNotAllowed)
+		Return(nil, fmt.Errorf("%w: %w", retry.ErrNonRetryable, &userServices.NotAllowedError{Reason: "domain"}))
 	authSvc := &mockAuthServiceForOIDC{}
 
 	api := newOIDCHAPI(oidcSvc, userSvc, authSvc)
@@ -514,6 +516,7 @@ func TestOIDCCallback_PolicyDenied_403(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Equal(t, "access denied", strings.TrimSpace(w.Body.String()))
+	assertOIDCCookiesCleared(t, w)
 	authSvc.AssertNotCalled(t, "IssueSessionForUser", mock.Anything, mock.Anything)
 }
 
@@ -532,7 +535,37 @@ func TestOIDCCallback_LookupError_500(t *testing.T) {
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assert.Equal(t, "internal error", strings.TrimSpace(w.Body.String()))
+	assertOIDCCookiesCleared(t, w)
 	authSvc.AssertNotCalled(t, "IssueSessionForUser", mock.Anything, mock.Anything)
+}
+
+func TestOIDCCallback_EmptyStateCookieAndParam_400(t *testing.T) {
+	oidcSvc := &mockOIDCService{}
+	api := newOIDCHAPI(oidcSvc, nil, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=&code=auth-code", nil)
+	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: ""})
+	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
+
+	api.oidcCallbackHandler(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	oidcSvc.AssertNotCalled(t, "HandleCallback", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// assertOIDCCookiesCleared checks all four single-use cookies are expired.
+func assertOIDCCookiesCleared(t *testing.T, w *httptest.ResponseRecorder) {
+	t.Helper()
+	cleared := map[string]bool{}
+	for _, ck := range w.Result().Cookies() {
+		if ck.MaxAge < 0 {
+			cleared[ck.Name] = true
+		}
+	}
+	for _, name := range []string{"oidc_state", "oidc_nonce", "oidc_pkce", "oidc_cli_redirect"} {
+		assert.True(t, cleared[name], "%s must be cleared", name)
+	}
 }
 
 func TestOIDCCallback_PassesEmailAndClaims(t *testing.T) {

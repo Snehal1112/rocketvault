@@ -79,6 +79,37 @@ func TestOIDCPolicyReadsAllKeys(t *testing.T) {
 	assert.Error(t, p.Evaluate(noClaim, true))
 }
 
+func TestOIDCPolicyRequiredClaimsRejectsNonString(t *testing.T) {
+	cases := map[string]any{"bool": true, "number": 5, "list": []any{"a", "b"}}
+	for name, val := range cases {
+		t.Run(name, func(t *testing.T) {
+			v := viper.New()
+			v.Set("oidc.enabled", true)
+			v.Set("oidc.required_claims", map[string]any{"hd": val})
+			_, err := buildExternalUserPolicy(v)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "hd")
+		})
+	}
+}
+
+func TestOIDCPolicyRequiredClaimsTrimsNames(t *testing.T) {
+	v := viper.New()
+	v.Set("oidc.enabled", true)
+	v.Set("oidc.required_claims", map[string]any{" hd ": "example.com"})
+	p, err := buildExternalUserPolicy(v)
+	require.NoError(t, err)
+	assert.NoError(t, p.Evaluate(userServices.ExternalIdentity{Claims: map[string]any{"hd": "example.com"}}, false))
+}
+
+func TestOIDCPolicyRequiredClaimsEmptyMapIsFine(t *testing.T) {
+	v := viper.New()
+	v.Set("oidc.enabled", true)
+	v.Set("oidc.required_claims", map[string]any{})
+	_, err := buildExternalUserPolicy(v)
+	require.NoError(t, err)
+}
+
 func TestOIDCPolicyInvalidConfig(t *testing.T) {
 	v := viper.New()
 	v.Set("oidc.enabled", true)

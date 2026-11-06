@@ -1244,6 +1244,7 @@ func TestFindOrCreateExternalUser_ExistingUser_NotChecked_WhenEnforceOff(t *test
 	})
 	require.NoError(t, err)
 	assert.Equal(t, existing.ID, got.ID)
+	repo.AssertExpectations(t)
 }
 
 func TestFindOrCreateExternalUser_ExistingUser_RefreshesEmail(t *testing.T) {
@@ -1281,7 +1282,11 @@ func TestFindOrCreateExternalUser_EmailRefreshFailure_DoesNotFailLogin(t *testin
 		Provider: model.AuthProviderOIDC, Subject: "sub-10", Email: "a@corp.com",
 	})
 	require.NoError(t, err)
+	require.NotNil(t, got)
 	assert.Equal(t, existing.ID, got.ID)
+	// The stored email stays as the repo returned it.
+	assert.Empty(t, got.Email)
+	repo.AssertExpectations(t)
 }
 
 func TestFindOrCreateExternalUser_NewUser_StoresEmailAndDefaultRole(t *testing.T) {

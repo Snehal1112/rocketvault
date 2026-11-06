@@ -135,7 +135,8 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		cliRedirectURI = validated
 	}
 
-	if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(stateCookie.Value)) != 1 {
+	// An empty cookie must never match an empty state parameter.
+	if stateCookie.Value == "" || subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(stateCookie.Value)) != 1 {
 		http.Error(w, "state mismatch", http.StatusBadRequest)
 		return
 	}

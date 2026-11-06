@@ -313,7 +313,11 @@ func (s *oidcService) HandleCallback(ctx context.Context, code, expectedNonce, v
 		return err
 	}); uiErr == nil {
 		var uiClaims oidcClaims
-		if err := userInfo.Claims(&uiClaims); err == nil {
+		if err := userInfo.Claims(&uiClaims); err == nil && uiClaims.Subject != claims.Subject {
+			// OIDC Core 5.3.2: a userinfo sub that differs must not be used.
+			// The log line never includes claim values.
+			fmt.Fprintln(os.Stderr, "oidc: userinfo subject does not match the id_token subject, ignoring userinfo")
+		} else if err == nil {
 			if preferredUsername == "" {
 				preferredUsername = uiClaims.PreferredUsername
 			}

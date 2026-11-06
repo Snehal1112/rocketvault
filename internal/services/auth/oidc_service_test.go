@@ -629,3 +629,32 @@ func TestHandleCallback_ReturnsRawClaims(t *testing.T) {
 	require.Equal(t, "example.com", identity.Claims["hd"])
 	require.Equal(t, []any{"eng", "ops"}, identity.Claims["groups"])
 }
+
+func TestHandleCallback_UserInfoSubjectMismatch_IgnoresUserInfo(t *testing.T) {
+	f := newCallbackFakeIdP(t)
+	f.idToken = f.signIDTokenWith(t, "client-1", "user-123", "nonce-abc", nil)
+	f.userInfoBody = map[string]any{
+		"sub": "someone-else", "email": "evil@example.com",
+		"email_verified": true, "preferred_username": "evil",
+	}
+	svc := newCallbackTestService(t, f)
+
+	identity, err := svc.HandleCallback(context.Background(), "c", "nonce-abc", "v")
+	require.NoError(t, err)
+	require.Equal(t, "user-123", identity.Subject)
+	require.Empty(t, identity.Email)
+	require.False(t, identity.EmailVerified)
+	require.NotEqual(t, "evil", identity.PreferredUsername)
+}
+
+func TestHandleCallback_UserInfoSubjectMatch_Supplies(t *testing.T) {
+	f := newCallbackFakeIdP(t)
+	f.idToken = f.signIDTokenWith(t, "client-1", "user-123", "nonce-abc", nil)
+	f.userInfoBody = map[string]any{"sub": "user-123", "email": "ui@example.com", "email_verified": true}
+	svc := newCallbackTestService(t, f)
+
+	identity, err := svc.HandleCallback(context.Background(), "c", "nonce-abc", "v")
+	require.NoError(t, err)
+	require.Equal(t, "ui@example.com", identity.Email)
+	require.True(t, identity.EmailVerified)
+}

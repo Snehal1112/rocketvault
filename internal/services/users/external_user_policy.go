@@ -62,7 +62,7 @@ func NewExternalUserPolicy(cfg ExternalUserPolicyConfig) (*ExternalUserPolicy, e
 	domains := make([]string, 0, len(cfg.AllowedEmailDomains))
 	for _, d := range cfg.AllowedEmailDomains {
 		d = strings.ToLower(strings.TrimSpace(d))
-		if d == "" || strings.Contains(d, "@") || strings.IndexFunc(d, unicode.IsSpace) >= 0 {
+		if d == "" || strings.ContainsAny(d, "@*:/") || strings.IndexFunc(d, unicode.IsSpace) >= 0 {
 			return nil, fmt.Errorf("invalid allowed email domain %q", d)
 		}
 		domains = append(domains, d)
@@ -138,26 +138,38 @@ func (p *ExternalUserPolicy) domainAllowed(email string) bool {
 }
 
 // claimMatches finds the claim by name, ignoring case, and matches a string
-// value or a string array member. Other value types never match.
+// value or a string array member. Other value types never match. When several
+// keys differ only in case, all of them must match, so the result never
+// depends on map order.
 func claimMatches(claims map[string]any, name, want string) bool {
+	found := false
 	for k, v := range claims {
 		if !strings.EqualFold(k, name) {
 			continue
 		}
-		switch val := v.(type) {
-		case string:
-			return val == want
-		case []string:
-			for _, s := range val {
-				if s == want {
-					return true
-				}
+		if !claimValueMatches(v, want) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+// claimValueMatches matches a string value or a string array member.
+func claimValueMatches(v any, want string) bool {
+	switch val := v.(type) {
+	case string:
+		return val == want
+	case []string:
+		for _, s := range val {
+			if s == want {
+				return true
 			}
-		case []any:
-			for _, item := range val {
-				if s, ok := item.(string); ok && s == want {
-					return true
-				}
+		}
+	case []any:
+		for _, item := range val {
+			if s, ok := item.(string); ok && s == want {
+				return true
 			}
 		}
 	}
