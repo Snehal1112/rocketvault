@@ -106,7 +106,7 @@ call — see §5).
 - [ ] Wrong password / wrong TOTP / missing TOTP → distinct 403/400s, no user enumeration
 - [ ] Refresh: `POST /users/refresh {"refresh_token":...}` → new token
 - [ ] List sessions: `GET /users/sessions`; revoke one: `DELETE /users/sessions/{id}`; revoke all: `DELETE /users/sessions`
-- [ ] OIDC (**network-dependent** — only if `exchange4all.local` is reachable): `GET /api/v1/oidc/login` → redirect to issuer → complete → `GET /api/v1/oidc/callback` → session issued; confirm `FindOrCreateExternalUser` provisions a least-privilege `user` role on first login
+- [ ] OIDC (**network-dependent** — only if `exchange4all.local` is reachable): `GET /api/v1/oidc/login` → redirect to issuer → complete → `GET /api/v1/oidc/callback` → session issued; with `oidc.jit_enabled: true` set, confirm `FindOrCreateExternalUser` provisions a least-privilege `user` role on first login; with `jit_enabled` left at its default `false`, confirm a first login by a new identity is denied with a generic 403
 - [ ] CLI session cache: `rocketvault users login`, confirm `~/.rocketvault/sessions/<username>.json` written and `current` pointer set; run a bare command with no credential flags and confirm it reuses the cached session; `rocketvault users logout` clears it
 - [ ] **Known gotcha** (e2e guide Auth §Findings 1, 6): self-service `GET/PUT /users/{own_id}` and `/users/sessions*` were reported completely unreachable over REST for non-admin roles (RBAC middleware blocks before the handler's own ownership check runs), and session revocation had no ownership check (any admin could revoke any user's session). Worth re-confirming current status with a non-admin test user.
 

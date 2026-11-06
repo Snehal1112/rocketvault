@@ -38,7 +38,11 @@ when <code>oidc.jit_enabled: true</code>.</li>
 <ul>
 <li><code>jit_enabled</code> (default <code>false</code>): allow creating a user for a new identity.</li>
 <li><code>allowed_email_domains</code> (default <code>[]</code>): when set, the email domain must
-match one entry, case-insensitive. A missing email is denied.</li>
+match one entry, case-insensitive, and the provider must send
+<code>email_verified: true</code>. A missing email is denied. Some providers (for
+example Microsoft Entra ID) do not send <code>email_verified</code> in ID tokens by
+default, so a domain list denies everyone there until the claim is
+configured.</li>
 <li><code>require_email_verified</code> (default <code>false</code>): the provider must report
 <code>email_verified</code> as true.</li>
 <li><code>required_claims</code> (default <code>{}</code>): each named claim must match the
