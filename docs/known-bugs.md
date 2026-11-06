@@ -6230,12 +6230,13 @@ write should fail startup rather than hand out the key unaudited.
 
 ---
 
-### B106 — SOC 2 report counts double count critical operations
+### B106 — SOC 2 and GDPR report counts double counted critical operations
 
 **Status**: Fixed 2026-11-06 (GitHub: to be filed)
 **Severity**: Low — report numbers are inflated; no data is lost.
 **Files**: `internal/services/audit/compliance_report_service.go`
-(`GenerateSOC2Report`), `internal/services/audit/critical.go`
+(`GenerateSOC2Report`, `GenerateGDPRReport`), `internal/services/audit/critical.go`,
+`internal/repositories/audit_repository.go` (`buildAuditWhere`)
 
 **Symptom**: a critical operation writes an `attempt` row, then a `success` or
 `failure` row with the same action, user and resource. `GenerateSOC2Report`
@@ -6245,6 +6246,8 @@ and `DataAccessEvents` (resource type `secret`) count both rows. For logins
 (`authenticate*` actions) the `attempt` row has an outcome other than
 `success`, so every login adds one to `AuthFailures`, and the `success` row
 adds one to `AuthSuccesses`. `AdminActions` counts both `delete_user` rows.
+`GenerateGDPRReport` counted both rows in `TotalEvents`, `DataAccess`,
+`Deletions` and `AuthEvents`.
 
 **Root cause**: `GenerateSOC2Report` does not look at `attempt` outcomes.
 Before the audit-first change those operations wrote one row.
@@ -6253,9 +6256,14 @@ Before the audit-first change those operations wrote one row.
 `attempt`, so the result row is counted once and an attempt is never an auth
 failure. `QueryLogs` and the audit log listings still return attempt rows, and
 chain verification still covers them; the GDPR `Events` list keeps them too.
+The GDPR `TotalEvents` comes from a separate `Limit` 1 query with the new
+`ExcludeOutcome` audit filter set to `attempt` (NULL-safe: rows with no outcome
+are kept), so it is exact whatever page the attempt rows would fall on.
 
 **Tests**: `TestComplianceReportService_SOC2Report_IgnoresAttemptRows`,
-`TestComplianceReportService_GDPRReport_IgnoresAttemptRows`.
+`TestComplianceReportService_GDPRReport_IgnoresAttemptRows`,
+`TestComplianceReportService_GDPRReport_TotalExcludesAttemptsBeyondPage`,
+`TestAuditRepository_QueryAuditLogs_ExcludeOutcome`.
 
 ---
 

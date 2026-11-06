@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>v4.12.0 — Audit reliability — RocketVault Docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="../assets/doc-theme.css"/>
+</head>
+<body>
+<header class="doc-header">
+  <a class="doc-back" href="../admin-manual.html">&larr; Admin Manual</a>
+  <div class="doc-brand">
+    <div class="doc-mark" aria-hidden="true"></div>
+    <span class="doc-kicker">RocketVault Docs</span>
+  </div>
+  <h1 class="doc-title">v4.12.0 — Audit reliability</h1>
+  <div class="doc-meta"><span class="doc-chip">docs/release-notes/v4.12.0-audit-reliability.md</span></div>
+  <hr/>
+</header>
+<nav class="doc-toc"><div class="doc-toc-label">On this page</div><ol><li><a href="#breaking-changes">Breaking changes</a></li><li><a href="#what-changed">What changed</a></li><li><a href="#upgrade-procedure">Upgrade procedure</a></li><li><a href="#what-did-not-change">What did not change</a></li><li><a href="#known-issues">Known issues</a></li></ol></nav>
+<main class="doc">
+<blockquote>
+<p>The version number is provisional and may change before tagging.</p>
+</blockquote>
+<p>The audit log now fails closed for critical operations, keeps one hash chain
+across any number of replicas, and names the row where verification fails. It
+fixes § B98 (GitHub #64), § B102, § B103 and § B106.</p>
+<h2 id="breaking-changes">Breaking changes</h2>
+<ol>
+<li><strong>Critical operations are refused when their audit row cannot be written.</strong>
+Each one now writes an <code>attempt</code> row first and runs only if that write
+succeeds. If the audit store is unavailable the API answers <code>503</code> with the
+body <code>audit unavailable</code>, and nothing changes. The operations are: login
+and token issue and refresh (including service accounts and OIDC), JWKS
+rotation, secret, key and certificate exports, purges (including the
+scheduled soft-delete purge and the audit retention purge), user and vault
+delete, key create, import, rotate, delete, wrap and unwrap, secret
+rotation, role grant and revoke, and signing key generation under
+<code>self_pki</code>. After the operation runs, a second row with the same action
+records <code>success</code> or <code>failure</code>. Scheduled rotation and purge skip the item
+and retry on the next tick. Events that are not critical stay best effort.</li>
+<li><strong><code>self_pki</code> can fail startup.</strong> On first boot, or after the signing key is
+regenerated because it could not be decrypted, the provider writes a
+<code>signing_key_generate</code> row before it stores the key. If that write fails,
+the server does not start (<code>audit unavailable</code>). Loading an existing key is
+unchanged.</li>
+</ol>
+<h2 id="what-changed">What changed</h2>
+<ul>
+<li><strong>Chain <code>seq</code> and head table.</strong> <code>audit_logs</code> has a new <code>seq</code> column (unique
+index) and a new single-row <code>audit_chain_head</code> table holds the last <code>seq</code>
+and hash. Each write locks the head row, assigns the next <code>seq</code> and inserts
+in one transaction, so replicas no longer fork the chain and a failed read
+no longer resets it (§ B102, § B103). <code>GetLastHash</code> and the in-process mutex
+are removed.</li>
+<li><strong>New integrity fields.</strong> <code>GET /api/v1/audit/logs</code>, the CLI and the MCP
+<code>query_audit_log</code> tool report <code>integrity_break_seq</code> and
+<code>integrity_break_reason</code> (<code>gap</code> or <code>hash_mismatch</code>) when <code>integrity_ok</code> is
+<code>false</code>. Both fields are absent while the chain verifies. A filtered query
+can still report a false break (§ B104).</li>
+<li><strong>New metric.</strong> <code>rocketvault_audit_write_failures_total{action}</code> counts audit
+rows that could not be written. Suggested alert:
+<code>increase(rocketvault_audit_write_failures_total[5m]) &gt; 0</code>.</li>
+<li><strong>Outcome for denied rows.</strong> Rows written through the logger now get an
+outcome from their status: <code>success</code>, <code>failure</code>, <code>denied</code> or <code>warning</code>
+(§ B98). <code>rocketvault audit logs --outcome denied</code> selects refusals, which
+fixes the workaround in the v4.11.0 upgrade notes.</li>
+<li><strong><code>DeleteUser</code> records the acting admin.</strong> The <code>delete_user</code> row used to
+name the deleted user as the actor. It now names the admin or user who
+deleted the account, and <code>resource_id</code> is the deleted user.</li>
+<li><strong>SOC 2 and GDPR reports</strong> skip <code>attempt</code> rows, so critical operations are
+counted once (§ B106). Listings still show them.</li>
+<li><strong>Scheduled secret rotation</strong> records <code>system</code> as the actor.</li>
+</ul>
+<h2 id="upgrade-procedure">Upgrade procedure</h2>
+<ol>
+<li>Add the alert above before you upgrade.</li>
+<li>Upgrade. The migration runs on start: it adds the <code>seq</code> column and index,
+creates <code>audit_chain_head</code>, and seeds it from the newest existing row. Rows
+from before the upgrade keep the old hash formula and have no <code>seq</code>. The
+first new row is <code>seq</code> 1.</li>
+<li>If you use <code>self_pki</code>, make sure the database accepts writes before the
+first start, or the server will not come up.</li>
+</ol>
+<h2 id="what-did-not-change">What did not change</h2>
+<ul>
+<li>Existing audit rows are not rewritten.</li>
+<li>Authorization and the audit query routes are unchanged.</li>
+<li><code>/api/v1/health/*</code> does not check the audit store.</li>
+</ul>
+<h2 id="known-issues">Known issues</h2>
+<ul>
+<li><strong>B104</strong>: queries filtered by action, outcome, user or resource can report
+<code>gap</code> or <code>hash_mismatch</code> on a valid chain.</li>
+<li><strong>B105</strong>: first-boot signing-key generation under the default
+<code>jwt.key_source: os_store</code> is not written to the audit chain.</li>
+</ul>
+
+</main>
+<footer class="doc-footer"><a href="../admin-manual.html">&larr; Back to the Admin Manual</a></footer>
+<script src="../assets/doc-theme.js"></script>
+</body>
+</html>

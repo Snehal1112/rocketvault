@@ -47,6 +47,7 @@ var docsList = []docEntry{
 	{"docs/release-notes/v4.10.0-authorization-policy-and-audit.md", "docs/release-notes/v4.10.0-authorization-policy-and-audit.html"},
 	{"docs/release-notes/v4.11.0-certificate-restore-renewal-isolation.md", "docs/release-notes/v4.11.0-certificate-restore-renewal-isolation.html"},
 	{"docs/release-notes/v4.12.0-oidc-jit-policy.md", "docs/release-notes/v4.12.0-oidc-jit-policy.html"},
+	{"docs/release-notes/v4.12.0-audit-reliability.md", "docs/release-notes/v4.12.0-audit-reliability.html"},
 	{"docs/runbooks/hsm-pin-rotation.md", "docs/runbooks/hsm-pin-rotation.html"},
 	{"docs/runbooks/master-key-rotation.md", "docs/runbooks/master-key-rotation.html"},
 	{"docs/usage-guide.md", "docs/usage-guide.html"},
