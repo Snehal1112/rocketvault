@@ -2,12 +2,14 @@ package api
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"golang.org/x/oauth2"
 
 	userServices "rocketvault/internal/services/users"
 	"rocketvault/model"
@@ -16,6 +18,7 @@ import (
 const (
 	oidcStateCookie       = "oidc_state"
 	oidcNonceCookie       = "oidc_nonce"
+	oidcPKCECookie        = "oidc_pkce"
 	oidcCLIRedirectCookie = "oidc_cli_redirect"
 	oidcCookieMaxAge      = 5 * time.Minute
 )
@@ -48,8 +51,8 @@ func (api *API) InitOIDC() {
 }
 
 // oidcLoginHandler redirects the caller to the configured OIDC provider's
-// authorization endpoint, having first stashed a random state and nonce
-// (and, for the CLI loopback flow, a validated cli_redirect_uri) in
+// authorization endpoint, having first stashed a random state, nonce and
+// PKCE verifier (and, for the CLI loopback flow, a validated cli_redirect_uri) in
 // short-lived cookies for oidcCallbackHandler to verify.
 func (api *API) oidcLoginHandler(w http.ResponseWriter, r *http.Request) {
 	svc := api.App.ServiceContainer.GetOIDCService()
@@ -77,11 +80,13 @@ func (api *API) oidcLoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	setOIDCCookie(w, oidcStateCookie, state)
 	setOIDCCookie(w, oidcNonceCookie, nonce)
+	verifier := oauth2.GenerateVerifier()
+	setOIDCCookie(w, oidcPKCECookie, verifier)
 	if cliRedirectURI != "" {
 		setOIDCCookie(w, oidcCLIRedirectCookie, cliRedirectURI)
 	}
 
-	http.Redirect(w, r, svc.AuthCodeURL(state, nonce), http.StatusFound)
+	http.Redirect(w, r, svc.AuthCodeURL(state, nonce, verifier), http.StatusFound)
 }
 
 // oidcCallbackHandler completes the authorization code flow: verifies
@@ -97,6 +102,11 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The cookies are single-use. Expire them up front, before any response
+	// write, so every return path below clears them (headers set after a
+	// write would be lost).
+	clearOIDCCookies(w)
+
 	stateCookie, err := r.Cookie(oidcStateCookie)
 	if err != nil {
 		http.Error(w, "missing or expired oidc_state cookie", http.StatusBadRequest)
@@ -105,6 +115,12 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	nonceCookie, err := r.Cookie(oidcNonceCookie)
 	if err != nil {
 		http.Error(w, "missing or expired oidc_nonce cookie", http.StatusBadRequest)
+		return
+	}
+
+	pkceCookie, err := r.Cookie(oidcPKCECookie)
+	if err != nil {
+		http.Error(w, "missing or expired oidc_pkce cookie", http.StatusBadRequest)
 		return
 	}
 
@@ -118,7 +134,7 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		cliRedirectURI = validated
 	}
 
-	if r.URL.Query().Get("state") != stateCookie.Value {
+	if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(stateCookie.Value)) != 1 {
 		http.Error(w, "state mismatch", http.StatusBadRequest)
 		return
 	}
@@ -129,7 +145,7 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	identity, err := svc.HandleCallback(r.Context(), code, nonceCookie.Value)
+	identity, err := svc.HandleCallback(r.Context(), code, nonceCookie.Value, pkceCookie.Value)
 	if err != nil {
 		logBypassError(r, "callback", err)
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
@@ -163,10 +179,6 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	clearOIDCCookie(w, oidcStateCookie)
-	clearOIDCCookie(w, oidcNonceCookie)
-	clearOIDCCookie(w, oidcCLIRedirectCookie)
 
 	response := model.LoginResponse{
 		Token:        result.Token,
@@ -209,6 +221,13 @@ func setOIDCCookie(w http.ResponseWriter, name, value string) {
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+// clearOIDCCookies expires every single-use cookie the login flow sets.
+func clearOIDCCookies(w http.ResponseWriter) {
+	for _, name := range []string{oidcStateCookie, oidcNonceCookie, oidcPKCECookie, oidcCLIRedirectCookie} {
+		clearOIDCCookie(w, name)
+	}
 }
 
 func clearOIDCCookie(w http.ResponseWriter, name string) {

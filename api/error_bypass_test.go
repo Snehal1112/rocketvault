@@ -30,12 +30,13 @@ func runRotateWithFailingProvider(t *testing.T, rotateErr string) *httptest.Resp
 func runOIDCCallbackWithHandleCallbackError(t *testing.T, cbErr string) *httptest.ResponseRecorder {
 	t.Helper()
 	oidcSvc := &mockOIDCService{}
-	oidcSvc.On("HandleCallback", mock.Anything, "x", "nonce-1").Return(nil, errors.New(cbErr))
+	oidcSvc.On("HandleCallback", mock.Anything, "x", "nonce-1", "verifier-1").Return(nil, errors.New(cbErr))
 	api := newOIDCHAPI(oidcSvc, nil, nil)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/oidc/callback?state=expected&code=x", nil)
 	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
 	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
 
 	api.oidcCallbackHandler(w, r)
 	return w
