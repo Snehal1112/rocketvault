@@ -15,4 +15,5 @@ type AuditLog struct {
 	Outcome      string
 	Source       string
 	PrevHash     string
+	Seq          *int64
 }

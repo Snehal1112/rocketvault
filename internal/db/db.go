@@ -7,6 +7,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -204,6 +205,9 @@ func (d *DBRepository) SetupSchema(db *sql.DB, dialect Dialect) error {
 	}
 	if err := d.seedAuditConfig(db); err != nil {
 		return fmt.Errorf("failed to seed audit config: %w", err)
+	}
+	if err := d.seedAuditChainHead(db); err != nil {
+		return fmt.Errorf("failed to seed audit chain head: %w", err)
 	}
 	// Seed the default vault before finalizing indexes so the row exists.
 	if err := d.seedDefaultVault(db); err != nil {
@@ -586,7 +590,13 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			ip_address TEXT,
 			outcome TEXT,
 			source TEXT,
-			prev_hash TEXT
+			prev_hash TEXT,
+			seq BIGINT
+		);
+		CREATE TABLE IF NOT EXISTS audit_chain_head (
+			id INT PRIMARY KEY CHECK (id = 1),
+			last_seq BIGINT NOT NULL,
+			last_hash TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
 		CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
@@ -978,6 +988,9 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 		"ALTER TABLE audit_logs ADD COLUMN outcome TEXT",
 		"ALTER TABLE audit_logs ADD COLUMN source TEXT",
 		"ALTER TABLE audit_logs ADD COLUMN prev_hash TEXT",
+		// Audit chain ordering: a unique per-row sequence number.
+		"ALTER TABLE audit_logs ADD COLUMN seq BIGINT",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_audit_logs_seq ON audit_logs(seq)",
 		// Indexes on the enriched audit_logs columns. These must run AFTER the
 		// ALTER TABLE statements above so the columns exist on upgraded databases.
 		"CREATE INDEX IF NOT EXISTS idx_audit_logs_outcome ON audit_logs(outcome)",
@@ -1456,6 +1469,26 @@ func (d *DBRepository) seedAuditConfig(db *sql.DB) error {
 				return fmt.Errorf("failed to seed audit_config key %q: %w", k, err)
 			}
 		}
+	}
+	return nil
+}
+
+// seedAuditChainHead creates the single audit_chain_head row if it is absent.
+// The hash comes from the newest legacy audit row, so the chain continues
+// across the upgrade. The sequence starts at 0. Safe to call on every startup.
+func (d *DBRepository) seedAuditChainHead(db *sql.DB) error {
+	var lastHash string
+	err := db.QueryRow(
+		"SELECT COALESCE(prev_hash, '') FROM audit_logs ORDER BY timestamp DESC, id DESC LIMIT 1",
+	).Scan(&lastHash)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to read newest audit row: %w", err)
+	}
+	insertSQL := d.dialect.Rebind(d.dialect.UpsertIgnore(
+		"audit_chain_head", "id, last_seq, last_hash", "?, ?, ?", "id",
+	))
+	if _, err := db.Exec(insertSQL, 1, 0, lastHash); err != nil {
+		return fmt.Errorf("failed to seed audit_chain_head: %w", err)
 	}
 	return nil
 }
