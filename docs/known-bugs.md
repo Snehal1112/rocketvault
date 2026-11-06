@@ -6232,7 +6232,7 @@ write should fail startup rather than hand out the key unaudited.
 
 ### B106 — SOC 2 report counts double count critical operations
 
-**Status**: Open (GitHub: to be filed)
+**Status**: Fixed 2026-11-06 (GitHub: to be filed)
 **Severity**: Low — report numbers are inflated; no data is lost.
 **Files**: `internal/services/audit/compliance_report_service.go`
 (`GenerateSOC2Report`), `internal/services/audit/critical.go`
@@ -6249,10 +6249,13 @@ adds one to `AuthSuccesses`. `AdminActions` counts both `delete_user` rows.
 **Root cause**: `GenerateSOC2Report` does not look at `attempt` outcomes.
 Before the audit-first change those operations wrote one row.
 
-**Fix recipe**: skip rows with outcome `attempt` in `GenerateSOC2Report`, or
-count them as a separate figure, and add a test with an attempt/success pair.
-The GDPR report counts `AuthEvents` and `Deletions` the same way and needs the
-same change.
+**Fix**: `GenerateSOC2Report` and `GenerateGDPRReport` skip rows with outcome
+`attempt`, so the result row is counted once and an attempt is never an auth
+failure. `QueryLogs` and the audit log listings still return attempt rows, and
+chain verification still covers them; the GDPR `Events` list keeps them too.
+
+**Tests**: `TestComplianceReportService_SOC2Report_IgnoresAttemptRows`,
+`TestComplianceReportService_GDPRReport_IgnoresAttemptRows`.
 
 ---
 
