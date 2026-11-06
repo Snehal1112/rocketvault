@@ -16,7 +16,8 @@ import (
 // internal/db/db.go's createOptimizedSchema. Task 3's drift-guard test
 // cross-checks this map against the live database's real FK constraints on
 // every test run -- if this map goes stale after a schema change, that test
-// fails, not a production restore.
+// fails, not a production restore. Vault-data tables have no FK to users
+// since B101: their user_id is "created by" history only.
 var tableDependencies = map[string][]string{
 	"users":                     {},
 	"vaults":                    {},
@@ -27,11 +28,11 @@ var tableDependencies = map[string][]string{
 	"vault_provisioning_grants": {},
 	"audit_config":              {},
 	"login_failures":            {},
-	"secrets":                   {"users"},
-	"keys":                      {"users"},
-	"certificates":              {"users"},
-	"crl":                       {"users"},
-	"rotation_policies":         {"users"},
+	"secrets":                   {},
+	"keys":                      {},
+	"certificates":              {},
+	"crl":                       {},
+	"rotation_policies":         {},
 	"user_sessions":             {"users"},
 	"user_roles":                {"users"},
 	"role_assignments":          {"vaults"},
@@ -40,10 +41,10 @@ var tableDependencies = map[string][]string{
 	"key_versions":              {"keys"},
 	"certificate_tags":          {"certificates"},
 	"certificate_versions":      {"certificates"},
-	"certificate_policies":      {"certificates", "users"},
-	"key_rotation_policies":     {"keys", "users"},
+	"certificate_policies":      {"certificates"},
+	"key_rotation_policies":     {"keys"},
 	"secret_tags":               {"secrets"},
-	"secret_versions":           {"secrets", "users"},
+	"secret_versions":           {"secrets"},
 	"secret_rotation_history":   {"secrets", "rotation_policies"},
 	"rotation_reminders":        {"secrets", "rotation_policies"},
 	"secret_policies":           {"secrets", "rotation_policies"},

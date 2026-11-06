@@ -5982,6 +5982,50 @@ whose owner is not the restorer; (b) `requireCAKeyUsable` requires
 **Related**: § B76 (same-vault restore keeps every link), § B77
 (`requireCAKeyUsable`), § B32 (owner comparison).
 
+### B101 — Deleting a user on Postgres hard-deletes every secret, key and certificate they created
+
+**Status**: Fixed 2026-11-06 on `fix/user-delete-cascade` (GitHub #69)
+**Severity**: Critical (data loss) — on Postgres, deleting a user permanently
+deleted everything that user created, including items in shared vaults other
+members still use. Soft delete and purge protection did not apply. SQLite never
+enforced these foreign keys, so dev and the default test suite never showed it.
+**Files**: `internal/db/db.go` (`createOptimizedSchema`, `migrateSchema`),
+`internal/repositories/user_repository.go` (`Delete`),
+`internal/backup/table_order.go`
+
+**Symptom**: `DELETE /api/v1/users/{id}` (admin) or `rocketvault users delete`
+(admin, or any user deleting their own account) removed every row the user had
+created from `secrets`, `secret_versions`, `keys`, `key_rotation_policies`,
+`certificates`, `certificate_policies`, `crl` and `rotation_policies`, and
+Postgres cascaded further to versions, tags, rotation history and reminders.
+
+**Root cause**: those eight tables declared
+`FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE`, and
+`UserRepository.Delete` relied on the cascade for related data. Vault items
+belong to their vault; `user_id` only records who created them. Only
+`user_roles` and `user_sessions` should cascade from `users`.
+
+**Fix**: removed the cascading FK from the eight vault-data tables in the fresh
+schema, and `migrateSchema` now runs
+`ALTER TABLE <t> DROP CONSTRAINT IF EXISTS <t>_user_id_fkey` on Postgres (the
+`audit_logs` precedent), so existing deployments are fixed on next start.
+A deleted user's items stay in their vault with `user_id` as history, which
+matches Azure Key Vault. `tableDependencies` no longer lists `users` as a parent
+of those tables.
+
+**Tests**: `TestPostgres_DeleteUser_KeepsVaultItems`,
+`TestPostgres_OnlyIdentityTablesCascadeFromUsers`,
+`TestPostgres_SetupSchema_DropsLegacyUserCascades`
+(`internal/repositories/pg_integration_test.go`, `-tags integration`). All three
+fail without the fix. Note that CI does not run the integration tag yet.
+
+**Not covered**: § B99 (role assignments survive the delete, so auto-renew can
+keep signing as the deleted user). Secret auto-rotation iterates users
+(`internal/services/secrets/scheduler_service.go:133,157`), so items whose
+creator was deleted stop rotating; the scheduler should iterate policies.
+
+**Related**: § B99, § B100.
+
 ---
 
 ## Deferred Refactors

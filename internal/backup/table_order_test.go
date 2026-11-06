@@ -6,7 +6,7 @@ import (
 )
 
 func TestTopologicalOrder_ParentsBeforeChildren(t *testing.T) {
-	tables := []string{"secret_versions", "users", "secrets", "secret_tags"}
+	tables := []string{"secret_versions", "user_roles", "users", "secrets", "secret_tags"}
 	order, err := topologicalOrder(tables)
 	if err != nil {
 		t.Fatal(err)
@@ -15,17 +15,14 @@ func TestTopologicalOrder_ParentsBeforeChildren(t *testing.T) {
 	for i, name := range order {
 		pos[name] = i
 	}
-	if pos["users"] > pos["secrets"] {
-		t.Fatalf("users must come before secrets, got order %v", order)
+	if pos["users"] > pos["user_roles"] {
+		t.Fatalf("users must come before user_roles, got order %v", order)
 	}
 	if pos["secrets"] > pos["secret_versions"] {
 		t.Fatalf("secrets must come before secret_versions, got order %v", order)
 	}
 	if pos["secrets"] > pos["secret_tags"] {
 		t.Fatalf("secrets must come before secret_tags, got order %v", order)
-	}
-	if pos["users"] > pos["secret_versions"] {
-		t.Fatalf("users must come before secret_versions (transitive), got order %v", order)
 	}
 }
 

@@ -370,3 +370,106 @@ func TestPostgres_LoginFailureUpsert(t *testing.T) {
 	require.ErrorIs(t, err, repositories.ErrNotFound)
 	require.NoError(t, repo.Delete(ctx, key))
 }
+
+// B101: deleting a user must not delete the vault items that user created.
+// Items belong to the vault; user_id only records who created them.
+func TestPostgres_DeleteUser_KeepsVaultItems(t *testing.T) {
+	conn, cleanup := newPostgresConn(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	creator := uuid.New()
+	seedUser(t, conn, creator)
+
+	secretID := uuid.New().String()
+	inserts := []struct {
+		query string
+		args  []any
+	}{
+		{"INSERT INTO secrets (id, user_id, name, value, version) VALUES (?, ?, ?, ?, ?)",
+			[]any{secretID, creator.String(), "shared-db-password", "ciphertext", 1}},
+		{"INSERT INTO secret_versions (id, secret_id, user_id, name, value, version) VALUES (?, ?, ?, ?, ?, ?)",
+			[]any{uuid.New().String(), secretID, creator.String(), "shared-db-password", "ciphertext", 1}},
+		{"INSERT INTO keys (id, user_id, name, value, type) VALUES (?, ?, ?, ?, ?)",
+			[]any{uuid.New().String(), creator.String(), "shared-signing-key", "ciphertext", "RSA"}},
+		{"INSERT INTO certificates (id, user_id, name, certificate, private_key) VALUES (?, ?, ?, ?, ?)",
+			[]any{uuid.New().String(), creator.String(), "shared-tls-cert", "pem", "ciphertext"}},
+	}
+	for _, in := range inserts {
+		_, err := conn.ExecContext(ctx, in.query, in.args...)
+		require.NoError(t, err, in.query)
+	}
+
+	users := repositories.NewUserRepository(conn, logging.InitLogger())
+	require.NoError(t, users.Delete(ctx, creator))
+
+	for _, table := range []string{"secrets", "secret_versions", "keys", "certificates"} {
+		var n int
+		require.NoError(t, conn.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM "+table+" WHERE user_id = ?", creator.String()).Scan(&n))
+		require.Equal(t, 1, n, "%s rows were deleted together with their creator", table)
+	}
+}
+
+// cascadingUserFKTables lists the tables whose foreign key to users(id)
+// deletes their rows together with the user.
+func cascadingUserFKTables(t *testing.T, conn *rvdb.Conn) []string {
+	t.Helper()
+	rows, err := conn.QueryContext(context.Background(), `
+		SELECT tc.table_name
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.referential_constraints rc
+		  ON rc.constraint_name = tc.constraint_name
+		JOIN information_schema.constraint_column_usage ccu
+		  ON ccu.constraint_name = rc.unique_constraint_name
+		WHERE tc.constraint_type = 'FOREIGN KEY'
+		  AND ccu.table_name = 'users'
+		  AND rc.delete_rule = 'CASCADE'
+		ORDER BY tc.table_name`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var table string
+		require.NoError(t, rows.Scan(&table))
+		tables = append(tables, table)
+	}
+	require.NoError(t, rows.Err())
+	return tables
+}
+
+// B101: only identity tables may cascade from users. A cascading foreign key
+// on any vault-data table would hard-delete vault items with their creator.
+func TestPostgres_OnlyIdentityTablesCascadeFromUsers(t *testing.T) {
+	conn, cleanup := newPostgresConn(t)
+	defer cleanup()
+
+	require.Equal(t, []string{"user_roles", "user_sessions"}, cascadingUserFKTables(t, conn))
+}
+
+// B101: databases created before the fix still carry the cascading foreign
+// keys. The next schema setup must drop them.
+func TestPostgres_SetupSchema_DropsLegacyUserCascades(t *testing.T) {
+	conn, cleanup := newPostgresConn(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	legacy := []string{
+		"secrets", "secret_versions", "keys", "key_rotation_policies",
+		"certificates", "certificate_policies", "crl", "rotation_policies",
+	}
+	// Recreate the old unnamed FKs. Postgres names them <table>_user_id_fkey,
+	// exactly as it did for the inline definitions in the old schema.
+	for _, table := range legacy {
+		_, err := conn.ExecContext(ctx,
+			"ALTER TABLE "+table+" ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE")
+		require.NoError(t, err, table)
+	}
+	require.Len(t, cascadingUserFKTables(t, conn), len(legacy)+2, "legacy FKs were not recreated")
+
+	repo := rvdb.NewRepository(logging.InitLogger())
+	require.NoError(t, repo.SetupSchema(conn.Underlying(), rvdb.Postgres))
+
+	require.Equal(t, []string{"user_roles", "user_sessions"}, cascadingUserFKTables(t, conn))
+}

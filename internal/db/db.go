@@ -402,8 +402,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			content_type TEXT NOT NULL DEFAULT '',
 			enabled      BOOLEAN NOT NULL DEFAULT TRUE,
 			expires_at   TIMESTAMP NULL,
-			not_before   TIMESTAMP NULL,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			not_before   TIMESTAMP NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_secrets_user_id ON secrets(user_id);
 		CREATE INDEX IF NOT EXISTS idx_secrets_name ON secrets(name);
@@ -428,8 +427,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			bits INTEGER NOT NULL DEFAULT 0,
 			curve TEXT NOT NULL DEFAULT '',
 			updated_at TIMESTAMP NULL,
-			exportable BOOLEAN NOT NULL DEFAULT FALSE,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			exportable BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE INDEX IF NOT EXISTS idx_keys_user_id ON keys(user_id);
 		CREATE INDEX IF NOT EXISTS idx_keys_type ON keys(type);
@@ -473,8 +471,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			enabled BOOLEAN NOT NULL DEFAULT TRUE,
 			not_before TIMESTAMP NULL,
 			version INTEGER NOT NULL DEFAULT 1,
-			exportable BOOLEAN NOT NULL DEFAULT FALSE,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			exportable BOOLEAN NOT NULL DEFAULT FALSE
 		);
 		CREATE INDEX IF NOT EXISTS idx_certificates_user_id ON certificates(user_id);
 		CREATE INDEX IF NOT EXISTS idx_certificates_name ON certificates(name);
@@ -518,8 +515,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			issuer_name       TEXT NOT NULL DEFAULT '',
 			created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (certificate_id) REFERENCES certificates(id) ON DELETE CASCADE,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			FOREIGN KEY (certificate_id) REFERENCES certificates(id) ON DELETE CASCADE
 		);
 		CREATE INDEX IF NOT EXISTS idx_cert_policies_cert_id ON certificate_policies(certificate_id);
 		CREATE INDEX IF NOT EXISTS idx_cert_policies_user_id ON certificate_policies(user_id);
@@ -544,8 +540,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			next_rotation_at           TIMESTAMP NULL,
 			created_at                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (key_id) REFERENCES keys(id) ON DELETE CASCADE,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			FOREIGN KEY (key_id) REFERENCES keys(id) ON DELETE CASCADE
 		);
 		CREATE INDEX IF NOT EXISTS idx_key_rotation_policies_key_id ON key_rotation_policies(key_id);
 		CREATE INDEX IF NOT EXISTS idx_key_rotation_policies_user_id ON key_rotation_policies(user_id);
@@ -574,8 +569,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			user_id TEXT NOT NULL,
 			serial_number TEXT NOT NULL,
 			revoked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			name TEXT NOT NULL,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			name TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_crl_user_id ON crl(user_id);
 		CREATE INDEX IF NOT EXISTS idx_crl_serial_number ON crl(serial_number);
@@ -621,8 +615,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			value TEXT NOT NULL,
 			version INTEGER NOT NULL,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (secret_id) REFERENCES secrets(id) ON DELETE CASCADE,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			FOREIGN KEY (secret_id) REFERENCES secrets(id) ON DELETE CASCADE
 		);
 		CREATE INDEX IF NOT EXISTS idx_secret_versions_secret_id ON secret_versions(secret_id);
 		CREATE INDEX IF NOT EXISTS idx_secret_versions_version ON secret_versions(secret_id, version);
@@ -639,8 +632,7 @@ func (d *DBRepository) createOptimizedSchema(db *sql.DB) error {
 			reminder_days INTEGER NOT NULL DEFAULT 7,
 			auto_rotate BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_rotation_policies_user_id ON rotation_policies(user_id);
 		CREATE INDEX IF NOT EXISTS idx_rotation_policies_enabled ON rotation_policies(enabled);
@@ -902,8 +894,7 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 			issuer_name       TEXT NOT NULL DEFAULT '',
 			created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (certificate_id) REFERENCES certificates(id) ON DELETE CASCADE,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			FOREIGN KEY (certificate_id) REFERENCES certificates(id) ON DELETE CASCADE
 		)`,
 		"CREATE INDEX IF NOT EXISTS idx_cert_policies_cert_id ON certificate_policies(certificate_id)",
 		"CREATE INDEX IF NOT EXISTS idx_cert_policies_user_id ON certificate_policies(user_id)",
@@ -923,8 +914,7 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 			next_rotation_at           TIMESTAMP NULL,
 			created_at                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at                 TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (key_id) REFERENCES keys(id) ON DELETE CASCADE,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			FOREIGN KEY (key_id) REFERENCES keys(id) ON DELETE CASCADE
 		)`,
 		"CREATE INDEX IF NOT EXISTS idx_key_rotation_policies_key_id ON key_rotation_policies(key_id)",
 		"CREATE INDEX IF NOT EXISTS idx_key_rotation_policies_user_id ON key_rotation_policies(user_id)",
@@ -975,8 +965,7 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 			reminder_days INTEGER NOT NULL DEFAULT 7,
 			auto_rotate BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		)`,
 		"CREATE INDEX IF NOT EXISTS idx_rotation_policies_user_id ON rotation_policies(user_id)",
 		"CREATE INDEX IF NOT EXISTS idx_rotation_policies_enabled ON rotation_policies(enabled)",
@@ -1186,6 +1175,23 @@ func (d *DBRepository) migrateSchema(db *sql.DB) error {
 	if d.dialect == Postgres {
 		if _, err := db.Exec(`ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_user_id_fkey`); err != nil {
 			return fmt.Errorf("drop audit_logs user_id FK: %w", err)
+		}
+	}
+
+	// B101: vault items belong to their vault, and user_id only records who
+	// created them. These FKs were ON DELETE CASCADE, so on Postgres deleting
+	// a user hard-deleted every item they created, past soft delete and purge
+	// protection. Fresh schemas no longer declare them; drop them from older
+	// Postgres databases. SQLite never enforced them.
+	if d.dialect == Postgres {
+		for _, table := range []string{
+			"secrets", "secret_versions", "keys", "key_rotation_policies",
+			"certificates", "certificate_policies", "crl", "rotation_policies",
+		} {
+			stmt := fmt.Sprintf("ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s_user_id_fkey", table, table)
+			if _, err := db.ExecContext(context.Background(), stmt); err != nil {
+				return fmt.Errorf("drop %s user_id FK: %w", table, err)
+			}
 		}
 	}
 
