@@ -2,6 +2,7 @@ package keys
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"rocketvault/common"
 	"rocketvault/internal/crypto"
+	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/model"
 )
 
@@ -88,6 +90,12 @@ func (s *keyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.U
 		return nil, refuse("HSM-backed keys never leave the token")
 	}
 
+	// Every gate has passed. The attempt row must be written before any
+	// material is decrypted; if it fails, nothing is released.
+	if err := s.recordExportAttempt(ctx, scope, key, version); err != nil {
+		return nil, err
+	}
+
 	keyPEM, err := common.DecryptSecret(stored)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt key material: %w", err)
@@ -109,4 +117,20 @@ func (s *keyService) ExportKey(ctx context.Context, scope model.Scope, id uuid.U
 		ID: key.ID, Name: key.Name, Type: key.Type, Version: version, Format: model.ExportFormatPEM,
 		PrivateKeyPEM: out, KeyAlgorithm: key.KeyAlgorithm(),
 	}, nil
+}
+
+// recordExportAttempt writes the critical attempt row for exporting version
+// of key. The result row is written by the caller through exportaudit. With
+// no audit service wired (tests only) it writes nothing.
+func (s *keyService) recordExportAttempt(ctx context.Context, scope model.Scope, key *model.Key, version int) error {
+	if s.auditService == nil {
+		return nil
+	}
+	details, _ := json.Marshal(map[string]any{
+		"vault_id": key.VaultID.String(), "name": key.Name, "version": version, "format": model.ExportFormatPEM,
+	})
+	return auditServices.RecordAttempt(ctx, s.auditService, auditServices.AuditEvent{
+		UserID: scope.ActorID().String(), Action: "export_key", Details: string(details),
+		ResourceType: "key", ResourceID: key.ID.String(), Source: "system",
+	})
 }

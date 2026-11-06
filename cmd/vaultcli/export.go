@@ -59,10 +59,12 @@ func (e *ExportAttempt) Fail(f exportaudit.Failure) error {
 
 // FailService classifies a service error, records it and returns the fixed
 // message. The service's own error text is never shown, because it can name
-// repository detail; an internal failure's cause goes to the log file only.
+// repository detail; an internal or audit-unavailable failure's cause goes
+// to the log file only.
 func (e *ExportAttempt) FailService(err error) error {
 	f := exportaudit.Classify(err, e.attempt.ResourceType)
-	if f.Kind == exportaudit.KindInternal && e.s.Log != nil {
+	logged := f.Kind == exportaudit.KindInternal || f.Kind == exportaudit.KindAuditUnavailable
+	if logged && e.s.Log != nil {
 		e.s.Log.WithField("operation", "export_"+e.attempt.ResourceType).
 			WithField("step", f.Reason).WithError(err).Error("export failed")
 	}

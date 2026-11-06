@@ -706,6 +706,10 @@ func (m *MockVaultService) SetPolicyVaultLister(l vaultServices.PolicyVaultListe
 	m.Called(l)
 }
 
+func (m *MockVaultService) SetAuditService(a auditServices.AuditServiceInterface) {
+	m.Called(a)
+}
+
 // ErrVaultNotFoundForTest is returned by test doubles standing in for a
 // vault-lookup failure; production code never checks for this sentinel.
 var ErrVaultNotFoundForTest = errors.New("test: vault not found")

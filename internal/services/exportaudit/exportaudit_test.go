@@ -50,6 +50,8 @@ func TestClassify_MapsEveryServiceErrorToAFixedReason(t *testing.T) {
 			"certificate", exportaudit.KindInternal, "internal_error", "internal server error", "certificate versioning unavailable"},
 		{"unknown", errors.New("decrypt certificate key: raw-detail"),
 			"certificate", exportaudit.KindInternal, "internal_error", "internal server error", "internal failure"},
+		{"audit unavailable", fmt.Errorf("%w: raw-detail", auditServices.ErrAuditUnavailable),
+			"key", exportaudit.KindAuditUnavailable, "audit_unavailable", "audit unavailable", "audit unavailable"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

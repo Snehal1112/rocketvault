@@ -404,7 +404,8 @@ func (c *ServiceContainer) initializeServices() error {
 	// Failed audit writes are exported as rocketvault_audit_write_failures_total.
 	auditServices.SetWriteFailureRecorder(metrics.NewDefaultPrometheusAuditWriteFailures())
 	c.auditService = auditServices.NewAuditService(c.auditRepository)
-	c.complianceReportService = auditServices.NewComplianceReportService(c.auditRepository)
+	c.complianceReportService = auditServices.NewComplianceReportService(c.auditRepository, c.auditService)
+	c.vaultService.SetAuditService(c.auditService)
 	c.logger.SetAuditPersister(c.auditService)
 
 	// Start daily audit log retention purge in the background.
@@ -602,6 +603,7 @@ func (c *ServiceContainer) initializeServices() error {
 		SessionRevoker:     c.sessionRepository,
 		Logger:             c.logger,
 		ExternalUserPolicy: externalUserPolicy,
+		AuditService:       c.auditService,
 	})
 
 	// Wrap with retry logic if retry service is available
@@ -655,6 +657,7 @@ func (c *ServiceContainer) initializeServices() error {
 		Logger:                c.logger,
 		VaultRepository:       c.vaultRepository,
 		GlobalPurgeProtection: c.globalPurgeProtection,
+		AuditService:          c.auditService,
 	})
 
 	// Wrap with retry logic if retry service is available
@@ -711,6 +714,7 @@ func (c *ServiceContainer) initializeServices() error {
 		Logger:                c.logger,
 		VaultRepository:       c.vaultRepository,
 		GlobalPurgeProtection: c.globalPurgeProtection,
+		AuditService:          c.auditService,
 	})
 
 	// Wrap with retry logic if retry service is available.
@@ -739,6 +743,7 @@ func (c *ServiceContainer) initializeServices() error {
 		Logger:                c.logger,
 		VaultRepository:       c.vaultRepository,
 		GlobalPurgeProtection: c.globalPurgeProtection,
+		AuditService:          c.auditService,
 	})
 
 	// Wrap with retry logic if retry service is available.

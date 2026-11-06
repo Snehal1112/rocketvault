@@ -59,12 +59,17 @@ type ComplianceReportServiceInterface interface {
 
 // ComplianceReportService implements ComplianceReportServiceInterface.
 type ComplianceReportService struct {
-	repo repositories.AuditRepositoryExtended
+	repo  repositories.AuditRepositoryExtended
+	audit AuditServiceInterface
 }
 
-// NewComplianceReportService creates a ComplianceReportService.
-func NewComplianceReportService(repo repositories.AuditRepositoryExtended) ComplianceReportServiceInterface {
-	return &ComplianceReportService{repo: repo}
+// NewComplianceReportService creates a ComplianceReportService. audit writes
+// the chained audit_purge record; nil means an AuditService over repo.
+func NewComplianceReportService(repo repositories.AuditRepositoryExtended, audit AuditServiceInterface) ComplianceReportServiceInterface {
+	if audit == nil {
+		audit = NewAuditService(repo)
+	}
+	return &ComplianceReportService{repo: repo, audit: audit}
 }
 
 // QueryLogs returns paginated audit logs and the integrity result.
@@ -185,24 +190,33 @@ func (s *ComplianceReportService) GenerateGDPRCSV(ctx context.Context, from, to 
 }
 
 // PurgeExpiredLogs deletes logs older than the configured retention_days.
-// Returns the number of rows deleted.
+// Returns the number of rows deleted. A chained audit_purge attempt row is
+// written first; if that fails nothing is deleted and the error matches
+// ErrAuditUnavailable.
 func (s *ComplianceReportService) PurgeExpiredLogs(ctx context.Context) (int64, error) {
 	days, err := s.GetRetentionDays(ctx)
 	if err != nil {
 		return 0, err
 	}
 	cutoff := time.Now().UTC().AddDate(0, 0, -days)
-	deleted, err := s.repo.DeleteBefore(ctx, cutoff)
-	if err != nil {
+	ev := AuditEvent{Action: "audit_purge", Source: "system"}
+
+	attempt := ev
+	attempt.Details = fmt.Sprintf("retention_days=%d cutoff=%s", days, cutoff.Format(time.RFC3339))
+	if err := RecordAttempt(ctx, s.audit, attempt); err != nil {
 		return 0, err
 	}
-	if deleted > 0 {
-		_ = s.repo.InsertAuditLog(ctx, repositories.AuditLog{
-			Action:  "audit_purge",
-			Source:  "system",
-			Outcome: "success",
-			Details: fmt.Sprintf("rows_deleted=%d retention_days=%d", deleted, days),
-		})
+
+	deleted, err := s.repo.DeleteBefore(ctx, cutoff)
+	result := ev
+	result.Outcome, result.Details = "success", fmt.Sprintf("rows_deleted=%d retention_days=%d", deleted, days)
+	if err != nil {
+		result.Outcome, result.Details = "failure", fmt.Sprintf("retention_days=%d", days)
+	}
+	// The result row is best effort; RecordEvent already logs and counts a failure.
+	_ = s.audit.RecordEvent(context.WithoutCancel(ctx), result)
+	if err != nil {
+		return 0, err
 	}
 	return deleted, nil
 }

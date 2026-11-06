@@ -129,6 +129,7 @@ func (s *stubVaultService) SetGlobalPurgeProtection(_ bool)                     
 func (s *stubVaultService) SetGrantLocker(_ vaultServices.GrantLocker)                     {}
 func (s *stubVaultService) SetCreatorGranter(_ vaultServices.CreatorGranter)               {}
 func (s *stubVaultService) SetPolicyVaultLister(_ vaultServices.PolicyVaultLister)         {}
+func (s *stubVaultService) SetAuditService(_ auditSvc.AuditServiceInterface)               {}
 
 // MockAuthenticationService is a mock implementation of AuthenticationService.
 type MockAuthenticationService struct {

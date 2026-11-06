@@ -27,6 +27,9 @@ const (
 	KindNotFound
 	KindDisabled
 	KindInternal
+	// KindAuditUnavailable means the critical attempt row could not be
+	// written, so no material was produced.
+	KindAuditUnavailable
 )
 
 // Failure is one classified export failure. Message is safe to show the
@@ -60,12 +63,16 @@ func Forbidden(reason string) Failure {
 }
 
 // Classify maps a certificate or key service error onto a Failure. resource
-// is "certificate" or "key". Unknown errors become a generic internal
-// failure. A chain failure is also internal, because its error text names a
-// CA id that may belong to another vault.
+// is "certificate" or "key". A refused critical audit write becomes
+// KindAuditUnavailable. Unknown errors become a generic internal failure. A
+// chain failure is also internal, because its error text names a CA id that
+// may belong to another vault.
 func Classify(err error, resource string) Failure {
 	var refusal *model.ExportRefusedError
 	switch {
+	case errors.Is(err, auditServices.ErrAuditUnavailable):
+		msg := auditServices.ErrAuditUnavailable.Error()
+		return Failure{Kind: KindAuditUnavailable, Code: "audit_unavailable", Message: msg, Reason: msg}
 	case errors.As(err, &refusal):
 		return Failure{Kind: KindNotExportable, Code: resource + "_not_exportable", Message: refusal.Error(),
 			Reason: refusal.Reason, Name: refusal.Name, KeyAlgorithm: refusal.KeyAlgorithm}

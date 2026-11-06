@@ -125,7 +125,7 @@ func TestComplianceReportService_QueryLogs_ChainedRoundTrip(t *testing.T) {
 	db := openTestDB(t)
 	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
 	svc := auditSvc.NewAuditService(repo)
-	compSvc := auditSvc.NewComplianceReportService(repo)
+	compSvc := auditSvc.NewComplianceReportService(repo, nil)
 
 	for _, a := range []string{"a", "b", "c"} {
 		require.NoError(t, svc.RecordEvent(context.Background(), auditSvc.AuditEvent{

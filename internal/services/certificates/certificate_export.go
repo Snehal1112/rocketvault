@@ -3,6 +3,7 @@ package certificates
 import (
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"rocketvault/common"
 	"rocketvault/internal/crypto"
+	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/model"
 )
 
@@ -111,6 +113,12 @@ func (s *certificateService) ExportCertificate(ctx context.Context, scope model.
 		return nil, refuse("the certificate was not created with exportable: true")
 	}
 
+	// Every gate has passed. The attempt row must be written before any
+	// material is decrypted; if it fails, nothing is released.
+	if err := s.recordExportAttempt(ctx, scope, parent, meta.Version, req.Format); err != nil {
+		return nil, err
+	}
+
 	// 4. Decrypt the version's own key copy and re-marshal it as PKCS#8.
 	keyPEM, err := common.DecryptSecret(keyCipher)
 	if err != nil {
@@ -172,6 +180,22 @@ func (s *certificateService) ExportCertificate(ctx context.Context, scope model.
 	s.logger.LogAuditInfo(actor, "export_certificate", "success",
 		fmt.Sprintf("Certificate %s version %d exported as %s", id, meta.Version, req.Format))
 	return result, nil
+}
+
+// recordExportAttempt writes the critical attempt row for exporting version
+// of cert as format. The result row is written by the caller through
+// exportaudit. With no audit service wired (tests only) it writes nothing.
+func (s *certificateService) recordExportAttempt(ctx context.Context, scope model.Scope, cert *model.Certificate, version int, format string) error {
+	if s.auditService == nil {
+		return nil
+	}
+	details, _ := json.Marshal(map[string]any{
+		"vault_id": cert.VaultID.String(), "name": cert.Name, "version": version, "format": format,
+	})
+	return auditServices.RecordAttempt(ctx, s.auditService, auditServices.AuditEvent{
+		UserID: scope.ActorID().String(), Action: "export_certificate", Details: string(details),
+		ResourceType: "certificate", ResourceID: cert.ID.String(), Source: "system",
+	})
 }
 
 // resolveExportVersion returns the addressed version's metadata, body and

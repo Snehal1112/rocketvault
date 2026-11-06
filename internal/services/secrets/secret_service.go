@@ -18,6 +18,7 @@ import (
 	"rocketvault/internal/logging"
 	"rocketvault/internal/pwgen"
 	"rocketvault/internal/repositories"
+	auditServices "rocketvault/internal/services/audit"
 	vvalidation "rocketvault/internal/validation"
 	"rocketvault/model"
 )
@@ -195,6 +196,9 @@ type secretService struct {
 	// PurgeSecret refuses every purge instance-wide, regardless of this
 	// secret's or its vault's own purge_protection flag.
 	globalPurgeProtection bool
+	// auditService writes the critical audit row for purge. Nil only in
+	// tests; the container always wires it.
+	auditService auditServices.AuditServiceInterface
 }
 
 // SecretServiceConfig holds the dependencies for secret service.
@@ -210,6 +214,8 @@ type SecretServiceConfig struct {
 	// GlobalPurgeProtection mirrors soft_delete.purge_protection. See
 	// secretService.globalPurgeProtection.
 	GlobalPurgeProtection bool
+	// AuditService writes the critical audit row. See secretService.auditService.
+	AuditService auditServices.AuditServiceInterface
 }
 
 // NewSecretService creates a new SecretService with the provided dependencies.
@@ -231,6 +237,7 @@ func NewSecretService(config SecretServiceConfig) SecretService {
 		logger:                config.Logger,
 		vaultRepo:             config.VaultRepository,
 		globalPurgeProtection: config.GlobalPurgeProtection,
+		auditService:          config.AuditService,
 	}
 }
 
@@ -1023,8 +1030,22 @@ func (s *secretService) PurgeSecret(ctx context.Context, secretID uuid.UUID, sco
 		}
 	}
 
-	if err := s.secretRepo.PurgeSecret(ctx, secretID); err != nil {
-		return fmt.Errorf("failed to purge secret: %w", err)
+	purge := func(ctx context.Context) error {
+		if err := s.secretRepo.PurgeSecret(ctx, secretID); err != nil {
+			return fmt.Errorf("failed to purge secret: %w", err)
+		}
+		return nil
+	}
+	if s.auditService != nil {
+		// The attempt row must be written before the secret is gone. A failed
+		// write returns audit.ErrAuditUnavailable and the secret stays deleted.
+		return auditServices.WithCritical(ctx, s.auditService, auditServices.AuditEvent{
+			UserID: scope.ActorID().String(), Action: "purge_secret",
+			ResourceType: "secret", ResourceID: secretID.String(), Source: "system",
+		}, purge)
+	}
+	if err := purge(ctx); err != nil {
+		return err
 	}
 	s.logger.LogAuditInfo(scope.ActorID().String(), "purge_secret", "success",
 		fmt.Sprintf("Secret purged: %s", secretID))

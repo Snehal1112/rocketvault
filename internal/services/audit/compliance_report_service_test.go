@@ -2,6 +2,7 @@ package audit_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestComplianceReportService_SOC2Report(t *testing.T) {
 	db := openTestDB(t)
 	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
 	seedLogs(t, repo)
-	svc := auditSvc.NewComplianceReportService(repo)
+	svc := auditSvc.NewComplianceReportService(repo, nil)
 
 	from := time.Now().UTC().Add(-1 * time.Hour)
 	to := time.Now().UTC().Add(1 * time.Hour)
@@ -65,7 +66,7 @@ func TestComplianceReportService_SOC2Report_CountsRealAuthenticateUserOutcomes(t
 		UserID: "u2", Action: "authenticate_user", Outcome: "failure", Source: "system", ResourceType: "user",
 	}))
 
-	reportSvc := auditSvc.NewComplianceReportService(repo)
+	reportSvc := auditSvc.NewComplianceReportService(repo, nil)
 	from := time.Now().UTC().Add(-time.Hour)
 	to := time.Now().UTC().Add(time.Hour)
 	report, err := reportSvc.GenerateSOC2Report(context.Background(), from, to)
@@ -79,7 +80,7 @@ func TestComplianceReportService_GDPRReport(t *testing.T) {
 	db := openTestDB(t)
 	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
 	seedLogs(t, repo)
-	svc := auditSvc.NewComplianceReportService(repo)
+	svc := auditSvc.NewComplianceReportService(repo, nil)
 
 	from := time.Now().UTC().Add(-1 * time.Hour)
 	to := time.Now().UTC().Add(1 * time.Hour)
@@ -93,7 +94,7 @@ func TestComplianceReportService_SOC2CSV(t *testing.T) {
 	db := openTestDB(t)
 	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
 	seedLogs(t, repo)
-	svc := auditSvc.NewComplianceReportService(repo)
+	svc := auditSvc.NewComplianceReportService(repo, nil)
 
 	from := time.Now().UTC().Add(-1 * time.Hour)
 	to := time.Now().UTC().Add(1 * time.Hour)
@@ -107,7 +108,7 @@ func TestComplianceReportService_QueryLogs_IntegrityCheck(t *testing.T) {
 	db := openTestDB(t)
 	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
 	svc := auditSvc.NewAuditService(repo)
-	compSvc := auditSvc.NewComplianceReportService(repo)
+	compSvc := auditSvc.NewComplianceReportService(repo, nil)
 
 	// Record two events through AuditService to build a valid chain.
 	require.NoError(t, svc.RecordEvent(context.Background(), auditSvc.AuditEvent{
@@ -135,10 +136,81 @@ func TestComplianceReportService_PurgeExpiredLogs(t *testing.T) {
 	require.NoError(t, repo.InsertAuditLog(context.Background(), repositories.AuditLog{ID: uuid.New().String(), Action: "old", Timestamp: old}))
 	require.NoError(t, repo.InsertAuditLog(context.Background(), repositories.AuditLog{ID: uuid.New().String(), Action: "recent", Timestamp: recent}))
 
-	svc := auditSvc.NewComplianceReportService(repo)
+	svc := auditSvc.NewComplianceReportService(repo, nil)
 	deleted, err := svc.PurgeExpiredLogs(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), deleted)
+}
+
+// seedPurgeRows inserts one row past a 90-day retention and one recent row.
+func seedPurgeRows(t *testing.T, repo repositories.AuditRepositoryExtended) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, repo.SetAuditConfig(ctx, "retention_days", "90"))
+	old := time.Now().UTC().AddDate(0, 0, -92)
+	require.NoError(t, repo.InsertAuditLog(ctx, repositories.AuditLog{ID: uuid.New().String(), Action: "old", Timestamp: old}))
+	require.NoError(t, repo.InsertAuditLog(ctx, repositories.AuditLog{ID: uuid.New().String(), Action: "recent", Timestamp: time.Now().UTC()}))
+}
+
+// allActions returns the action of every stored row.
+func allActions(t *testing.T, repo repositories.AuditRepositoryExtended) []string {
+	t.Helper()
+	from := time.Now().UTC().AddDate(-1, 0, 0)
+	logs, _, err := repo.QueryAuditLogs(context.Background(), repositories.AuditFilter{From: &from, Limit: 1000})
+	require.NoError(t, err)
+	out := make([]string, 0, len(logs))
+	for _, l := range logs {
+		out = append(out, l.Action)
+	}
+	return out
+}
+
+// TestPurgeExpiredLogs_AuditFailureDeletesNothing pins audit-first: when the
+// critical audit_purge row cannot be written, no row is deleted.
+func TestPurgeExpiredLogs_AuditFailureDeletesNothing(t *testing.T) {
+	db := openTestDB(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	seedPurgeRows(t, repo)
+	audit := &fakeAuditService{criticalErr: errors.New("disk full")}
+	svc := auditSvc.NewComplianceReportService(repo, audit)
+
+	deleted, err := svc.PurgeExpiredLogs(context.Background())
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, auditSvc.ErrAuditUnavailable))
+	assert.Equal(t, "audit unavailable", err.Error())
+	assert.Equal(t, int64(0), deleted)
+	assert.ElementsMatch(t, []string{"old", "recent"}, allActions(t, repo), "nothing may be deleted")
+	require.Len(t, audit.critical, 1)
+	assert.Equal(t, "audit_purge", audit.critical[0].Action)
+}
+
+// TestPurgeExpiredLogs_WritesChainedPurgeRecord pins that the audit_purge
+// record goes through the hash chain (seq set), before and after the delete.
+func TestPurgeExpiredLogs_WritesChainedPurgeRecord(t *testing.T) {
+	db := openTestDB(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+	seedPurgeRows(t, repo)
+	svc := auditSvc.NewComplianceReportService(repo, auditSvc.NewAuditService(repo))
+
+	deleted, err := svc.PurgeExpiredLogs(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), deleted)
+
+	action := "audit_purge"
+	logs, _, err := repo.QueryAuditLogs(context.Background(), repositories.AuditFilter{Action: &action, Limit: 10})
+	require.NoError(t, err)
+	outcomes := map[string]repositories.AuditLog{}
+	for _, l := range logs {
+		require.NotNil(t, l.Seq, "the audit_purge row must be chained")
+		assert.NotEmpty(t, l.PrevHash)
+		outcomes[l.Outcome] = l
+	}
+	require.Contains(t, outcomes, "attempt")
+	require.Contains(t, outcomes, "success")
+	assert.Less(t, *outcomes["attempt"].Seq, *outcomes["success"].Seq)
+	assert.Contains(t, outcomes["success"].Details, "rows_deleted=1")
+	assert.NotContains(t, allActions(t, repo), "old")
 }
 
 // TestComplianceReportService_StoredRetentionBelowFloorIsClamped pins that a
@@ -151,7 +223,7 @@ func TestComplianceReportService_StoredRetentionBelowFloorIsClamped(t *testing.T
 	twoDaysOld := time.Now().UTC().Add(-48 * time.Hour)
 	require.NoError(t, repo.InsertAuditLog(context.Background(), repositories.AuditLog{ID: uuid.New().String(), Action: "recent-ish", Timestamp: twoDaysOld}))
 
-	svc := auditSvc.NewComplianceReportService(repo)
+	svc := auditSvc.NewComplianceReportService(repo, nil)
 	days, err := svc.GetRetentionDays(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, auditSvc.MinRetentionDays, days)
@@ -166,7 +238,7 @@ func TestComplianceReportService_StoredRetentionBelowFloorIsClamped(t *testing.T
 func TestComplianceReportService_SetRetentionBelowFloorIsRefused(t *testing.T) {
 	db := openTestDB(t)
 	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
-	svc := auditSvc.NewComplianceReportService(repo)
+	svc := auditSvc.NewComplianceReportService(repo, nil)
 
 	err := svc.SetRetentionDays(context.Background(), 89)
 	require.ErrorIs(t, err, auditSvc.ErrRetentionBelowFloor)

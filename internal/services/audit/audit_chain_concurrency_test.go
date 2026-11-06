@@ -54,7 +54,7 @@ func runWriters(svcs []auditSvc.AuditServiceInterface, perSvc int) []error {
 // assertChainIntact checks seq 1..want, the stored hash linkage and the verifier.
 func assertChainIntact(t *testing.T, repo repositories.AuditRepositoryExtended, want int) {
 	t.Helper()
-	comp := auditSvc.NewComplianceReportService(repo)
+	comp := auditSvc.NewComplianceReportService(repo, nil)
 	logs, total, res, err := comp.QueryLogs(context.Background(), repositories.AuditFilter{Limit: 1000})
 	require.NoError(t, err)
 	require.Equal(t, int64(want), total)

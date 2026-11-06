@@ -21,6 +21,7 @@ import (
 	"rocketvault/internal/keycache"
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
+	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/internal/signing"
 	"rocketvault/model"
 )
@@ -205,6 +206,9 @@ type keyService struct {
 	// PurgeKey refuses every purge instance-wide, regardless of this key's or
 	// its vault's own purge_protection flag.
 	globalPurgeProtection bool
+	// auditService writes the critical audit rows for export and purge. Nil
+	// only in tests; the container always wires it.
+	auditService auditServices.AuditServiceInterface
 }
 
 // KeyServiceConfig holds the dependencies for key service.
@@ -222,6 +226,8 @@ type KeyServiceConfig struct {
 	// GlobalPurgeProtection mirrors soft_delete.purge_protection. See
 	// keyService.globalPurgeProtection.
 	GlobalPurgeProtection bool
+	// AuditService writes the critical audit rows. See keyService.auditService.
+	AuditService auditServices.AuditServiceInterface
 }
 
 // NewKeyService creates a new KeyService with the provided dependencies.
@@ -246,6 +252,7 @@ func NewKeyService(config KeyServiceConfig) KeyService {
 		logger:                config.Logger,
 		vaultRepo:             config.VaultRepository,
 		globalPurgeProtection: config.GlobalPurgeProtection,
+		auditService:          config.AuditService,
 	}
 }
 
@@ -1068,8 +1075,22 @@ func (s *keyService) PurgeKey(ctx context.Context, keyID uuid.UUID, scope model.
 		}
 	}
 
-	if err := s.keyRepo.PurgeKey(ctx, keyID); err != nil {
-		return fmt.Errorf("failed to purge key: %w", err)
+	purge := func(ctx context.Context) error {
+		if err := s.keyRepo.PurgeKey(ctx, keyID); err != nil {
+			return fmt.Errorf("failed to purge key: %w", err)
+		}
+		return nil
+	}
+	if s.auditService != nil {
+		// The attempt row must be written before the key is gone. A failed
+		// write returns audit.ErrAuditUnavailable and the key stays deleted.
+		return auditServices.WithCritical(ctx, s.auditService, auditServices.AuditEvent{
+			UserID: scope.ActorID().String(), Action: "purge_key",
+			ResourceType: "key", ResourceID: keyID.String(), Source: "system",
+		}, purge)
+	}
+	if err := purge(ctx); err != nil {
+		return err
 	}
 	s.logger.LogAuditInfo(scope.ActorID().String(), "purge_key", "success",
 		fmt.Sprintf("Key purged: %s", keyID))

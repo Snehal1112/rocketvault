@@ -38,7 +38,7 @@ type exportErrorDetail struct {
 // exportFailure is one mapped export failure: the HTTP status, the R6 code
 // and message, and what the audit event should record. Reason is a fixed
 // phrase for the audit trail; it never carries raw error text. cause is the
-// underlying error of a 500; it goes to the server log only.
+// underlying error of a 500 or 503; it goes to the server log only.
 type exportFailure struct {
 	Status       int
 	Code         string
@@ -49,12 +49,12 @@ type exportFailure struct {
 	cause        error
 }
 
-// logExportFailure writes the cause of an export 500 to the server log, so
-// an operator can diagnose it. It logs only the fixed reason and the error
-// text, never the request body or any exported material. Other statuses are
-// not logged here, because the audit event already explains them.
+// logExportFailure writes the cause of an export 500 or 503 to the server
+// log, so an operator can diagnose it. It logs only the fixed reason and the
+// error text, never the request body or any exported material. Other
+// statuses are not logged here, because the audit event already explains them.
 func logExportFailure(c *Context, resource string, f exportFailure) {
-	if f.Status != http.StatusInternalServerError || c == nil || c.Logger == nil {
+	if (f.Status != http.StatusInternalServerError && f.Status != http.StatusServiceUnavailable) || c == nil || c.Logger == nil {
 		return
 	}
 	entry := c.Logger.WithField("operation", "export_"+resource).WithField("step", f.Reason)
@@ -98,7 +98,7 @@ func exportFailureFor(err error, resource string) exportFailure {
 	f := exportaudit.Classify(err, resource)
 	out := exportFailure{Status: exportStatus(f.Kind), Code: f.Code, Message: f.Message,
 		KeyAlgorithm: f.KeyAlgorithm, Name: f.Name, Reason: f.Reason}
-	if f.Kind == exportaudit.KindInternal {
+	if f.Kind == exportaudit.KindInternal || f.Kind == exportaudit.KindAuditUnavailable {
 		out.cause = err
 	}
 	return out
@@ -115,6 +115,9 @@ func exportStatus(kind exportaudit.Kind) int {
 		return http.StatusNotFound
 	case exportaudit.KindDisabled:
 		return http.StatusConflict
+	case exportaudit.KindAuditUnavailable:
+		// The R6 body carries only "audit unavailable"; the cause is logged.
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

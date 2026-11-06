@@ -21,15 +21,24 @@ func (e *auditUnavailableError) Error() string { return ErrAuditUnavailable.Erro
 // Unwrap exposes both the sentinel and the cause to errors.Is and errors.As.
 func (e *auditUnavailableError) Unwrap() []error { return []error{ErrAuditUnavailable, e.cause} }
 
+// RecordAttempt writes only the attempt row for ev, for a caller whose result
+// row is written elsewhere. It returns an error matching ErrAuditUnavailable
+// (and the cause) when the write fails; the caller must then not proceed.
+func RecordAttempt(ctx context.Context, svc AuditServiceInterface, ev AuditEvent) error {
+	ev.Outcome = "attempt"
+	if err := svc.RecordCritical(ctx, ev); err != nil {
+		return &auditUnavailableError{cause: err}
+	}
+	return nil
+}
+
 // WithCritical writes an attempt row for ev, runs op only if that write
 // succeeded, then records the result as success or failure. It returns an
 // error matching ErrAuditUnavailable (and the cause) when the attempt cannot
 // be written, and op's error otherwise.
 func WithCritical(ctx context.Context, svc AuditServiceInterface, ev AuditEvent, op func(context.Context) error) error {
-	attempt := ev
-	attempt.Outcome = "attempt"
-	if err := svc.RecordCritical(ctx, attempt); err != nil {
-		return &auditUnavailableError{cause: err}
+	if err := RecordAttempt(ctx, svc, ev); err != nil {
+		return err
 	}
 
 	opErr := op(ctx)

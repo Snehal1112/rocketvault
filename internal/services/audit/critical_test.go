@@ -106,3 +106,20 @@ func TestWithCritical_RecordsAttemptThenResult(t *testing.T) {
 		assert.Equal(t, "failure", svc.events[0].Outcome)
 	})
 }
+
+func TestRecordAttempt_WritesAttemptOutcome(t *testing.T) {
+	svc := &fakeAuditService{}
+	require.NoError(t, auditSvc.RecordAttempt(context.Background(), svc, auditSvc.AuditEvent{Action: "export_key", Outcome: "success"}))
+	require.Len(t, svc.critical, 1)
+	assert.Equal(t, "attempt", svc.critical[0].Outcome)
+	assert.Empty(t, svc.events, "RecordAttempt writes no result row")
+}
+
+func TestRecordAttempt_FailureHidesCause(t *testing.T) {
+	cause := errors.New("disk full")
+	err := auditSvc.RecordAttempt(context.Background(), &fakeAuditService{criticalErr: cause}, auditSvc.AuditEvent{Action: "export_key"})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, auditSvc.ErrAuditUnavailable))
+	assert.True(t, errors.Is(err, cause))
+	assert.Equal(t, "audit unavailable", err.Error())
+}

@@ -17,6 +17,7 @@ import (
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
 	"rocketvault/internal/retry"
+	auditServices "rocketvault/internal/services/audit"
 	authService "rocketvault/internal/services/auth"
 	"rocketvault/model"
 )
@@ -157,6 +158,9 @@ type userService struct {
 	sessionRevoker  SessionRevoker
 	logger          *logging.Logger
 	externalPolicy  *ExternalUserPolicy
+	// auditService writes the critical audit row for delete. Nil only in
+	// tests; the container always wires it.
+	auditService auditServices.AuditServiceInterface
 }
 
 // UserServiceConfig holds the dependencies for user service.
@@ -169,6 +173,8 @@ type UserServiceConfig struct {
 	Logger         *logging.Logger
 	// ExternalUserPolicy gates external (OIDC) sign-in. Nil means JIT is off.
 	ExternalUserPolicy *ExternalUserPolicy
+	// AuditService writes the critical audit row. See userService.auditService.
+	AuditService auditServices.AuditServiceInterface
 }
 
 // NewUserService creates a new UserService with the provided dependencies.
@@ -189,6 +195,7 @@ func NewUserService(config UserServiceConfig) UserService {
 		sessionRevoker:  config.SessionRevoker,
 		logger:          config.Logger,
 		externalPolicy:  config.ExternalUserPolicy,
+		auditService:    config.AuditService,
 	}
 }
 
@@ -543,17 +550,31 @@ func (s *userService) DeleteUser(ctx context.Context, userID uuid.UUID) error {
 		return err
 	}
 
-	// Revoke first: SQLite leaves user_sessions rows behind on delete because
-	// its foreign keys are off, and a failed revoke must not orphan live sessions.
-	if err := s.revokeSessions(ctx, userID, "user deleted"); err != nil {
+	remove := func(ctx context.Context) error {
+		// Revoke first: SQLite leaves user_sessions rows behind on delete because
+		// its foreign keys are off, and a failed revoke must not orphan live sessions.
+		if err := s.revokeSessions(ctx, userID, "user deleted"); err != nil {
+			return err
+		}
+		if err := s.userRepo.Delete(ctx, userID); err != nil {
+			s.logger.LogAuditError(userID.String(), "delete_user", "failed", "Failed to delete user", err)
+			return fmt.Errorf("failed to delete user: %w", err)
+		}
+		return nil
+	}
+
+	if s.auditService != nil {
+		// The attempt row must be written before sessions are revoked or the
+		// row is deleted. A failed write returns audit.ErrAuditUnavailable and
+		// the user stays.
+		return auditServices.WithCritical(ctx, s.auditService, auditServices.AuditEvent{
+			UserID: userID.String(), Action: "delete_user",
+			ResourceType: "user", ResourceID: userID.String(), Source: "system",
+		}, remove)
+	}
+	if err := remove(ctx); err != nil {
 		return err
 	}
-
-	if err := s.userRepo.Delete(ctx, userID); err != nil {
-		s.logger.LogAuditError(userID.String(), "delete_user", "failed", "Failed to delete user", err)
-		return fmt.Errorf("failed to delete user: %w", err)
-	}
-
 	s.logger.LogAuditInfo(userID.String(), "delete_user", "success", "User deleted successfully")
 	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"rocketvault/internal/db"
 	"rocketvault/internal/logging"
 	"rocketvault/internal/repositories"
+	auditServices "rocketvault/internal/services/audit"
 	"rocketvault/model"
 )
 
@@ -196,6 +197,9 @@ type VaultService interface {
 	// SetPolicyVaultLister attaches the policy-vault lister used by
 	// ListVaultsScoped's non-admin path.
 	SetPolicyVaultLister(l PolicyVaultLister)
+	// SetAuditService attaches the audit service that writes the critical
+	// attempt rows for DeleteVault and PurgeVault.
+	SetAuditService(a auditServices.AuditServiceInterface)
 }
 
 type vaultService struct {
@@ -212,6 +216,9 @@ type vaultService struct {
 	grantLocker           GrantLocker
 	creatorGranter        CreatorGranter
 	policyVaults          PolicyVaultLister
+	// audit writes the critical rows for delete and purge. Nil only in
+	// tests; the container always wires it.
+	audit auditServices.AuditServiceInterface
 }
 
 // NewVaultService constructs a VaultService backed by the given repository and cascade handler.
@@ -246,6 +253,30 @@ func (s *vaultService) SetCreatorGranter(g CreatorGranter) { s.creatorGranter = 
 // SetPolicyVaultLister attaches the policy-vault lister used by
 // ListVaultsScoped's non-admin path.
 func (s *vaultService) SetPolicyVaultLister(l PolicyVaultLister) { s.policyVaults = l }
+
+// SetAuditService attaches the audit service for the critical delete and
+// purge rows. See vaultService.audit.
+func (s *vaultService) SetAuditService(a auditServices.AuditServiceInterface) { s.audit = a }
+
+// runCritical runs op after a critical attempt row for action on v, and
+// records its result. With no audit service wired (tests only) it runs op
+// and logs a legacy success row instead. A failed attempt write returns
+// audit.ErrAuditUnavailable and op does not run.
+func (s *vaultService) runCritical(ctx context.Context, action, message string, v *model.Vault, actorID uuid.UUID, op func(context.Context) error) error {
+	if s.audit != nil {
+		return auditServices.WithCritical(ctx, s.audit, auditServices.AuditEvent{
+			UserID: auditActor(actorID), Action: action, Details: fmt.Sprintf("vault=%s", v.Name),
+			ResourceType: "vault", ResourceID: v.ID.String(), Source: "system",
+		}, op)
+	}
+	if err := op(ctx); err != nil {
+		return err
+	}
+	if s.log != nil {
+		s.log.LogAuditInfo(auditActor(actorID), action, "success", message)
+	}
+	return nil
+}
 
 // SetTxBeginner attaches an optional transaction beginner. When set,
 // DeleteVault/RecoverVault run their cascade atomically inside one
@@ -636,6 +667,15 @@ func (s *vaultService) DeleteVault(ctx context.Context, name string, actorID uui
 		return err
 	}
 
+	// The attempt row must be written before anything is soft-deleted.
+	return s.runCritical(ctx, "delete_vault", fmt.Sprintf("Vault deleted: %s", name), v, actorID, func(ctx context.Context) error {
+		return s.softDeleteVault(ctx, v, name)
+	})
+}
+
+// softDeleteVault soft-deletes v, looked up as name, and cascades the
+// soft-delete to its contents.
+func (s *vaultService) softDeleteVault(ctx context.Context, v *model.Vault, name string) error {
 	if s.txBeginner == nil {
 		// No transaction support configured (e.g. unit tests against fakes);
 		// fall back to the pre-existing non-transactional sequence.
@@ -685,10 +725,6 @@ func (s *vaultService) DeleteVault(ctx context.Context, name string, actorID uui
 	s.flushSecretCache(ctx, v.ID, "vault delete")
 	if s.vaultCache != nil {
 		s.vaultCache.Invalidate(name)
-	}
-
-	if s.log != nil {
-		s.log.LogAuditInfo(auditActor(actorID), "delete_vault", "success", fmt.Sprintf("Vault deleted: %s", name))
 	}
 	return nil
 }
@@ -782,6 +818,16 @@ func (s *vaultService) PurgeVault(ctx context.Context, name string, actorID uuid
 	if protected {
 		return fmt.Errorf("vault %q contains items protected from purge: %w", name, ErrVaultContentsPurgeProtected)
 	}
+
+	// The attempt row must be written before any row is removed.
+	return s.runCritical(ctx, "purge_vault", fmt.Sprintf("Vault purged: %s", name), v, actorID, func(ctx context.Context) error {
+		return s.purgeVaultRows(ctx, v, name)
+	})
+}
+
+// purgeVaultRows permanently removes v, looked up as name, with its contents
+// and the vault-scoped rows that have no working foreign-key cascade.
+func (s *vaultService) purgeVaultRows(ctx context.Context, v *model.Vault, name string) error {
 	if err := s.repo.Purge(ctx, v.ID); err != nil {
 		return err
 	}
@@ -818,9 +864,6 @@ func (s *vaultService) PurgeVault(ctx context.Context, name string, actorID uuid
 		if err := s.webhooks.DeleteByVaultID(ctx, v.ID); err != nil {
 			return fmt.Errorf("purge vault webhook config: %w", err)
 		}
-	}
-	if s.log != nil {
-		s.log.LogAuditInfo(auditActor(actorID), "purge_vault", "success", fmt.Sprintf("Vault purged: %s", name))
 	}
 	return nil
 }
