@@ -107,8 +107,14 @@ func (r *AuditRepository) AppendChained(ctx context.Context, build func(nextSeq 
 	}()
 
 	// A no-op update takes the write lock on both engines.
-	if _, err := tx.ExecContext(ctx, `UPDATE audit_chain_head SET last_seq = last_seq WHERE id = 1`); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE audit_chain_head SET last_seq = last_seq WHERE id = 1`)
+	if err != nil {
 		return fmt.Errorf("audit head lock: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("audit head lock: %w", err)
+	} else if n == 0 {
+		return errors.New("audit head lock: chain head missing")
 	}
 	var lastSeq int64
 	var lastHash string
@@ -128,6 +134,10 @@ func (r *AuditRepository) AppendChained(ctx context.Context, build func(nextSeq 
 
 	nextSeq := lastSeq + 1
 	entry := build(nextSeq, lastHash, now)
+	if entry.PrevHash == "" {
+		// An empty hash would re-root the chain, so it is never stored.
+		return errors.New("audit append: build returned an empty hash")
+	}
 	entry.Timestamp = now
 	if entry.ID == "" {
 		entry.ID = uuid.New().String()

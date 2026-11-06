@@ -299,3 +299,36 @@ func TestQueryAuditLogs_OrdersChainedBeforeLegacy(t *testing.T) {
 	assert.Equal(t, int64(2), *logs[0].Seq)
 	assert.Nil(t, logs[2].Seq)
 }
+
+func TestAppendChained_RejectsEmptyPrevHash(t *testing.T) {
+	db := openAuditTestDBFull(t)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+
+	err := repo.AppendChained(context.Background(), func(int64, string, time.Time) repositories.AuditLog {
+		return repositories.AuditLog{ID: uuid.New().String(), Action: "a"}
+	})
+	require.Error(t, err)
+
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM audit_logs`).Scan(&count))
+	assert.Equal(t, 0, count)
+	var lastSeq int64
+	require.NoError(t, db.QueryRow(`SELECT last_seq FROM audit_chain_head WHERE id = 1`).Scan(&lastSeq))
+	assert.Equal(t, int64(0), lastSeq)
+}
+
+func TestAppendChained_MissingHeadRow(t *testing.T) {
+	db := openAuditTestDBFull(t)
+	_, err := db.Exec(`DELETE FROM audit_chain_head`)
+	require.NoError(t, err)
+	repo := repositories.NewAuditRepository(rvdb.NewConn(db, rvdb.SQLite))
+
+	called := false
+	err = repo.AppendChained(context.Background(), func(int64, string, time.Time) repositories.AuditLog {
+		called = true
+		return repositories.AuditLog{ID: uuid.New().String(), Action: "a", PrevHash: "h"}
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "chain head missing")
+	assert.False(t, called)
+}
