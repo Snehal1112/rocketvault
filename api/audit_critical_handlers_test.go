@@ -314,7 +314,7 @@ func TestRefreshToken_AuditUnavailable_Returns503(t *testing.T) {
 func TestOIDCCallback_AuditUnavailable_Returns503(t *testing.T) {
 	identity := &authServices.OIDCIdentity{Subject: "sub-1", PreferredUsername: "jdoe"}
 	oidcSvc := &mockOIDCService{}
-	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1").Return(identity, nil)
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
 	user := &model.User{ID: uuid.New(), Username: "jdoe", Roles: []string{model.RoleUser}}
 	userSvc := &mockUserServiceForOIDC{}
 	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.Anything).Return(user, nil)
@@ -325,6 +325,7 @@ func TestOIDCCallback_AuditUnavailable_Returns503(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=auth-code", nil)
 	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
 	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
 
 	api.oidcCallbackHandler(w, r)
 
