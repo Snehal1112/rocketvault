@@ -156,9 +156,11 @@ func outcomeFromDetails(details string) string {
 
 // computeChainHash returns
 // SHA-256(prevHash|seq|timestamp|userID|action|details|resourceType+resourceID|outcome).
+// The timestamp is formatted in UTC, so the writer and the verifier agree
+// whatever location the driver returns.
 func computeChainHash(prevHash string, seq int64, ts time.Time, e AuditEvent) string {
 	raw := fmt.Sprintf("%s|%d|%s|%s|%s|%s|%s|%s",
-		prevHash, seq, ts.Format(time.RFC3339Nano),
+		prevHash, seq, ts.UTC().Format(time.RFC3339Nano),
 		e.UserID, e.Action, e.Details,
 		e.ResourceType+e.ResourceID, e.Outcome)
 	sum := sha256.Sum256([]byte(raw))

@@ -137,3 +137,11 @@ func TestComplianceReportService_QueryLogs_ChainedRoundTrip(t *testing.T) {
 	require.Len(t, logs, 3)
 	assert.True(t, res.OK, "break: %v %s", res.BreakSeq, res.BreakReason)
 }
+
+func TestComputeChainHash_SameInstantAnyZone(t *testing.T) {
+	e := verifyEvent()
+	utc := time.Date(2026, 3, 1, 12, 0, 0, 123456000, time.UTC)
+	berlin := utc.In(time.FixedZone("CET", 3600))
+	require.True(t, utc.Equal(berlin))
+	assert.Equal(t, auditSvc.ComputeChainHash("p", 1, utc, e), auditSvc.ComputeChainHash("p", 1, berlin, e))
+}
