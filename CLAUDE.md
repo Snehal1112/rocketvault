@@ -33,7 +33,7 @@ Lint with `golangci-lint run`. Before any merge or pull request the code must bu
 - `.rocketvault.yaml` is the **only** config loaded at runtime. It is gitignored; `.rocketvault.yaml.example` is the committed template. Never put a real secret in the `.example` file.
 - `master_key` is validated at startup. `jwt.key_source` (default `os_store`) is mandatory: if the signing provider cannot be built, startup fails. `jwt_secret` and `jwt.migration_window` are no longer read.
 - JWT is asymmetric-only (RS256/ES256, always a `kid`). There is no HS256 fallback.
-- OIDC login is additive and gated by `oidc.enabled` (default `false`, no network call at startup).
+- OIDC login is additive and gated by `oidc.enabled` (default `false`, no network call at startup). New OIDC identities are denied until `oidc.jit_enabled: true`; the policy keys are in `docs/contributing/configuration.md`.
 - Caches (secrets, keys, vaults) share `internal/cachekit` and the `cache:` config section. The optional L2 tier `cache.rocket_mem.*` fails closed unless TLS and credentials are set.
 - `rate_limit.per_vault` is a per-vault token bucket and must stay after `VaultResolutionMiddleware` in `api/api.go`.
 - Full config notes and admin setup: `docs/contributing/configuration.md`.
