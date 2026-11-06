@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -161,9 +162,17 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		Provider:          model.AuthProviderOIDC,
 		Subject:           identity.Subject,
 		PreferredUsername: identity.PreferredUsername,
+		Email:             identity.Email,
+		EmailVerified:     identity.EmailVerified,
+		Claims:            identity.Claims,
 	})
 	if err != nil {
 		logBypassError(r, "resolve_user", err)
+		// A policy denial is a 403 and never echoes the reason.
+		if errors.Is(err, userServices.ErrExternalUserNotAllowed) {
+			http.Error(w, "access denied", http.StatusForbidden)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

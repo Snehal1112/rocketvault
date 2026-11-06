@@ -489,3 +489,74 @@ func TestOIDCCallback_StateMismatch_ClearsAllCookies(t *testing.T) {
 		assert.True(t, cleared[name], "%s must be cleared", name)
 	}
 }
+
+// oidcCallbackRequest builds a callback request with valid cookies.
+func oidcCallbackRequest() *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=auth-code", nil)
+	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
+	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+	r.AddCookie(&http.Cookie{Name: "oidc_pkce", Value: "verifier-1"})
+	return r
+}
+
+func TestOIDCCallback_PolicyDenied_403(t *testing.T) {
+	identity := &authServices.OIDCIdentity{Subject: "sub-1", PreferredUsername: "jdoe"}
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
+	userSvc := &mockUserServiceForOIDC{}
+	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.Anything).
+		Return(nil, userServices.ErrExternalUserNotAllowed)
+	authSvc := &mockAuthServiceForOIDC{}
+
+	api := newOIDCHAPI(oidcSvc, userSvc, authSvc)
+	w := httptest.NewRecorder()
+	api.oidcCallbackHandler(w, oidcCallbackRequest())
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, "access denied", strings.TrimSpace(w.Body.String()))
+	authSvc.AssertNotCalled(t, "IssueSessionForUser", mock.Anything, mock.Anything)
+}
+
+func TestOIDCCallback_LookupError_500(t *testing.T) {
+	identity := &authServices.OIDCIdentity{Subject: "sub-1", PreferredUsername: "jdoe"}
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
+	userSvc := &mockUserServiceForOIDC{}
+	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.Anything).
+		Return(nil, errors.New("db down"))
+	authSvc := &mockAuthServiceForOIDC{}
+
+	api := newOIDCHAPI(oidcSvc, userSvc, authSvc)
+	w := httptest.NewRecorder()
+	api.oidcCallbackHandler(w, oidcCallbackRequest())
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, "internal error", strings.TrimSpace(w.Body.String()))
+	authSvc.AssertNotCalled(t, "IssueSessionForUser", mock.Anything, mock.Anything)
+}
+
+func TestOIDCCallback_PassesEmailAndClaims(t *testing.T) {
+	claims := map[string]any{"groups": []any{"admins"}}
+	identity := &authServices.OIDCIdentity{
+		Subject: "sub-1", PreferredUsername: "jdoe",
+		Email: "jdoe@example.com", EmailVerified: true, Claims: claims,
+	}
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1", "verifier-1").Return(identity, nil)
+	user := &model.User{ID: uuid.New(), Username: "jdoe", Roles: []string{model.RoleUser}}
+	userSvc := &mockUserServiceForOIDC{}
+	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.MatchedBy(func(req userServices.FindOrCreateExternalUserRequest) bool {
+		return req.Email == "jdoe@example.com" && req.EmailVerified && assert.ObjectsAreEqual(claims, req.Claims)
+	})).Return(user, nil)
+	authSvc := &mockAuthServiceForOIDC{}
+	authSvc.On("IssueSessionForUser", mock.Anything, user).Return(&authServices.AuthenticationResult{
+		Token: "t", RefreshToken: "r", UserID: user.ID, Username: user.Username, Roles: user.Roles,
+	}, nil)
+
+	api := newOIDCHAPI(oidcSvc, userSvc, authSvc)
+	w := httptest.NewRecorder()
+	api.oidcCallbackHandler(w, oidcCallbackRequest())
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	userSvc.AssertExpectations(t)
+}
