@@ -101,6 +101,10 @@ type ManualRotationRequest struct {
 	Generate bool `json:"generate"`
 	// GenerateOpts tunes generation. A zero value means pwgen.DefaultOptions.
 	GenerateOpts pwgen.Options `json:"generate_opts"`
+	// Automatic marks an unattended rotation by the scheduler. Its audit rows
+	// name "system" as the actor, since no principal asked for it. It is never
+	// read from a request body.
+	Automatic bool `json:"-"`
 }
 
 // ErrRotationValueRequired is returned when a rotation request names no value
@@ -491,9 +495,15 @@ func (s *rotationService) runCritical(ctx context.Context, req ManualRotationReq
 	}
 	details, _ := json.Marshal(map[string]any{
 		"vault_id": secret.VaultID.String(), "policy_id": req.PolicyID.String(), "version": secret.Version,
+		"owner_id": secret.UserID.String(), "automatic": req.Automatic,
 	})
+	// A scheduled rotation, or one with no actor, has no acting principal.
+	actor := req.Scope.ActorID().String()
+	if req.Automatic || req.Scope.ActorID() == uuid.Nil {
+		actor = "system"
+	}
 	return auditServices.WithCritical(ctx, s.audit, auditServices.AuditEvent{
-		UserID: req.Scope.ActorID().String(), Action: "rotate_secret", Details: string(details),
+		UserID: actor, Action: "rotate_secret", Details: string(details),
 		ResourceType: "secret", ResourceID: secret.ID.String(), Source: "system",
 	}, op)
 }

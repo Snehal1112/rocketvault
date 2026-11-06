@@ -27,12 +27,14 @@ type rotationAudit struct {
 	onCritical  func()
 	calls       []string
 	critical    []auditServices.AuditEvent
+	events      []auditServices.AuditEvent
 }
 
 func (a *rotationAudit) RecordEvent(_ context.Context, ev auditServices.AuditEvent) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.calls = append(a.calls, "event:"+ev.Outcome)
+	a.events = append(a.events, ev)
 	return nil
 }
 
@@ -155,11 +157,43 @@ func TestAutomaticRotation_AuditDownSkipsAndRetries(t *testing.T) {
 	require.NoError(t, f.schedulerSvc.ProcessUserRotations(ctx, f.userID))
 	assert.Equal(t, before, f.state(t), "the secret stays due and unchanged")
 	require.Len(t, audit.critical, 1)
-	assert.Equal(t, f.userID.String(), audit.critical[0].UserID, "an unattended rotation acts for the owner")
+	assert.Equal(t, "system", audit.critical[0].UserID, "an unattended rotation has no acting principal")
+	assert.Contains(t, audit.critical[0].Details, f.userID.String(), "the owner is kept in the details")
 
 	audit.criticalErr = nil
 	require.NoError(t, f.schedulerSvc.ProcessUserRotations(ctx, f.userID))
 	after := f.state(t)
 	assert.Equal(t, before.version+1, after.version, "the next tick retries")
 	assert.NotEqual(t, before.next, after.next)
+}
+
+// TestAutomaticRotation_ResultRowIsSystem pins that both chained rows of a
+// successful scheduled rotation name "system", not the secret owner.
+func TestAutomaticRotation_ResultRowIsSystem(t *testing.T) {
+	f := newRotationFixture(t, "original-password")
+	audit := &rotationAudit{}
+	f.rotationSvc.SetAuditService(audit)
+
+	require.NoError(t, f.schedulerSvc.ProcessUserRotations(context.Background(), f.userID))
+
+	require.Len(t, audit.critical, 1)
+	assert.Equal(t, "system", audit.critical[0].UserID)
+	require.Len(t, audit.events, 1)
+	assert.Equal(t, "system", audit.events[0].UserID)
+	assert.Equal(t, f.secretID.String(), audit.events[0].ResourceID)
+}
+
+// TestPerformManualRotation_NilActorIsSystem pins that a rotation with no
+// acting principal records "system", never the zero UUID.
+func TestPerformManualRotation_NilActorIsSystem(t *testing.T) {
+	f := newRotationFixture(t, "original-password")
+	audit := &rotationAudit{}
+	f.rotationSvc.SetAuditService(audit)
+
+	require.NoError(t, f.rotationSvc.PerformManualRotation(context.Background(), secrets.ManualRotationRequest{
+		SecretID: f.secretID, PolicyID: f.policyID, Scope: model.NewAdminScope(uuid.Nil), NewValue: "new-password",
+	}))
+
+	require.Len(t, audit.critical, 1)
+	assert.Equal(t, "system", audit.critical[0].UserID)
 }

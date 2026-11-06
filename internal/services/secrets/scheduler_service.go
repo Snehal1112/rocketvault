@@ -242,6 +242,7 @@ func (s *schedulerService) performAutomaticRotation(ctx context.Context, sp mode
 		Notes:        "Automatic rotation by scheduler",
 		Generate:     true,
 		GenerateOpts: pwgen.DefaultOptions(),
+		Automatic:    true,
 	}
 
 	err = s.rotationSvc.PerformManualRotation(ctx, rotationReq)

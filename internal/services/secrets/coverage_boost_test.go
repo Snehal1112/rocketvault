@@ -1270,6 +1270,7 @@ func TestSchedulerServiceProcessesRotationsRemindersAndLifecycle(t *testing.T) {
 		Notes:        "Automatic rotation by scheduler",
 		Generate:     true,
 		GenerateOpts: pwgen.DefaultOptions(),
+		Automatic:    true,
 	}).Return(nil).Once()
 	require.NoError(t, svc.ProcessUserRotations(ctx, userID))
 
