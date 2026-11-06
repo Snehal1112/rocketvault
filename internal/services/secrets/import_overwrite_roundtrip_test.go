@@ -61,6 +61,7 @@ const importFixtureSchema = `
 		role TEXT NOT NULL,
 		auth_provider TEXT NOT NULL DEFAULT 'local',
 		external_idp_subject TEXT,
+		email TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE TABLE user_roles (

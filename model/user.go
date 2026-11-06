@@ -21,8 +21,11 @@ type User struct {
 	AuthProvider string `json:"auth_provider"`
 	// ExternalIDPSubject is the external provider's stable subject (`sub`
 	// claim) for externally-authenticated users, empty for local users.
-	ExternalIDPSubject string    `json:"external_idp_subject,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
+	ExternalIDPSubject string `json:"external_idp_subject,omitempty"`
+	// Email is the user's email address from the external provider, empty when
+	// unknown.
+	Email     string    `json:"email,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Claims extends JWT claims with user-specific fields.

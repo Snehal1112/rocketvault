@@ -65,6 +65,13 @@ func (r *RetryUserRepositoryWrapper) ReadByExternalSubject(ctx context.Context, 
 	})
 }
 
+// UpdateEmail wraps the UpdateEmail operation with retry logic
+func (r *RetryUserRepositoryWrapper) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	return r.retryService.ExecuteDatabaseOperation(ctx, func() error {
+		return r.baseRepo.UpdateEmail(ctx, id, email)
+	})
+}
+
 // List wraps the List operation with retry logic
 func (r *RetryUserRepositoryWrapper) List(ctx context.Context) ([]model.User, error) {
 	return retried(ctx, r.retryService, func() ([]model.User, error) {

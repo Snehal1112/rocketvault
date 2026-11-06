@@ -26,6 +26,9 @@ type UserRepositoryInterface interface {
 	// ReadByExternalSubject retrieves a user by external IdP subject. Returns
 	// an error if no such user exists.
 	ReadByExternalSubject(ctx context.Context, provider, subject string) (*model.User, error)
+	// UpdateEmail sets the user's email. Returns an ErrNotFound-wrapped error
+	// if no such user exists.
+	UpdateEmail(ctx context.Context, id uuid.UUID, email string) error
 	List(ctx context.Context) ([]model.User, error)
 	ValidateBootstrapToken(ctx context.Context, token string) (bool, error)
 	InvalidateBootstrapToken(ctx context.Context, token string) error
@@ -116,6 +119,10 @@ func (r *UserRepository) Create(ctx context.Context, user *model.User) error {
 	if user.ExternalIDPSubject != "" {
 		externalSubject = user.ExternalIDPSubject
 	}
+	var email any
+	if user.Email != "" {
+		email = user.Email
+	}
 	// Normalize once so the legacy comma-joined users.role column and the
 	// user_roles table are always built from the same deduped, non-empty
 	// role list -- otherwise they can diverge (e.g. Roles: []string{"admin",
@@ -126,8 +133,8 @@ func (r *UserRepository) Create(ctx context.Context, user *model.User) error {
 	// copy -- not read by any new code, see the design spec.
 	_, err = tx.ExecContext(
 		ctx,
-		"INSERT INTO users (id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		user.ID.String(), user.Username, user.PasswordHash, user.TOTPSecret, strings.Join(normalizedRoles, ","), authProvider, externalSubject, user.CreatedAt,
+		"INSERT INTO users (id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		user.ID.String(), user.Username, user.PasswordHash, user.TOTPSecret, strings.Join(normalizedRoles, ","), authProvider, externalSubject, email, user.CreatedAt,
 	)
 	if err != nil {
 		_ = tx.Rollback()
@@ -167,9 +174,9 @@ func (r *UserRepository) Read(ctx context.Context, id uuid.UUID) (*model.User, e
 
 	err := r.db.QueryRowContext(
 		ctx,
-		"SELECT id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, created_at FROM users WHERE id = ?",
+		"SELECT id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, COALESCE(email, ''), created_at FROM users WHERE id = ?",
 		id.String(),
-	).Scan(&idStr, &user.Username, &user.PasswordHash, &user.TOTPSecret, &legacyRole, &user.AuthProvider, &externalSubject, &user.CreatedAt)
+	).Scan(&idStr, &user.Username, &user.PasswordHash, &user.TOTPSecret, &legacyRole, &user.AuthProvider, &externalSubject, &user.Email, &user.CreatedAt)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("user not found: %w", ErrNotFound)
@@ -438,9 +445,9 @@ func (r *UserRepository) ReadByUsername(ctx context.Context, username string) (m
 
 	err := r.db.QueryRowContext(
 		ctx,
-		"SELECT id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, created_at FROM users WHERE username = ?",
+		"SELECT id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, COALESCE(email, ''), created_at FROM users WHERE username = ?",
 		username,
-	).Scan(&idStr, &user.Username, &user.PasswordHash, &user.TOTPSecret, &legacyRole, &user.AuthProvider, &externalSubject, &user.CreatedAt)
+	).Scan(&idStr, &user.Username, &user.PasswordHash, &user.TOTPSecret, &legacyRole, &user.AuthProvider, &externalSubject, &user.Email, &user.CreatedAt)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return user, fmt.Errorf("user not found: %w", ErrNotFound)
@@ -476,9 +483,9 @@ func (r *UserRepository) ReadByExternalSubject(ctx context.Context, provider, su
 
 	err := r.db.QueryRowContext(
 		ctx,
-		"SELECT id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, created_at FROM users WHERE auth_provider = ? AND external_idp_subject = ?",
+		"SELECT id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, COALESCE(email, ''), created_at FROM users WHERE auth_provider = ? AND external_idp_subject = ?",
 		provider, subject,
-	).Scan(&idStr, &user.Username, &user.PasswordHash, &user.TOTPSecret, &legacyRole, &user.AuthProvider, &externalSubject, &user.CreatedAt)
+	).Scan(&idStr, &user.Username, &user.PasswordHash, &user.TOTPSecret, &legacyRole, &user.AuthProvider, &externalSubject, &user.Email, &user.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("user not found: %w", ErrNotFound)
 	}
@@ -498,6 +505,25 @@ func (r *UserRepository) ReadByExternalSubject(ctx context.Context, provider, su
 	}
 
 	return &user, nil
+}
+
+// UpdateEmail sets the email of the user with the given ID.
+// Returns an ErrNotFound-wrapped error if no row changes.
+func (r *UserRepository) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	return r.executeWithMetrics("update_user_email", func() error {
+		result, err := r.db.ExecContext(ctx, "UPDATE users SET email = ? WHERE id = ?", email, id.String())
+		if err != nil {
+			return fmt.Errorf("failed to update user email: %w", err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
+		if rowsAffected == 0 {
+			return fmt.Errorf("user not found: %w", ErrNotFound)
+		}
+		return nil
+	})
 }
 
 // Login is deprecated and should not be used.
@@ -523,7 +549,7 @@ func (r *UserRepository) List(ctx context.Context) ([]model.User, error) {
 		// Excludes the reserved system user row (model.SystemUserID) -- it is
 		// not a real account and must never appear in a user listing.
 		rows, err := r.db.QueryContext(ctx,
-			"SELECT id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, created_at FROM users WHERE id != ? ORDER BY created_at DESC",
+			"SELECT id, username, password_hash, totp_secret, role, auth_provider, external_idp_subject, COALESCE(email, ''), created_at FROM users WHERE id != ? ORDER BY created_at DESC",
 			model.SystemUserID)
 		if err != nil {
 			logrus.WithError(err).Error("Failed to list users")
@@ -544,7 +570,7 @@ func (r *UserRepository) List(ctx context.Context) ([]model.User, error) {
 			var legacyRole string
 			var externalSubject sql.NullString
 
-			if err := rows.Scan(&idStr, &user.Username, &user.PasswordHash, &user.TOTPSecret, &legacyRole, &user.AuthProvider, &externalSubject, &user.CreatedAt); err != nil {
+			if err := rows.Scan(&idStr, &user.Username, &user.PasswordHash, &user.TOTPSecret, &legacyRole, &user.AuthProvider, &externalSubject, &user.Email, &user.CreatedAt); err != nil {
 				rows.Close() //nolint:errcheck
 				logrus.WithError(err).Error("Failed to scan user")
 				return fmt.Errorf("failed to scan user: %w", err)

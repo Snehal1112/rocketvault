@@ -459,6 +459,11 @@ func (m *MockUserRepo) ReadByExternalSubject(ctx context.Context, provider, subj
 	return args.Get(0).(*model.User), args.Error(1)
 }
 
+func (m *MockUserRepo) UpdateEmail(ctx context.Context, id uuid.UUID, email string) error {
+	args := m.Called(ctx, id, email)
+	return args.Error(0)
+}
+
 func (m *MockUserRepo) List(ctx context.Context) ([]model.User, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
