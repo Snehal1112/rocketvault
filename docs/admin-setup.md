@@ -383,7 +383,7 @@ If you placed the config elsewhere, pass `--config` explicitly:
    ```
 
 2. `.rocketvault.yaml` is gitignored and untracked as of 2026-08-16 (see
-   `.claude/known-bugs.md` § B10) — it is never committed. Copy
+   `docs/known-bugs.md` § B10) — it is never committed. Copy
    `.rocketvault.yaml.example` to start a new one.
 
 3. Delete any `.admin_totp_secret` files the script may have written after

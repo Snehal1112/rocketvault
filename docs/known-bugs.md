@@ -7,7 +7,7 @@ and fix recipes for each entry.
 `B<N>: <summary>`, `bug` label), with the issue body carrying the same
 Severity/Files/Symptom/Root cause detail as the entry itself (see any issue
 from B52 onward, e.g. #17, for the format) plus a `Full detail:
-.claude/known-bugs.md § B<N>` pointer. When an entry's status moves to
+docs/known-bugs.md § B<N>` pointer. When an entry's status moves to
 Fixed, close its issue (a PR's `Fixes #<N>` footer does this automatically
 on merge).
 
@@ -260,7 +260,7 @@ asserts both calls go through the interactive tier and not
 **Status**: Fixed 2026-08-16 — see
 `docs/superpowers/plans/2026-08-16-remove-hs256-jwt-fallback.md`
 **Severity**: Resolved — was High (full administrative takeover, confirmed by
-live exploitation in `.claude/pentest-report-2026-08-16.md` § H1)
+live exploitation in `docs/internal/pentest-report-2026-08-16.md` § H1)
 **File**: `internal/services/auth/jwt_service.go`,
 `internal/container/service_container.go`
 
@@ -316,7 +316,7 @@ the exploit with the leaked secret.
 **Status**: Fixed 2026-08-16 (structural fix; all four secrets rotated,
 including `master_key` — see item 6 below, executed 2026-08-16 against the
 real dev database with a full change log at
-`.claude/master-key-rotation-log-2026-08-16.md`) — see
+`docs/security/master-key-rotation-log-2026-08-16.md`) — see
 `docs/superpowers/plans/2026-08-16-secrets-in-git-remediation.md`. Git-history
 purge ran 2026-08-17 (see item 9 below) — the "remaining, tracked separately"
 gap this note used to describe is closed. One recurrence happened in between
@@ -325,12 +325,12 @@ gap this note used to describe is closed. One recurrence happened in between
 **Severity**: Resolved — was High (full offline decryption of every stored
 secret, admin-token forgery via the paired H1 finding, and first-admin-bootstrap
 takeover, confirmed by live git-history inspection in
-`.claude/pentest-report-2026-08-16.md` § H4)
+`docs/internal/pentest-report-2026-08-16.md` § H4)
 **File**: `.gitignore`, `.rocketvault.yaml`, `.rocketvault.yaml.example`,
 `.github/workflows/go.yml`, plus 9 tracked docs/scripts/tests that duplicated
 the same values
 
-**Root cause**: `.claude/security-incident-2026-03-07.md` (2026-03-07) already
+**Root cause**: `docs/security/security-incident-2026-03-07.md` (2026-03-07) already
 fixed this exact class of leak once — `git rm --cached` on the then-named
 `.password-manager*.yaml` files, plus a `.gitignore` entry for that name
 pattern. The very next commit touching this area, one day later, renamed the
@@ -386,7 +386,7 @@ into a doc before that removal).
    round-trip was attempted but blocked by an unrelated, pre-existing CLI
    session/refresh-token issue — not chased further, and **still worth an
    operator double-check** (`docs/runbooks/master-key-rotation.md` step 7).
-   Full step-by-step log: `.claude/master-key-rotation-log-2026-08-16.md`. The
+   Full step-by-step log: `docs/security/master-key-rotation-log-2026-08-16.md`. The
    old placeholder key (`***SECRET-REMOVED-2026-08-17***`, base64
    for `0123456789abcdef0123456789abcdef`) is retired and treated as
    permanently compromised; the pre-rotation database backup
@@ -415,7 +415,7 @@ into a doc before that removal).
    clones/forks existed, confirmed by the human operator, so no collaborator
    coordination was needed); (c) rotated `master_key` a third time so the live
    value was never exposed anywhere in history. Full detail:
-   `.claude/master-key-rotation-log-2026-08-16.md` (§ "Third rotation —
+   `docs/security/master-key-rotation-log-2026-08-16.md` (§ "Third rotation —
    2026-08-17"). **Residual risk**: any clone/fork/cache made before
    2026-08-17, outside the operator's knowledge, still has the pre-purge
    history — accepted, same as the four original values' pre-rotation
@@ -429,7 +429,7 @@ written.
 
 **Remaining, tracked separately**:
 - `master_key` rotation: **executed** 2026-08-16 against the live database,
-  see item 6 above and `.claude/master-key-rotation-log-2026-08-16.md` for the
+  see item 6 above and `docs/security/master-key-rotation-log-2026-08-16.md` for the
   full step-by-step record. A live decrypt-via-API verification is still
   recommended as a final operator sanity check.
 - the git history itself still contains every value listed above, recoverable
@@ -461,7 +461,7 @@ request targeted: a caller holding any data-plane grant on the default vault
 could keep reading — and, with a set/create grant, writing — resources they had
 created in **any other vault**, including one where their role assignment had
 been explicitly revoked. Confirmed by live exploitation during the 2026-08-16
-pentest (`.claude/pentest-report-2026-08-16.md` § H2): after
+pentest (`docs/internal/pentest-report-2026-08-16.md` § H2): after
 `DELETE .../role-assignments/{id}` returned 200, the vault-scoped route returned
 403 for the secret while `GET /api/v1/secrets/{id}` still returned its value.
 
@@ -841,7 +841,7 @@ scheduler honored it; the manual `DELETE .../purge` path never checked it for
 keys/certificates, and secrets didn't have the check wired for manual purge
 at all. Vault-level purge protection also did not cascade to protect
 contained items, only the vault itself.
-`.claude/azure-keyvault-parity.md:177` stated "✅ (per-key + per-vault)",
+`docs/architecture/azure-keyvault-parity.md:177` stated "✅ (per-key + per-vault)",
 which was true for per-vault but false for per-key.
 
 **What was fixed**: For each resource type — `PurgeProtection *bool` added
@@ -1057,7 +1057,7 @@ also independently allowed P-256K, and the CLI (`rocketvault keys create
 --curve P-256K`) worked because it calls `KeyService` directly and never
 goes through this HTTP validator at all — so the bug was specific to the
 `POST /keys` REST path. Found during the 2026-08-19 Azure parity audit
-against `.claude/azure-keyvault-parity.md` §3, while re-verifying EC curve
+against `docs/architecture/azure-keyvault-parity.md` §3, while re-verifying EC curve
 support against the actual API surface rather than the service layer alone.
 
 **What was fixed**: Added `"P-256K"` to the `validation.In(...)` allowlist in
@@ -1106,7 +1106,7 @@ P-256K"`) in the response body. The same `GenerateECDSAKey` call exists in
 currently unreachable in practice (an HSM instance can never create the
 P-256K key it would need to rotate), but the shared helper needed the same
 fix for correctness. Found via live end-to-end verification while following
-up on B24 against `.claude/azure-keyvault-parity.md` §3 — a unit test on the
+up on B24 against `docs/architecture/azure-keyvault-parity.md` §3 — a unit test on the
 validator alone (B24's fix) would not have caught this, since it's a
 downstream error-mapping gap in a completely different file.
 
@@ -1159,7 +1159,7 @@ database, correctly encrypted, and permanently unreachable. Practical impact:
 rotate a key once, and every ciphertext, wrapped key, or signature produced
 before that rotation could never be decrypted, unwrapped, or verified again —
 a real, silent data-loss bug with no error raised at rotation time to warn
-the caller it was about to happen. Found via `.claude/azure-keyvault-parity.md`
+the caller it was about to happen. Found via `docs/architecture/azure-keyvault-parity.md`
 §2 gap analysis against Azure Key Vault, which keeps every key version
 independently addressable and usable indefinitely.
 
@@ -1279,7 +1279,7 @@ either — `Key.ExpiresAt` was left exactly as it was before rotation, forever,
 regardless of what a policy's `expiry_days` said. Azure's Notify lifetime
 action has two halves: stamping an expiration on the rotated version, and
 sending a near-expiry notification. Neither had any implementation behind it.
-Found via `.claude/azure-keyvault-parity.md` §2's "Get/Set rotation policy" row.
+Found via `docs/architecture/azure-keyvault-parity.md` §2's "Get/Set rotation policy" row.
 
 **What was fixed** (commit `1161fa5`): `RotateKey` now looks up the key's
 rotation policy via the already-injected `policyRepo` and, if the policy is
@@ -1306,7 +1306,7 @@ this would send email/SMS notifications"), and
 unwired, unreachable dead code (`NewExpirationService` is never called from
 `internal/container/` or any `cmd/` bootstrap). Building real delivery (at
 minimum a generic webhook) is RocketVault's own roadmap item — see
-`.claude/roadmap-azure-parity-and-beyond.md`'s Phase 3 "native
+`docs/roadmap/azure-parity-and-beyond.md`'s Phase 3 "native
 webhook/notification system" entry — and was explicitly scoped out of the
 original rotation-scheduler work for the same reason
 (`docs/superpowers/specs/2026-08-18-rotation-policy-scheduler-design.md`
@@ -2170,7 +2170,7 @@ left the authorization check untouched. Whoever owns the product call
 should update this note when a decision is made.
 
 **Provenance for B35–B41**: all found during the 2026-08-21 CLI help-text sweep
-(`.claude/cli-help-conventions.md`), while reading every `RunE` to describe it
+(`docs/contributing/cli-help-conventions.md`), while reading every `RunE` to describe it
 accurately. Each was verified against the source before filing. The help text
 now documents actual behavior in each case, so the shipped help and this list
 agree.
@@ -3252,7 +3252,7 @@ and keep the leak. Pin with a test per resource type that asserts both the
 status and the absence of the substring `UNIQUE constraint` in the body.
 
 **Found**: manually, while capturing the §8.1 key-import worked example for
-`.claude/manual-testing-plan.md`. Not reachable from the existing test suite,
+`docs/testing/manual-testing-plan.md`. Not reachable from the existing test suite,
 which never creates two resources with the same name in one vault.
 
 ---
@@ -3298,12 +3298,12 @@ ordering that both knows the vault and knows the verdict.
 2. Charge unauthorized requests against a separate, much smaller
    per-principal bucket, so abuse costs the abuser rather than the vault.
    This overlaps with the per-principal rate limiting already on the roadmap
-   (`.claude/roadmap-azure-parity-and-beyond.md`, Phase 3).
+   (`docs/roadmap/azure-parity-and-beyond.md`, Phase 3).
 3. Accept and document it, on the grounds that the caller is authenticated
    and therefore attributable in the audit log.
 
 Whichever is chosen, the behaviour belongs in the docs either way — it is
-currently written down only in `.claude/manual-testing-plan.md` §11.1's worked
+currently written down only in `docs/testing/manual-testing-plan.md` §11.1's worked
 example.
 
 **Found**: manually, while capturing the §11.1 per-vault rate-limit worked
@@ -3329,7 +3329,7 @@ Authorization" section.
 `cmd/secrets/export.go:119-120`
 
 **Symptom**: reproduced live 2026-09-04 while capturing the self-service
-provisioning worked example (`.claude/manual-testing-plan.md`'s "Worked
+provisioning worked example (`docs/testing/manual-testing-plan.md`'s "Worked
 example: self-service provisioning, quotas, and what a soft-delete costs
 you"). `msp-bot`, holding only the global account role `user`, created vault
 `acme-prod` under a provisioning grant; vault creation automatically wrote it
@@ -3390,7 +3390,7 @@ self-service-provisioned principals such as `msp-bot` do not have and have no
 way to acquire without an admin separately granting it — defeating the point
 of self-service.
 
-**Cross-reference**: `.claude/known-bugs.md` § B36's "Authorization" note
+**Cross-reference**: `docs/known-bugs.md` § B36's "Authorization" note
 describes this same gate on `export.go` and concludes "There was never an
 access-control hole here — the defect was purely the false encryption
 assurance." That conclusion is about permissiveness and is still correct; it
@@ -3398,7 +3398,7 @@ is not in tension with this entry, which is about over-restriction on a
 different axis. B36 did not fix, and was not about, the gate itself. See also
 `docs/release-notes/v4.5.0-vault-provisioning.md` (the feature whose headline
 promise this defect undercuts) and the worked example in
-`.claude/manual-testing-plan.md` cited above, which is where this was found
+`docs/testing/manual-testing-plan.md` cited above, which is where this was found
 and first written down.
 
 **Fix recipe**: delete the five `HasAnyRole` gates outright, leaving
@@ -3426,7 +3426,7 @@ assignment would newly need one. This belongs in a release note alongside
 the fix, not folded quietly into a patch release.
 
 **Found**: manually, while capturing the self-service-provisioning worked
-example for `.claude/manual-testing-plan.md`. Not reachable from the existing
+example for `docs/testing/manual-testing-plan.md`. Not reachable from the existing
 test suite, which does not exercise a principal holding a vault-scoped role
 assignment without also holding the matching global account role.
 
@@ -3571,7 +3571,7 @@ Update the mock/test doubles in `cmd/testutils/test_utils.go` (`MockVaultService
 `MockRoleAssignmentService.RevokeAssignment`) to match the new signatures.
 
 **Found**: manually, while capturing the self-service-provisioning worked
-example for `.claude/manual-testing-plan.md`, and confirmed independently
+example for `docs/testing/manual-testing-plan.md`, and confirmed independently
 against `/tmp/rv-prov/rv.db`. Not caught by the existing test suite, which
 asserts on the returned error/success of these operations but does not
 assert on the actor recorded in the resulting audit log entry.
@@ -4691,7 +4691,7 @@ which only the admin role holds (`getDefaultRolePermissions`), and
   with the same outcome.
 - Research step 5 (fresh IdP login before setting a password) and step 6
   (pending enrollment) are deferred on open questions 2 and 3 of
-  `.claude/research-oidc-user-mfa-enrollment.md`. Until step 5 lands, an
+  `docs/internal/research-oidc-user-mfa-enrollment.md`. Until step 5 lands, an
   attacker holding a stolen session token of an OIDC user who has the admin
   role can set that user's password over HTTP and receives the enrollment
   URL, which gives them a complete password-plus-TOTP login. For a non-admin
@@ -6082,7 +6082,7 @@ tests were updated to match (`TestGetUserID_MissingClaim_SetsErr`,
 
 The three accessors this plan targeted (`sessionRepo()`, `certPolicyRepo()`, `keyRotationPolicyRepo()`) are gone from `api/context.go`. `api/`'s remaining `internal/repositories` imports are filter value types passed to service methods (`api/audit.go`, `api/keys.go`, `api/certificates.go`), not repository access. Two direct container-repository reads remain outside this plan's scope: `api/keys.go:620` and `api/role_assignments.go:32` — not regressions, just not targeted by this plan.
 
-**Plan reference**: `.claude/context-followup-cleanup-plan.md`, Plan A Tasks 1-6.
+**Plan reference**: `docs/internal/archive/context-followup-cleanup-plan.md`, Plan A Tasks 1-6.
 
 ---
 

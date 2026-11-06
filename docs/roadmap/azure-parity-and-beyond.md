@@ -1,7 +1,7 @@
 # Roadmap — Azure Key Vault Parity & Beyond
 
 Phased plan for what RocketVault builds next. Sourced from the gap analysis in
-[`azure-keyvault-parity.md`](azure-keyvault-parity.md) (re-verify that doc's own
+[`azure-keyvault-parity.md`](../architecture/azure-keyvault-parity.md) (re-verify that doc's own
 tables before treating any status here as current — it's the source of truth for
 parity state, this doc is the plan built on top of it).
 
@@ -226,7 +226,7 @@ of this section for what changed and why.
 - **Vault-scope role-assignment management for non-admin `vaults:manage`
   holders** — currently requires the global admin role even for a caller who
   already holds vault-scoped management rights; documented as a known
-  limitation in [`docs/release-notes/v4.0.0-azure-rbac.md`](../docs/release-notes/v4.0.0-azure-rbac.md#known-limitations).
+  limitation in [`docs/release-notes/v4.0.0-azure-rbac.md`](../release-notes/v4.0.0-azure-rbac.md#known-limitations).
   **Highest priority in this phase**: this is core to the multi-vault
   delegation model, not just a convenience gap. The whole point of per-vault
   delegation is that a team's vault-manager can run their own vault

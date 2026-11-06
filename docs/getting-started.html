@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Getting Started with RocketVault — RocketVault Docs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="assets/doc-theme.css"/>
+</head>
+<body>
+<header class="doc-header">
+  <a class="doc-back" href="admin-manual.html">&larr; Admin Manual</a>
+  <div class="doc-brand">
+    <div class="doc-mark" aria-hidden="true"></div>
+    <span class="doc-kicker">RocketVault Docs</span>
+  </div>
+  <h1 class="doc-title">Getting Started with RocketVault</h1>
+  <div class="doc-meta"><span class="doc-chip">docs/getting-started.md</span></div>
+  <hr/>
+</header>
+
+<main class="doc">
+<p>RocketVault is a self-hosted vault for secrets, keys, and certificates. Pick the path that matches what you're trying to do.</p>
+<table>
+<thead>
+<tr>
+<th>If you want to…</th>
+<th>Use this way</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Script vault administration from a terminal</td>
+<td><a href="usage-guide.md#1-cli-human-driven">1. CLI (human-driven)</a></td>
+</tr>
+<tr>
+<td>Call RocketVault from my own application code or CI/CD pipeline</td>
+<td><a href="usage-guide.md#2-rest-api-programmatic">2. REST API (programmatic)</a></td>
+</tr>
+<tr>
+<td>Let another service fetch secrets without a human logging in</td>
+<td><a href="usage-guide.md#3-oauth2--service-accounts-machine-to-machine">3. OAuth2 / Service Accounts (machine-to-machine)</a></td>
+</tr>
+<tr>
+<td>Have my Go app pull a secret at startup</td>
+<td><a href="usage-guide.md#4-vault-client-library-embedded-secret-consumption">4. Vault Client library (embedded secret consumption)</a></td>
+</tr>
+<tr>
+<td>Let a third party verify my JWTs without calling back to RocketVault</td>
+<td><a href="usage-guide.md#5-jwks-endpoint-token-verification-by-external-services">5. JWKS endpoint (token verification by external services)</a></td>
+</tr>
+<tr>
+<td>Back up my vault before an upgrade or disaster-recover from a backup</td>
+<td><a href="usage-guide.md#6-backup--restore-tooling">6. Backup / restore tooling</a></td>
+</tr>
+<tr>
+<td>Wire vault health into my monitoring or orchestration stack</td>
+<td><a href="usage-guide.md#7-health--monitoring-integration">7. Health / monitoring integration</a></td>
+</tr>
+<tr>
+<td>Use a hardware security module so private keys never touch my server's memory</td>
+<td><a href="usage-guide.md#8-hsm-backed-mode-pkcs11">8. HSM-backed mode (PKCS#11)</a></td>
+</tr>
+<tr>
+<td>Decide how to deploy RocketVault (standalone, Docker, cloud)</td>
+<td><a href="usage-guide.md#9-deployment-modes">9. Deployment modes</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="local-setup">Local setup</h2>
+<p>Prerequisites:</p>
+<ul>
+<li>Go 1.25 or later, with CGO enabled (the SQLite driver needs it).</li>
+<li>SQLite for development. PostgreSQL is optional and recommended for production.</li>
+<li>SoftHSM2 only if you want to try HSM-backed keys. See <a href="hsm-softhsm2-testing.md">HSM with SoftHSM2</a>.</li>
+</ul>
+<p>Create your local config once per clone:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">cp .rocketvault.yaml.example .rocketvault.yaml
+openssl rand -base64 32   # run twice: one value for master_key, one for bootstrap_token
+</pre></div>
+<p>Replace both <code>GENERATE_WITH</code> placeholders in <code>.rocketvault.yaml</code> with those values. Never commit
+<code>.rocketvault.yaml</code>; it is already in <code>.gitignore</code>. Then start the server and create the first admin:</p>
+<div class="codewrap"><div class="code-hd"><span class="code-lang">bash</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">go run main.go serve
+./rocketvault users admin --admin-username=admin --admin-password=&lt;password&gt; --bootstrap-token=&lt;bootstrap_token&gt;
+</pre></div>
+<p>The first admin setup, including TOTP enrollment, is covered in the <a href="admin-setup.md">admin setup guide</a>.
+More config notes are in <a href="contributing/configuration.md">configuration</a>.</p>
+<h2 id="choose-how-you-use-it">Choose how you use it</h2>
+<p>Each section in the usage guide includes a &quot;When to use it&quot;, worked examples, prerequisites, and gotchas that bite in practice. Start with the row that matches your goal, then dive into the deep-dive link at the end of that section if you need more detail.</p>
+
+</main>
+<footer class="doc-footer"><a href="admin-manual.html">&larr; Back to the Admin Manual</a></footer>
+<script src="assets/doc-theme.js"></script>
+</body>
+</html>

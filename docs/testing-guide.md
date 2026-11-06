@@ -2,9 +2,50 @@
 
 This guide provides comprehensive steps to test the RocketVault's export functionality and related features.
 
+## Unit tests (Go)
+
+Run the whole suite with `go build ./... && go test ./...`. Useful narrower runs:
+
+```bash
+go test ./cmd/... -v          # CLI commands
+go test ./cmd/secrets/... -v  # one command group
+go test ./cmd/... -cover      # with coverage
+```
+
+CLI tests use `cmd/testutils`. `testutils.NewTestContext(t)` returns a `TestContext` that holds a
+`MockServiceContainer` plus testify mocks for the user, secret, authentication, RBAC, vault, role
+assignment and access policy services, and a test user and vault ID. `tc.CreateTestCommand(cmd)`
+wires a Cobra command to that container. Tests are table-driven:
+
+```go
+tests := []struct {
+    name          string
+    setupMocks    func(*testutils.TestContext)
+    flags         map[string]string
+    expectedError string
+}{
+    // Test cases.
+}
+
+for _, tt := range tests {
+    t.Run(tt.name, func(t *testing.T) {
+        tc := testutils.NewTestContext(t)
+        tt.setupMocks(tc)
+        testCmd := tc.CreateTestCommand(createCmd)
+        for k, v := range tt.flags {
+            _ = testCmd.Flags().Set(k, v)
+        }
+        err := testCmd.Execute()
+        // Assert on err and on tc's mock expectations.
+    })
+}
+```
+
+The rest of this guide is a manual walkthrough of the export features.
+
 ## Prerequisites
 
-1. **Go Environment**: Ensure Go 1.19+ is installed
+1. **Go Environment**: Ensure Go 1.25+ is installed
 2. **Dependencies**: Run `go mod tidy` to install all dependencies
 3. **Build**: Compile the application with `go build -o rocketvault`
 

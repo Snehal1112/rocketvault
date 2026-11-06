@@ -9,8 +9,9 @@ Self-hosted, open-source alternative to Azure Key Vault, built in Go. One instan
 ## Before you start
 
 - **Knowledge base** (`~/data/rocket/Nl-knowledge-base/rocketvault/`, local only, not in the repo): before implementing in a subsystem read its page (e.g. `internal/services/authorization/` -> `security-auth.md`); before debugging read `known-issues-gotchas.md`. If a page looks stale for HEAD, ask for a `kb-refresh`.
-- **Bugs**: `.claude/known-bugs.md` is the only source of truth for bug status. Do not copy bug status here. Every new entry also gets a matching GitHub issue.
+- **Bugs**: `docs/known-bugs.md` is the only source of truth for bug status. Do not copy bug status here. Every new entry also gets a matching GitHub issue.
 - **Design intent**: before brainstorming's architectural path, write `docs/superpowers/intents/YYYY-MM-DD-<topic>.md` (see `.claude/intent-convention.md`).
+- **Where docs go**: public docs in `docs/` (index: `docs/README.md`). Docs with unfixed-vulnerability detail, commercial plans or working notes go in `docs/internal/`, which is gitignored because the repo is public. `.claude/` holds only Claude Code config (agents, skills, commands, settings) plus `intent-convention.md` and `claude-md-archive.md`. This overrides the global "docs in `.claude`" rule for this repo.
 - **Layer rules**: see the `service-layer-conventions` skill. Services hold business logic, repositories hold data access only (they expect pre-encrypted, pre-hashed data), middleware only handles HTTP concerns and delegates to services.
 
 ## Build, test, run
@@ -35,7 +36,7 @@ Lint with `golangci-lint run`. Before any merge or pull request the code must bu
 - OIDC login is additive and gated by `oidc.enabled` (default `false`, no network call at startup).
 - Caches (secrets, keys, vaults) share `internal/cachekit` and the `cache:` config section. The optional L2 tier `cache.rocket_mem.*` fails closed unless TLS and credentials are set.
 - `rate_limit.per_vault` is a per-vault token bucket and must stay after `VaultResolutionMiddleware` in `api/api.go`.
-- Full config notes and admin setup: `.claude/configuration.md`.
+- Full config notes and admin setup: `docs/contributing/configuration.md`.
 
 ## Authorization invariants
 
@@ -58,7 +59,7 @@ CLI commands call services directly and bypass HTTP middleware, so every command
 - A new command that skips its tier's check has no other enforcement point.
 - CLI sessions are cached under `~/.rocketvault/sessions/`; `users login` and `users login --oidc` create them.
 
-Full detail, release-note links and the role history: `.claude/service-layer.md`.
+Full detail, release-note links and the role history: `docs/architecture/service-layer.md`.
 
 ## Key and certificate invariants
 
@@ -73,12 +74,13 @@ Full detail, release-note links and the role history: `.claude/service-layer.md`
 
 | Topic | File |
 |---|---|
-| Directory tree, DI container, code patterns, testing | `.claude/architecture.md` |
-| Service layer, authorization, role history | `.claude/service-layer.md` |
-| Multi-vault design | `.claude/multi-vault.md` |
-| Azure Key Vault parity | `.claude/azure-keyvault-parity.md` |
-| Roadmap | `.claude/roadmap-azure-parity-and-beyond.md` |
-| Known bugs | `.claude/known-bugs.md` |
-| Config and admin setup | `.claude/configuration.md` |
-| All other docs (admin manual, API guide, CLI guide, journeys, QA journeybook, MCP, release notes) | `.claude/docs-index.md` |
+| Directory tree, DI container, code patterns, testing | `docs/architecture/architecture.md` |
+| Service layer, authorization, role history | `docs/architecture/service-layer.md` |
+| Multi-vault design | `docs/architecture/multi-vault.md` |
+| Azure Key Vault parity | `docs/architecture/azure-keyvault-parity.md` |
+| Roadmap | `docs/roadmap/azure-parity-and-beyond.md` |
+| Known bugs | `docs/known-bugs.md` |
+| Config and admin setup | `docs/contributing/configuration.md` |
+| All other docs (admin manual, API guide, CLI guide, journeys, QA journeybook, MCP, release notes) | `docs/README.md` |
+| Private (local only): pentest report, SaaS roadmap and phase deep dives, research notes, archive | `docs/internal/` |
 | Historical sections (Oct 2025 refactor, retry system, doc history) | `.claude/claude-md-archive.md` |

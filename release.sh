@@ -29,13 +29,13 @@ if [[ -n "$(git status --porcelain)" ]]; then
     exit 1
 fi
 
-# Guard against the H4 regression (.claude/known-bugs.md § B10): a real
+# Guard against the H4 regression (docs/known-bugs.md § B10): a real
 # .rocketvault.yaml (or a dash/dot-separated sibling) must never be
 # git-tracked. Mirrors the "No tracked RocketVault config files" check in
 # .github/workflows/go.yml so a bad state is caught before tagging, not
 # after push.
 if git ls-files | grep -E '^\.rocketvault([.-].*)?\.yaml$|^\.rocketvault\.yaml\.local$'; then
-    echo -e "${RED}A real RocketVault config file is tracked in git — see .claude/known-bugs.md § B10${NC}"
+    echo -e "${RED}A real RocketVault config file is tracked in git — see docs/known-bugs.md § B10${NC}"
     exit 1
 fi
 

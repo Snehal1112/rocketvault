@@ -229,7 +229,7 @@ rocketvault users create --new-username ops-oncall --new-password '<pw>' --new-r
         why: "`GET /secrets/{id}/versions` used to map to `ActionSecretsReadMetadata` — an action Reader holds — while still decrypting and returning every version's value, because `model.SecretVersion` carried a `Value` field with no metadata-only counterpart. The fix introduced `model.SecretVersionMetadata`, which has no `Value` field at all, so the handler now has nothing to leak even by a future mistake.",
         related: [{ id: "B1", rel: "depends" }],
         source:
-          ".claude/known-bugs.md § B30 — A Key Vault Reader can dump every historical plaintext value of every secret in a vault",
+          "docs/known-bugs.md § B30 — A Key Vault Reader can dump every historical plaintext value of every secret in a vault",
       },
       {
         id: "B4",

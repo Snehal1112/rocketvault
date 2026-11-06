@@ -427,7 +427,7 @@ or an unusable key; `404` for a missing key or CA certificate. `500` is a
 database fault, but a few CA refusals are still plain errors that answer `500`
 on both this route and renew: a CA certificate that cannot sign (for example
 one without the keyCertSign usage), a CA that disappears mid-request, and a CA
-that cannot be inspected (B78 limitations in `.claude/known-bugs.md`).
+that cannot be inspected (B78 limitations in `docs/known-bugs.md`).
 
 #### Renew a Certificate
 

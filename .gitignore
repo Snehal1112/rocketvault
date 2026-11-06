@@ -79,8 +79,8 @@ bootstrap.token
 # RocketVault instance configuration — contains live secrets (master_key,
 # bootstrap_token, hsm.pin). Never commit. Copy .rocketvault.yaml.example to
 # .rocketvault.yaml and fill in generated values instead. This exact class of
-# mistake shipped for 5+ months once already — see .claude/known-bugs.md (B10)
-# and .claude/security-incident-2026-03-07.md. The pattern below covers both
+# mistake shipped for 5+ months once already — see docs/known-bugs.md (B10)
+# and docs/security/security-incident-2026-03-07.md. The pattern below covers both
 # dash-separated (.rocketvault-production.yaml) and dot-separated
 # (.rocketvault.prod.yaml) sibling names — a prior version only matched the
 # dash form, which was the same class of gap that caused the original
@@ -137,3 +137,9 @@ graphify-out
 
 */node_modules/
 */dist/
+# Private docs: unfixed-vulnerability detail, commercial plans and archived notes.
+# Kept next to the public docs but never committed (the repo is public).
+docs/internal/
+
+# Local build output of the docs generator.
+scripts/docsgen/docsgen

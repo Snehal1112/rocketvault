@@ -548,7 +548,7 @@ func TestRestoreKeyPreservesPurgeProtection(t *testing.T) {
 // protection is applied.
 //
 // The order matters because a restore is not transactional (see
-// .claude/known-bugs.md § F3). If purge protection went on first and a version
+// docs/known-bugs.md § F3). If purge protection went on first and a version
 // replay then failed, the partial key would be left protected, and
 // KeyRepository.PurgeKey refuses to delete a protected key
 // (ErrKeyPurgeProtected) -- stranding a row under an ID the caller never

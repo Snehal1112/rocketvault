@@ -3634,7 +3634,7 @@ paths:
         the missing `keys/sign` grant, another user's key or CA certificate,
         or an unusable key; 404 for a missing key or CA certificate; 400
         when `validity_days` exceeds 36500. Some other CA refusals still
-        answer 500 (see `.claude/known-bugs.md` B78).
+        answer 500 (see `docs/known-bugs.md` B78).
       operationId: createCertificate
       tags:
         - Certificates

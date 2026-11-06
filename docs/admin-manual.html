@@ -631,7 +631,7 @@ curl -s $BASE/api/v1/health/live</pre>
     <div class="callout-label">Config notes</div>
     <p>The server listens on <code>:8774</code> by default (see <code>server.listen_addr</code>). Set <code>environment: development</code> or <code>production</code> to select DB pool defaults.</p>
   </div>
-  <p class="see-also">See also: <a href="../doc/setup.html">Setup Guide</a></p>
+  <p class="see-also">See also: <a href="getting-started.html">Getting Started</a></p>
 </section>
 
 <section id="introduction">
@@ -679,7 +679,7 @@ curl -s $BASE/api/v1/health/live</pre>
     <div class="callout-label">Register TOTP before logging in</div>
     <p>Register the returned <code>totp_qr_url</code> in your authenticator app. You can mint codes with <code>oathtool --totp --base32 &lt;secret&gt;</code>.</p>
   </div>
-  <p class="see-also">See also: <a href="../doc/README_ADMIN_SETUP.html">Admin Setup Guide</a></p>
+  <p class="see-also">See also: <a href="admin-setup.html">Admin Setup Guide</a></p>
 </section>
 
 <section id="configuration">
@@ -2077,7 +2077,6 @@ Persistent flags: --config, --username, --password, --totp-code, --output {table
       <tr><td>Lost access to a secret after upgrading to v4.0.0</td><td>Access was granted only via an <code>allow</code> access policy — invisible to the role-assignment backfill</td><td>Grant the equivalent <a href="#vault-rbac">vault role</a> manually; see the upgrade callout</td></tr>
     </tbody>
   </table>
-  <p class="see-also">See also: <a href="../doc/troubleshooting.html">Troubleshooting</a></p>
 </section>
 
 <section id="appendix-security">
@@ -2093,7 +2092,7 @@ Persistent flags: --config, --username, --password, --totp-code, --output {table
     <li>Vault role assignments reviewed per vault (<code>rocketvault vault-access list --vault &lt;name&gt;</code>) — no principal holds more than it needs.</li>
     <li>Before upgrading to v4.0.0+, ran <code>rocketvault vaults preview-migration</code> and checked for <code>allow</code>-only access policies invisible to the backfill (<a href="#vault-rbac">Vault RBAC</a>).</li>
   </ul>
-  <p class="see-also">See also: <a href="../doc/security.html">Security Notes</a></p>
+  <p class="see-also">See also: <a href="usage-guide.html#5-jwks-endpoint-token-verification-by-external-services">JWT and JWKS</a></p>
 </section>
 </main>
 </div>

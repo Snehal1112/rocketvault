@@ -82,7 +82,7 @@ rotate by vault role") made every key operation follow `scopeFromRequest`
 (`api/context.go`) like the rest of the vault-scoped surface. As of 2026-08-16
 `scopeFromRequest` yields `ScopeVault` on **both** route shapes — the flat
 routes carry the default vault — because the owner scope there was a cross-vault
-authorization bypass (see `.claude/known-bugs.md` § B11). The
+authorization bypass (see `docs/known-bugs.md` § B11). The
 `ownerScoped`-branch code paths that used to enforce the old behavior
 (`key_service.go` delete/rotate, `crypto_service.go`'s `loadAndAuthorize`)
 still exist but are now unreachable from any HTTP route; they were left in

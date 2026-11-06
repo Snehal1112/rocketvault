@@ -69,7 +69,7 @@ func keyJWK(c *Context, r *http.Request, keySvc keyservices.KeyService, keyID uu
 // something extracted here because the material in key.Value is
 // master-key-encrypted: this function used to call
 // crypto.ExtractPublicComponents(key.Value, ...) itself and discard the error,
-// so every response carried four empty fields (.claude/known-bugs.md § B34).
+// so every response carried four empty fields (docs/known-bugs.md § B34).
 // Decryption belongs in KeyService.GetPublicJWK.
 func buildKeyResponse(key *model.Key, jwk *model.PublicJWK) KeyResponse {
 	kty := key.Type

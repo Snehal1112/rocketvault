@@ -469,7 +469,7 @@ frontend:
 | `secret not found` fetching from a named vault | Used the legacy `/api/v1/secrets/{uuid}` path (or left `vault_name`/`Vault` unset) for a secret that lives in a non-default vault | Set `vault_name` (consumer-service config), `Config.Vault` (Go), or `VAULT_NAME` (shell script/env) to the vault the secret actually belongs to |
 | `principal not found` granting a role assignment | Passed the service account's `name` as `principal` | `principal` must be the service account's **UUID** (`id` from `POST /service-accounts`), never its name |
 | access policy "allow" entry has no effect | `access-policies` is a deny-only override in the current RBAC model | Grant access via `POST /api/v1/vaults/{vault}/role-assignments` instead (Step 2b) |
-| `insufficient permissions` / `403` on a data-plane call | No role assignment for this service account on this vault, or the granted role lacks the needed data action | Grant `Key Vault Secrets User` (or another role, per `.claude/azure-keyvault-parity.md`) scoped to the correct vault |
+| `insufficient permissions` / `403` on a data-plane call | No role assignment for this service account on this vault, or the granted role lacks the needed data action | Grant `Key Vault Secrets User` (or another role, per `docs/architecture/azure-keyvault-parity.md`) scoped to the correct vault |
 | `vault client init: Config.ClientSecret is required` | `VAULT_CLIENT_SECRET` env var not set | `export VAULT_CLIENT_SECRET="..."` |
 | Server errors on `./rocketvault serve` | `vault_client.client_id` set in `.rocketvault.yaml` | Clear `client_id` — the server must not call itself |
 

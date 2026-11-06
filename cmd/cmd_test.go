@@ -240,7 +240,7 @@ func TestRunVersionList_EmptyVersions(t *testing.T) {
 
 	// Metadata, not values, and a vault scope rather than an owner scope:
 	// listing versions is authorized by ActionSecretsReadMetadata and must not
-	// disclose values (.claude/known-bugs.md § B30), and an owner scope would
+	// disclose values (docs/known-bugs.md § B30), and an owner scope would
 	// survive revocation of the caller's access to the vault.
 	tc.MockSecretService.On("GetSecretVersionsMetadata", mock.Anything, sID, mock.Anything).
 		Return([]model.SecretVersionMetadata{}, nil)

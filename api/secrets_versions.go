@@ -49,7 +49,7 @@ func listSecretVersionsHandler(c *Context, w http.ResponseWriter, r *http.Reques
 	// authorized by ActionSecretsReadMetadata, which Key Vault Reader holds.
 	// It previously called GetSecretVersions, which decrypts every version,
 	// so a Reader could read every historical plaintext value of the secret
-	// (.claude/known-bugs.md § B30). A value is read through
+	// (docs/known-bugs.md § B30). A value is read through
 	// GET /secrets/{id}/versions/{n}, which requires ActionSecretsGet.
 	versions, err := secretService.GetSecretVersionsMetadata(r.Context(), secretID, scope)
 	if err != nil {

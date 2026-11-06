@@ -124,7 +124,7 @@ curl -X POST https://host/api/v1/vaults/prod/role-assignments \
 - A caller who holds a role in a vault can see and act on **every** object in it — access is per vault, not per object owner. Anyone who created secrets under the pre-4.0.0 ownership model should review `rocketvault vaults preview-migration` before upgrading.
 - Requesting an object outside the caller's authorized vault returns `404 Not Found`, not `403 Forbidden` — the two are indistinguishable by design so a 403 can't be used to probe for a resource's existence. `403` is reserved for an authenticated caller with no role granting the required action in that vault.
 
-Full details, upgrade steps, and known limitations: [`docs/release-notes/v4.0.0-azure-rbac.md`](docs/release-notes/v4.0.0-azure-rbac.md) and [`.claude/multi-vault.md`](.claude/multi-vault.md).
+Full details, upgrade steps, and known limitations: [`docs/release-notes/v4.0.0-azure-rbac.md`](docs/release-notes/v4.0.0-azure-rbac.md) and [`docs/architecture/multi-vault.md`](docs/architecture/multi-vault.md).
 
 ### Enterprise-Grade Architecture
 
@@ -227,29 +227,28 @@ rocketvault/
 - [API Specification (OpenAPI/Swagger)](docs/api-specification.yaml) - Complete OpenAPI 3.0 specification
 - [API Developer Guide](docs/api-developer-guide.md) - Comprehensive guide for developers
 - [Integration Examples](docs/integration-examples.md) - Real-world integration examples
-- [CLI Documentation](doc/cli.markdown) - Command-line interface guide
-- [Architecture Documentation](doc/architecture.markdown) - System architecture overview
-- [Security Documentation](doc/security.markdown) - Security features and best practices
-- [Configuration Guide](doc/configuration.markdown) - Configuration options and setup
-- [Setup Guide](doc/setup.md) - Installation and setup instructions
-- [Troubleshooting Guide](doc/troubleshooting.markdown) - Common issues and solutions
+- [CLI Guide](docs/cli-guide.md) - Command-line interface guide
+- [Architecture](docs/architecture/architecture.md) - System architecture overview
+- [Usage Guide: JWT and JWKS](docs/usage-guide.md#5-jwks-endpoint-token-verification-by-external-services) - Token signing and verification
+- [Configuration](docs/contributing/configuration.md) - Configuration options and setup
+- [Getting Started](docs/getting-started.md) - Installation and setup instructions
 - [Testing Guide](docs/testing-guide.md) - Testing procedures and guidelines
 - [HSM / SoftHSM2 Testing Guide](docs/hsm-softhsm2-testing.md) - HSM setup and testing with SoftHSM2
 - [CLI Usage Guide](docs/cli-guide.md) - Step-by-step CLI walkthrough, first-time setup to everyday use
 
 ### Multi-Vault & Authorization Documentation
 
-- [Multi-Vault Architecture](.claude/multi-vault.md) - Vault as a routing/context-scoping layer, migration, and known deferrals
-- [Azure Key Vault RBAC Parity](.claude/azure-keyvault-parity.md) - Feature-by-feature parity comparison with Azure Key Vault
+- [Multi-Vault Architecture](docs/architecture/multi-vault.md) - Vault as a routing/context-scoping layer, migration, and known deferrals
+- [Azure Key Vault RBAC Parity](docs/architecture/azure-keyvault-parity.md) - Feature-by-feature parity comparison with Azure Key Vault
 - [v4.0.0 Azure RBAC Release Notes](docs/release-notes/v4.0.0-azure-rbac.md) - Breaking changes, role table, and upgrade procedure
-- [Vault-Scoped Users Manual Test Guide](.claude/manual-test-vault-scoped-users.md) - End-to-end manual verification steps
+- [Manual Testing Plan](docs/testing/manual-testing-plan.md) - Step-by-step manual verification of every feature
 - [Vault, User & Access Journeys](docs/VAULT_USER_ACCESS_JOURNEYS_v3.md) - How the roles above behave in practice: onboarding, delegation, emergency deny, offboarding, and the CLI/HTTP divergences
 
 ### Additional Resources
 
 - [API Documentation Validation](validate-api-docs.sh) - Documentation validation script
-- [Known Bugs](.claude/known-bugs.md) - Open issues with root-cause analysis
-- [Roadmap — Azure Parity & Beyond](.claude/roadmap-azure-parity-and-beyond.md) - Phased plan to close remaining Azure Key Vault gaps and build self-hosted-native differentiators
+- [Known Bugs](docs/known-bugs.md) - Open issues with root-cause analysis
+- [Roadmap — Azure Parity & Beyond](docs/roadmap/azure-parity-and-beyond.md) - Phased plan to close remaining Azure Key Vault gaps and build self-hosted-native differentiators
 
 ## Quick Install (Prebuilt Binary)
 
@@ -1318,13 +1317,13 @@ This application implements industry-standard security practices:
 - **Secure Defaults**: Conservative security defaults; CI guards against real secrets ever being committed to the repository
 - **Rate Limiting**: Configurable per-endpoint rate limits to prevent brute force
 
-For detailed security information, see the [Security Documentation](doc/security.markdown).
+Known security issues and their fixes are tracked in [Known Bugs](docs/known-bugs.md).
 
 ## Support
 
 For questions or issues:
 
-1. Check the [Troubleshooting Guide](doc/troubleshooting.markdown)
+1. Check the [Usage Guide](docs/usage-guide.md) and the [Administrator Manual](docs/admin-manual.html)
 2. Search existing [GitHub Issues](https://github.com/Snehal1112/rocketvault/issues)
 3. Open a new issue with detailed information
 
@@ -1406,7 +1405,7 @@ For questions or issues:
 
 ### Planned
 
-Full rationale, non-goals, and sequencing: [Roadmap — Azure Parity & Beyond](.claude/roadmap-azure-parity-and-beyond.md).
+Full rationale, non-goals, and sequencing: [Roadmap — Azure Parity & Beyond](docs/roadmap/azure-parity-and-beyond.md).
 
 **Phase 1 — Close remaining Azure Key Vault gaps**
 

@@ -1296,7 +1296,7 @@ rocketvault backup create --file /var/backups/rocketvault/nightly-2026-08-25.bac
 # Encrypted: true
 ```
 
-> The file destination is `--file`/`-f`, not `--output`/`-o`. `backup create` briefly had its own local `--output` flag for the file path, which collided with root's persistent `--output` (the table/json/yaml format selector) and made `backup create --output <path>` fail outright with a format-validation error; fixed 2026-08-22 by renaming it to `--file`/`-f` (`.claude/known-bugs.md` § B48).
+> The file destination is `--file`/`-f`, not `--output`/`-o`. `backup create` briefly had its own local `--output` flag for the file path, which collided with root's persistent `--output` (the table/json/yaml format selector) and made `backup create --output <path>` fail outright with a format-validation error; fixed 2026-08-22 by renaming it to `--file`/`-f` (`docs/known-bugs.md` § B48).
 
 ### Confirming what landed
 
@@ -1849,7 +1849,7 @@ rocketvault vault-webhook delete --vault prod
 
 > ### The config is real. Nothing sends.
 >
-> `rocketvault vault-webhook set/get/delete` genuinely creates, encrypts, and stores a webhook config with a real signing secret — this is not vaporware. But as of this writing it is **pure configuration with no consumer anywhere in the codebase**: nothing in RocketVault ever makes an outbound HTTP call to a configured webhook URL — there is no sender, dispatcher, or delivery worker. `docs/superpowers/specs/2026-08-20-webhook-delivery-primitive-design.md` (status: **Proposed**, sub-project 2 of a 6-part plan against `.claude/known-bugs.md` § B27) lays out how a sender, signature scheme, and SSRF-safe dialer *would* work — but as of 2026-08-25 that design has not been built. Sub-projects 3–5 (the actual publishers — key-expiry, secret-reminder, certificate-expiry) come after it.
+> `rocketvault vault-webhook set/get/delete` genuinely creates, encrypts, and stores a webhook config with a real signing secret — this is not vaporware. But as of this writing it is **pure configuration with no consumer anywhere in the codebase**: nothing in RocketVault ever makes an outbound HTTP call to a configured webhook URL — there is no sender, dispatcher, or delivery worker. `docs/superpowers/specs/2026-08-20-webhook-delivery-primitive-design.md` (status: **Proposed**, sub-project 2 of a 6-part plan against `docs/known-bugs.md` § B27) lays out how a sender, signature scheme, and SSRF-safe dialer *would* work — but as of 2026-08-25 that design has not been built. Sub-projects 3–5 (the actual publishers — key-expiry, secret-reminder, certificate-expiry) come after it.
 >
 > This is the **same gap Journey C already flagged from the other side**: `notify_before_expiry_days` on a key rotation policy is stored and echoed back by `keys rotation-policy get`, but nothing reads it to trigger a send — because there is nothing downstream, webhook or otherwise, that a trigger could call into yet.
 >

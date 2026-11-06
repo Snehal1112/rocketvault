@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RocketVault — Scope, Vault &amp; Access Policy Model</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --surface-2:      #f9f9f7;
+    --surface-3:      #ffffff;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6; /* blue   — ScopeVault */
+    --series-2:       #eb6834; /* orange — ScopeOwner */
+    --series-3:       #1baf7a; /* aqua   — ScopeAdmin */
+    --status-good:      #0ca30c;
+    --status-warning:   #fab219;
+    --status-serious:   #ec835a;
+    --status-critical:  #d03b3b;
+    --status-good-bg:     #0ca30c1a;
+    --status-warning-bg:  #fab2191a;
+    --status-critical-bg: #d03b3b1a;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --surface-2:      #0d0d0d;
+    --surface-3:      #232322;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+    --status-good:      #0ca30c;
+    --status-warning:   #fab219;
+    --status-serious:   #ec835a;
+    --status-critical:  #e66767;
+    --status-good-bg:     #0ca30c26;
+    --status-warning-bg:  #fab21926;
+    --status-critical-bg: #e6676726;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --surface-2:      #0d0d0d;
+      --surface-3:      #232322;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+      --status-good:      #0ca30c;
+      --status-warning:   #fab219;
+      --status-serious:   #ec835a;
+      --status-critical:  #e66767;
+      --status-good-bg:     #0ca30c26;
+      --status-warning-bg:  #fab21926;
+      --status-critical-bg: #e6676726;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--surface-2);
+    color: var(--text-primary);
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px 60px; }
+
+  header.page { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 6px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 0.92rem; max-width: 62ch; line-height: 1.5; margin: 0; }
+  .theme-toggle {
+    flex-shrink: 0;
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--text-muted); }
+
+  nav.tabs {
+    display: flex;
+    gap: 4px;
+    margin: 24px 0 20px;
+    border-bottom: 1px solid var(--grid);
+    flex-wrap: wrap;
+  }
+  nav.tabs button {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    font-weight: 500;
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  nav.tabs button:hover { color: var(--text-primary); }
+  nav.tabs button[aria-selected="true"] {
+    color: var(--text-primary);
+    border-bottom-color: var(--series-1);
+  }
+
+  section.tab { display: none; }
+  section.tab.active { display: block; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .intro { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.55; margin: 0 0 18px; max-width: 72ch; }
+  .intro code, code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 0.86em; background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
+
+  h2 { font-size: 1.08rem; margin: 30px 0 10px; }
+  h2:first-of-type { margin-top: 0; }
+  h3 { font-size: 0.92rem; margin: 0 0 6px; }
+
+  /* ---------- Vaults tab ---------- */
+  .vault-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+  .vault-card {
+    flex: 1 1 260px;
+    border: 1.5px solid var(--series-1);
+    border-radius: 12px;
+    padding: 14px 16px;
+    background: color-mix(in srgb, var(--series-1) 6%, var(--surface-1));
+  }
+  .vault-card.default { border-style: dashed; }
+  .vault-name { font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; }
+  .badge {
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--surface-3);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .resource-row { display: flex; justify-content: space-between; font-size: 0.83rem; color: var(--text-secondary); padding: 5px 0; border-top: 1px solid var(--border); }
+  .resource-row:first-of-type { border-top: none; margin-top: 10px; }
+  .pill { background: var(--surface-3); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; font-size: 0.76rem; color: var(--text-primary); }
+
+  .routing { display: flex; flex-direction: column; gap: 10px; margin: 18px 0 22px; }
+  .route-line { display: flex; align-items: center; gap: 10px; font-size: 0.83rem; }
+  .route-path { font-family: ui-monospace, monospace; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; white-space: nowrap; }
+  .route-arrow { color: var(--text-muted); }
+  .route-target { font-weight: 600; }
+
+  .callout { border-left: 3px solid var(--series-1); background: var(--surface-2); border-radius: 0 8px 8px 0; padding: 10px 14px; font-size: 0.85rem; color: var(--text-secondary); margin: 8px 0; }
+
+  /* ---------- Scope tab ---------- */
+  .scope-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .scope-card { border-radius: 12px; padding: 14px 16px; border: 1.5px solid var(--c); background: color-mix(in srgb, var(--c) 6%, var(--surface-1)); }
+  .scope-card.invalid { border: 1.5px dashed var(--status-critical); background: var(--status-critical-bg); }
+  .scope-kind { font-weight: 700; font-size: 0.92rem; margin-bottom: 4px; }
+  .scope-desc { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.45; margin-bottom: 8px; }
+  .scope-tag { display: inline-block; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; margin-bottom: 8px; background: var(--surface-3); color: var(--text-muted); border: 1px solid var(--border); }
+  .scope-code { font-family: ui-monospace, monospace; font-size: 0.76rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; color: var(--text-primary); overflow-x: auto; }
+
+  .validate-flow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.82rem; margin-top: 6px; }
+  .vf-node { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); }
+  .vf-arrow { color: var(--text-muted); }
+  .vf-good { color: var(--status-good); font-weight: 600; }
+  .vf-bad { color: var(--status-critical); font-weight: 600; }
+
+  /* ---------- Flow tab ---------- */
+  .pipeline { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; margin-bottom: 18px; }
+  .step {
+    background: var(--surface-2);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    min-width: 130px;
+    text-align: left;
+    color: var(--text-primary);
+    position: relative;
+  }
+  .step .step-title { font-weight: 600; display: block; margin-bottom: 2px; }
+  .step .step-sub { color: var(--text-muted); font-size: 0.72rem; }
+  .step + .step { margin-left: 22px; }
+  .step + .step::before {
+    content: "→";
+    position: absolute;
+    left: -19px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+  }
+  .step.dim { opacity: 0.35; }
+  .step.on { border-color: var(--series-1); background: color-mix(in srgb, var(--series-1) 10%, var(--surface-2)); }
+  .step.on.deny { border-color: var(--status-critical); background: var(--status-critical-bg); }
+  .step.on.warn { border-color: var(--status-warning); background: var(--status-warning-bg); }
+  .step.on.allow { border-color: var(--status-good); background: var(--status-good-bg); }
+
+  .scenario-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }
+  .scenario-btn {
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .scenario-btn:hover { border-color: var(--text-muted); color: var(--text-primary); }
+  .scenario-btn[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); }
+
+  .outcome { display: flex; gap: 12px; align-items: flex-start; border-radius: 10px; padding: 14px 16px; margin-bottom: 8px; }
+  .outcome.good { background: var(--status-good-bg); border: 1px solid var(--status-good); }
+  .outcome.critical { background: var(--status-critical-bg); border: 1px solid var(--status-critical); }
+  .outcome.warning { background: var(--status-warning-bg); border: 1px solid var(--status-warning); }
+  .outcome-icon { font-weight: 800; font-size: 1rem; width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; }
+  .outcome.good .outcome-icon { background: var(--status-good); }
+  .outcome.critical .outcome-icon { background: var(--status-critical); }
+  .outcome.warning .outcome-icon { background: var(--status-warning); color: #3a2a00; }
+  .outcome-text strong { display: block; font-size: 0.88rem; margin-bottom: 3px; }
+  .outcome-text span { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; }
+
+  .step-detail { font-size: 0.83rem; color: var(--text-secondary); line-height: 1.55; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 6px; }
+  .step-detail strong { color: var(--text-primary); }
+
+  /* ---------- Roles tab ---------- */
+  table.roles { width: 100%; border-collapse: collapse; font-size: 0.8rem; margin-top: 10px; }
+  table.roles th, table.roles td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  table.roles th { color: var(--text-muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .03em; }
+  table.roles td.role-name { font-weight: 600; white-space: nowrap; }
+  .tag-azure { font-size: 0.65rem; background: var(--series-3); color: #fff; border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+  .tag-legacy { font-size: 0.65rem; background: var(--text-muted); color: #fff; border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+
+  .precedence { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0 22px; font-size: 0.83rem; }
+  .prec-box { border-radius: 8px; padding: 8px 12px; border: 1px solid var(--border); background: var(--surface-2); }
+  .prec-box.win { border-color: var(--status-critical); background: var(--status-critical-bg); font-weight: 600; }
+
+  footer.sources { margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--grid); font-size: 0.74rem; color: var(--text-muted); line-height: 1.6; }
+  footer.sources code { font-size: 0.9em; }
+
+  /* ---------- Usage flow tab ---------- */
+  .uf-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; font-size: 0.78rem; color: var(--text-secondary); }
+  .uf-legend span.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .usage-flow { display: flex; flex-direction: column; }
+  .uf-step { display: grid; grid-template-columns: 30px 1fr; gap: 14px; }
+  .uf-marker { display: flex; flex-direction: column; align-items: center; }
+  .uf-circle { width: 26px; height: 26px; border-radius: 50%; background: var(--series-1); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.74rem; font-weight: 700; flex-shrink: 0; }
+  .uf-circle.optional { background: var(--text-muted); }
+  .uf-line { flex: 1; width: 2px; background: var(--grid); margin: 4px 0; min-height: 16px; }
+  .uf-step:last-child .uf-line { display: none; }
+  .uf-content { padding-bottom: 22px; }
+  .uf-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .uf-title { font-weight: 600; font-size: 0.9rem; }
+  .uf-tag { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-muted); }
+  .uf-tag.user { color: var(--text-secondary); }
+  .uf-tag.vault { color: var(--series-1); border-color: var(--series-1); }
+  .uf-tag.role { color: var(--series-3); border-color: var(--series-3); }
+  .uf-tag.policy { color: var(--series-2); border-color: var(--series-2); }
+  .uf-cmd { font-family: ui-monospace, "SF Mono", Consolas, monospace; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 0.76rem; overflow-x: auto; white-space: pre; margin: 6px 0; color: var(--text-primary); }
+  .uf-desc { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <div>
+      <h1>Scope, Vault &amp; Access Policy in RocketVault</h1>
+      <p class="subtitle">How a request gets from "here's a JWT" to "yes/no, and why" — the three authorization primitives and how they compose.</p>
+    </div>
+    <button class="theme-toggle" id="themeToggle" type="button">Dark mode</button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="usage">Usage flow</button>
+    <button role="tab" aria-selected="false" data-tab="vaults">Vaults</button>
+    <button role="tab" aria-selected="false" data-tab="scope">Scope</button>
+    <button role="tab" aria-selected="false" data-tab="flow">Authorization flow</button>
+    <button role="tab" aria-selected="false" data-tab="roles">Access policies &amp; roles</button>
+  </nav>
+
+  <!-- ============ TAB 0: USAGE FLOW ============ -->
+  <section class="tab active" id="tab-usage">
+    <div class="card">
+      <p class="intro">
+        The practical order operators actually use these pieces in: bootstrap an admin, create a
+        vault, create a user, grant that user a vault-scoped role, optionally lock something down
+        with an explicit policy, then let the user operate. Each step below is a real CLI command.
+      </p>
+
+      <div class="uf-legend">
+        <span><span class="dot" style="background:var(--text-secondary)"></span>User</span>
+        <span><span class="dot" style="background:var(--series-1)"></span>Vault</span>
+        <span><span class="dot" style="background:var(--series-3)"></span>Role assignment (RBAC)</span>
+        <span><span class="dot" style="background:var(--series-2)"></span>Access policy</span>
+      </div>
+
+      <div class="usage-flow">
+
+        <div class="uf-step">
+          <div class="uf-marker"><div class="uf-circle">1</div><div class="uf-line"></div></div>
+          <div class="uf-content">
+            <div class="uf-head"><span class="uf-title">Bootstrap the first admin</span><span class="uf-tag user">User</span></div>
+            <div class="uf-cmd">rocketvault users admin \
+  --admin-username admin --admin-password admin123 \
+  --bootstrap-token test-bootstrap-token-12345</div>
+            <div class="uf-desc">One-time, gated by <code>bootstrap_token</code> from config — creates the first <code>model.RoleAdmin</code> global-role user. Every command after this needs an authenticated identity, and this is where the first one comes from.</div>
+          </div>
+        </div>
+
+        <div class="uf-step">
+          <div class="uf-marker"><div class="uf-circle">2</div><div class="uf-line"></div></div>
+          <div class="uf-content">
+            <div class="uf-head"><span class="uf-title">Log in</span><span class="uf-tag user">User</span></div>
+            <div class="uf-cmd">rocketvault users login \
+  --username admin --password admin123 --totp-code &lt;code&gt;</div>
+            <div class="uf-desc">JWT + TOTP MFA session. This is the identity <code>AuthenticationMiddleware</code> reads on every request from here on — see the Authorization flow tab.</div>
+          </div>
+        </div>
+
+        <div class="uf-step">
+          <div class="uf-marker"><div class="uf-circle">3</div><div class="uf-line"></div></div>
+          <div class="uf-content">
+            <div class="uf-head"><span class="uf-title">Create a vault</span><span class="uf-tag vault">Vault</span></div>
+            <div class="uf-cmd">rocketvault vaults create prod-payments \
+  --purge-protection --retention-days 30 \
+  --username admin --password admin123 --totp-code &lt;code&gt;</div>
+            <div class="uf-desc">Creates the isolation boundary — <code>model.Vault</code> — that secrets/keys/certs and access grants will be scoped to. Requires the global vault-create permission; see the Vaults tab.</div>
+          </div>
+        </div>
+
+        <div class="uf-step">
+          <div class="uf-marker"><div class="uf-circle">4</div><div class="uf-line"></div></div>
+          <div class="uf-content">
+            <div class="uf-head"><span class="uf-title">Create a user for a teammate</span><span class="uf-tag user">User</span></div>
+            <div class="uf-cmd">rocketvault users create \
+  --username admin --password admin123 --totp-code &lt;code&gt; \
+  --new-username alice --new-password &lt;pw&gt; --new-role user</div>
+            <div class="uf-desc">Only an admin can create accounts. Alice exists now but has <strong>zero vault access</strong> — a plain <code>model.RoleUser</code> global role grants nothing inside any vault by itself.</div>
+          </div>
+        </div>
+
+        <div class="uf-step">
+          <div class="uf-marker"><div class="uf-circle">5</div><div class="uf-line"></div></div>
+          <div class="uf-content">
+            <div class="uf-head"><span class="uf-title">Grant Alice a role, scoped to that vault</span><span class="uf-tag role">Role assignment</span></div>
+            <div class="uf-cmd">rocketvault vault-access grant alice \
+  --role "Key Vault Secrets User" --vault prod-payments \
+  --username admin --password admin123 --totp-code &lt;code&gt;</div>
+            <div class="uf-desc">Writes a <code>role_assignments</code> row for (alice, prod-payments, Key Vault Secrets User). This is the RBAC half of authorization — see <code>vault-access roles</code> for the full grantable list, and the Access policies &amp; roles tab for what each one grants.</div>
+          </div>
+        </div>
+
+        <div class="uf-step">
+          <div class="uf-marker"><div class="uf-circle optional">6</div><div class="uf-line"></div></div>
+          <div class="uf-content">
+            <div class="uf-head"><span class="uf-title">(Optional) lock down one specific operation</span><span class="uf-tag policy">Access policy</span></div>
+            <div class="uf-cmd">POST /api/v1/access-policies
+{ "principal_id": "&lt;alice-id&gt;", "resource_type": "secrets",
+  "operation": "delete", "effect": "deny", "vault_id": "&lt;prod-payments-id&gt;" }</div>
+            <div class="uf-desc">API-only today — no CLI command exists for access-policy CRUD yet. An explicit <code>deny</code> row overrides Alice's role grant for that one (resource, operation) pair, even though her role would otherwise allow it. Deny always wins; see the precedence rule on the Access policies &amp; roles tab.</div>
+          </div>
+        </div>
+
+        <div class="uf-step">
+          <div class="uf-marker"><div class="uf-circle">7</div></div>
+          <div class="uf-content">
+            <div class="uf-head"><span class="uf-title">Alice operates on the vault</span><span class="uf-tag vault">Vault</span></div>
+            <div class="uf-cmd">rocketvault secrets create db-password s3cr3t --vault prod-payments \
+  --username alice --password &lt;pw&gt; --totp-code &lt;code&gt;</div>
+            <div class="uf-desc">This request is exactly what the Authorization flow tab walks through step by step: authenticate as alice, resolve <code>prod-payments</code>, check step 6's policy first (none here, so fallback), then check step 5's role assignment for the mapped data action. Granted → the secret is created.</div>
+            <div class="outcome good" style="margin-top:10px;">
+              <div class="outcome-icon">✓</div>
+              <div class="outcome-text"><strong>200 OK</strong><span>Key Vault Secrets User grants <code>ActionSecretsSet</code> in prod-payments, and no deny policy matched.</span></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TAB 1: VAULTS ============ -->
+  <section class="tab" id="tab-vaults">
+    <div class="card">
+      <p class="intro">
+        A <strong>vault</strong> is a named container and isolation boundary for secrets, keys, and
+        certificates — <code>model.Vault</code>. Every deployment ships a reserved <code>default</code>
+        vault (<code>DefaultVaultID = 00000000-0000-0000-0000-00000000efa1</code>) so single-vault use
+        needs no extra setup. Resources are unique per <code>(vault_id, name)</code>, so two vaults can
+        each have their own secret named <code>db-password</code>.
+      </p>
+
+      <div class="vault-row">
+        <div class="vault-card default">
+          <div class="vault-name">default <span class="badge">reserved</span></div>
+          <div class="resource-row"><span>Secrets</span><span class="pill">db-password, api-key…</span></div>
+          <div class="resource-row"><span>Keys</span><span class="pill">signing-key</span></div>
+          <div class="resource-row"><span>Certificates</span><span class="pill">internal-ca</span></div>
+        </div>
+        <div class="vault-card">
+          <div class="vault-name">prod-payments</div>
+          <div class="resource-row"><span>Secrets</span><span class="pill">db-password, stripe-key</span></div>
+          <div class="resource-row"><span>Keys</span><span class="pill">payments-signing</span></div>
+          <div class="resource-row"><span>Certificates</span><span class="pill">payments-tls</span></div>
+        </div>
+      </div>
+
+      <h2>Two ways a request reaches a vault</h2>
+      <div class="routing">
+        <div class="route-line">
+          <span class="route-path">/api/v1/vaults/prod-payments/secrets/{id}</span>
+          <span class="route-arrow">resolves by path →</span>
+          <span class="route-target">prod-payments</span>
+        </div>
+        <div class="route-line">
+          <span class="route-path">/api/v1/secrets/{id}</span>
+          <span class="route-arrow">legacy flat route, no vault in path →</span>
+          <span class="route-target">default</span>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>Visibility model:</strong> any caller authorized for a vault sees <em>everything</em> in
+        it — access is governed by vault access policies + RBAC, not per-user object ownership. This is
+        uniform across secrets, keys, and certificates: a "vault member" isn't scoped down to only the
+        items they personally created.
+      </div>
+      <div class="callout">
+        <strong>Resolution middleware:</strong> <code>VaultResolutionMiddleware</code> reads the
+        <code>{vault_name}</code> path variable, falls back to <code>default</code> if absent, and
+        injects the resolved vault ID into the request context — right after authentication, before any
+        policy check runs.
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TAB 2: SCOPE ============ -->
+  <section class="tab" id="tab-scope">
+    <div class="card">
+      <p class="intro">
+        <code>model.Scope</code> is a value object every repository and service call carries to say
+        <em>how</em> an operation is authorized. It replaced a family of vault-suffixed and
+        owner-suffixed method pairs — the scope now travels as data instead of being baked into a
+        method name. Its zero value is deliberately invalid, so an uninitialised scope fails closed
+        rather than silently granting access.
+      </p>
+
+      <div class="scope-grid">
+        <div class="scope-card invalid">
+          <div class="scope-kind" style="color: var(--status-critical)">ScopeInvalid</div>
+          <span class="scope-tag" style="color:var(--status-critical); border-color:var(--status-critical)">zero value</span>
+          <div class="scope-desc">The default when a <code>Scope</code> is never explicitly built. <code>Validate()</code> always rejects it — repositories refuse to run a query with this scope.</div>
+        </div>
+        <div class="scope-card" style="--c: var(--series-1)">
+          <div class="scope-kind" style="color: var(--series-1)">ScopeVault</div>
+          <span class="scope-tag">any vault member</span>
+          <div class="scope-desc">Any member of <code>vaultID</code> may act. The everyday scope for vault data-plane routes — <code>/vaults/{name}/...</code>.</div>
+          <div class="scope-code">NewVaultScope(vaultID, actorID)</div>
+        </div>
+        <div class="scope-card" style="--c: var(--series-2)">
+          <div class="scope-kind" style="color: var(--series-2)">ScopeOwner</div>
+          <span class="scope-tag">P1 only · retiring</span>
+          <div class="scope-desc">Restricted to the resource owner. Used on legacy flat routes and by the keys/certs CLI (no <code>--vault</code> flag yet). <code>vaultID</code> is advisory only — never an access predicate here.</div>
+          <div class="scope-code">NewOwnerScope(vaultID, ownerID)</div>
+        </div>
+        <div class="scope-card" style="--c: var(--series-3)">
+          <div class="scope-kind" style="color: var(--series-3)">ScopeAdmin</div>
+          <span class="scope-tag">trusted internal only</span>
+          <div class="scope-desc">No predicate at all. Reserved for the vault cascade delete, backup/restore, and the rotation scheduler — never derived from a caller's HTTP request.</div>
+          <div class="scope-code">NewAdminScope(actorID)</div>
+        </div>
+      </div>
+
+      <h2><code>Validate()</code> — the fail-closed gate</h2>
+      <p class="intro" style="margin-bottom:8px;">Every repository entry point calls <code>Scope.Validate()</code> before building a query:</p>
+      <div class="validate-flow">
+        <div class="vf-node">ScopeVault, vaultID set</div><span class="vf-arrow">→</span><span class="vf-good">OK</span>
+        <span style="width:16px"></span>
+        <div class="vf-node">ScopeOwner, ownerID set</div><span class="vf-arrow">→</span><span class="vf-good">OK</span>
+      </div>
+      <div class="validate-flow">
+        <div class="vf-node">ScopeVault, vaultID == nil</div><span class="vf-arrow">→</span><span class="vf-bad">ErrScopeInvalid</span>
+        <span style="width:16px"></span>
+        <div class="vf-node">ScopeInvalid (zero value)</div><span class="vf-arrow">→</span><span class="vf-bad">ErrScopeInvalid</span>
+      </div>
+      <p class="intro" style="margin-top:14px; margin-bottom:0;">
+        Note what <code>actorID</code> is <em>not</em>: it's recorded on every scope for audit
+        attribution, but it never functions as an access predicate — only <code>vaultID</code>
+        (ScopeVault) or <code>ownerID</code> (ScopeOwner) restrict what a query can see.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ TAB 3: FLOW ============ -->
+  <section class="tab" id="tab-flow">
+    <div class="card">
+      <p class="intro">
+        Every HTTP request runs through this middleware chain. Click a scenario below to see which
+        steps run and what decides the outcome — the two authorization mechanisms (<code>access_policies</code>
+        and <code>role_assignments</code>) are evaluated in a specific order, and that order matters.
+      </p>
+
+      <div class="pipeline" id="pipeline">
+        <button class="step" data-step="authn"><span class="step-title">AuthenticationMiddleware</span><span class="step-sub">validates JWT, sets user ID</span></button>
+        <button class="step" data-step="vaultres"><span class="step-title">VaultResolutionMiddleware</span><span class="step-sub">path var → vault ID (or default)</span></button>
+        <button class="step" data-step="policy-step1"><span class="step-title">PolicyMiddleware · 1</span><span class="step-sub">explicit-deny override</span></button>
+        <button class="step" data-step="policy-step2"><span class="step-title">PolicyMiddleware · 2</span><span class="step-sub">deny-by-default role check</span></button>
+        <button class="step" data-step="policy-step3"><span class="step-title">PolicyMiddleware · 3</span><span class="step-sub">pass-through to handler</span></button>
+      </div>
+
+      <div class="scenario-row" id="scenarios">
+        <button class="scenario-btn" data-scn="deny" aria-pressed="false">Explicit deny policy exists</button>
+        <button class="scenario-btn" data-scn="granted" aria-pressed="false">Role assignment grants it</button>
+        <button class="scenario-btn" data-scn="noassignment" aria-pressed="false">No matching role assignment</button>
+        <button class="scenario-btn" data-scn="mgmt" aria-pressed="false">Vault-management route</button>
+      </div>
+
+      <div id="outcomeBox"></div>
+      <div class="step-detail" id="stepDetail">Click a scenario above, or click any step in the pipeline, to see what it does.</div>
+
+      <h2>Why the order matters</h2>
+      <p class="intro" style="margin-bottom:0;">
+        <strong>Step 1 runs first and can only ever deny.</strong> An explicit <code>Deny</code> row in
+        <code>access_policies</code> — vault-specific or global (<code>vault_id IS NULL</code>) — always
+        wins, before any role grant is even consulted. <strong>Step 2 is deny-by-default</strong>: for
+        vault data-plane routes (secrets/keys/certs operations), silence is not access — the caller must
+        hold a <code>role_assignments</code> row in <em>that specific vault</em> granting the mapped Azure
+        data action, via <code>RoleAssignmentService.HasDataAction</code>. Non-data-plane routes (vault
+        management, role-assignment management, users, audit) skip step 2 entirely and fall through to
+        step 3, where the handler itself does the check.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ TAB 4: ROLES ============ -->
+  <section class="tab" id="tab-roles">
+    <div class="card">
+      <p class="intro">
+        <code>access_policies</code> plays two roles at once: it's where <strong>explicit manual
+        grants/denies</strong> live, and it's also the table legacy roles used to expand into. Azure
+        built-in roles are evaluated <em>directly</em> from <code>role_assignments</code> instead of
+        being materialized into <code>access_policies</code> rows — avoiding a second, driftable source
+        of truth for the same grant.
+      </p>
+
+      <h2>Deny-overrides-allow precedence</h2>
+      <div class="precedence">
+        <div class="prec-box">Role assignment says <strong>allow</strong></div>
+        <span>+</span>
+        <div class="prec-box win">Access policy says <strong>deny</strong></div>
+        <span>=</span>
+        <div class="prec-box win">Denied</div>
+      </div>
+
+      <h2>Built-in roles (abridged)</h2>
+      <table class="roles">
+        <thead><tr><th>Role</th><th>Grants</th></tr></thead>
+        <tbody>
+          <tr><td class="role-name">vault-reader<span class="tag-legacy">legacy</span></td><td>Get + List on secrets, keys, certificates</td></tr>
+          <tr><td class="role-name">secrets-officer<span class="tag-legacy">legacy</span></td><td>Full secret lifecycle: get/list/set/delete/backup/restore/recover/purge</td></tr>
+          <tr><td class="role-name">crypto-officer<span class="tag-legacy">legacy</span></td><td>Key management: create/delete/rotate/backup/restore/recover/purge/import</td></tr>
+          <tr><td class="role-name">crypto-user<span class="tag-legacy">legacy</span></td><td>Key operations: get/list/sign/verify/encrypt/decrypt</td></tr>
+          <tr><td class="role-name">certificates-officer<span class="tag-legacy">legacy</span></td><td>Certificate lifecycle: get/list/create/delete/renew/backup/restore/recover/purge</td></tr>
+          <tr><td class="role-name">vault-admin<span class="tag-legacy">legacy</span></td><td>Union of every legacy role above, plus <code>vaults/manage</code></td></tr>
+          <tr><td class="role-name">Key Vault Secrets Officer<span class="tag-azure">Azure</span></td><td>Full data-plane control over secrets in the assigned vault</td></tr>
+          <tr><td class="role-name">Key Vault Crypto Officer<span class="tag-azure">Azure</span></td><td>Key management + crypto operations in the assigned vault</td></tr>
+          <tr><td class="role-name">Key Vault Data Access Administrator<span class="tag-azure">Azure</span></td><td>Manage role assignments for other data-plane roles, scoped to the vault</td></tr>
+          <tr><td class="role-name">Key Vault Purge Operator<span class="tag-azure">Azure</span></td><td>Purge a soft-deleted vault</td></tr>
+        </tbody>
+      </table>
+      <p class="intro" style="margin-top:10px; margin-bottom:0;">
+        Legacy role names are still recognized for display and backward compatibility, but
+        <code>AssignRole</code> refuses to hand out a <em>new</em> legacy-named grant — only the eleven
+        Azure built-in role names carry real data-plane meaning going forward
+        (<code>IsLegacyRole</code> / <code>model.RoleGrantsDataAction</code>).
+      </p>
+    </div>
+  </section>
+
+  <footer class="sources">
+    Built from current source: <code>model/scope.go</code>, <code>model/vault.go</code>,
+    <code>internal/middleware/middleware.go</code> (<code>PolicyMiddleware</code>,
+    <code>VaultResolutionMiddleware</code>), <code>internal/services/authorization/</code>
+    (<code>access_policy_service.go</code>, <code>role_assignment_service.go</code>, <code>roles.go</code>,
+    <code>data_action_authz.go</code>), <code>.claude/multi-vault.md</code>,
+    <code>.claude/azure-keyvault-parity.md</code>. Verified against RocketVault branch
+    <code>v-4.0.0</code>.
+  </footer>
+
+</div>
+
+<script>
+  // ---- theme toggle ----
+  const root = document.documentElement;
+  const themeBtn = document.getElementById('themeToggle');
+  function applyThemeLabel() {
+    const explicit = root.getAttribute('data-theme');
+    const dark = explicit ? explicit === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    themeBtn.textContent = dark ? 'Light mode' : 'Dark mode';
+  }
+  themeBtn.addEventListener('click', () => {
+    const current = root.getAttribute('data-theme');
+    const nowDark = current ? current === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+    root.setAttribute('data-theme', nowDark ? 'light' : 'dark');
+    applyThemeLabel();
+  });
+  applyThemeLabel();
+
+  // ---- tabs ----
+  const tabButtons = document.querySelectorAll('nav.tabs button');
+  const tabSections = document.querySelectorAll('section.tab');
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabButtons.forEach(b => b.setAttribute('aria-selected', 'false'));
+      tabSections.forEach(s => s.classList.remove('active'));
+      btn.setAttribute('aria-selected', 'true');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // ---- flow tab: step details ----
+  const stepInfo = {
+    'authn': "<strong>AuthenticationMiddleware</strong> validates the JWT (RS256/ES256) and TOTP-backed session, then sets the caller's user ID in the request context. Everything downstream depends on this identity being present.",
+    'vaultres': "<strong>VaultResolutionMiddleware</strong> reads the <code>{vault_name}</code> path variable. If present, it resolves to that vault's ID; if absent (a legacy flat route), it resolves to the <code>default</code> vault. Runs after authentication, before policy — so the policy check always has a concrete vault to check against.",
+    'policy-step1': "<strong>Step 1 — explicit-deny override.</strong> <code>AccessPolicyService.CheckAccess</code> looks up <code>access_policies</code> rows matching (principal, resourceType, operation) in this vault OR global rows (<code>vault_id IS NULL</code>). Any <code>Deny</code> row present → immediate 403, before role assignments are even read.",
+    'policy-step2': "<strong>Step 2 — deny-by-default for vault data-plane routes.</strong> Only runs when no deny fired and the route is a vault data-plane route (secrets/keys/certs). <code>RoleAssignmentService.HasDataAction</code> checks whether any of the caller's <code>role_assignments</code> rows in this vault grant the route's mapped Azure data action. No match → 403. This is deny-by-default: before the P2 rework, an absence of policy rows meant 'continue'; now it means 'refuse.'",
+    'policy-step3': "<strong>Step 3 — pass-through for managed non-data-plane routes.</strong> Vault management, role-assignment management, users, and audit routes skip the deny-by-default check. PolicyMiddleware passes the request on; the handler itself authorizes via <code>CanManageVault</code> / <code>CanManageRoleAssignments</code>, or <code>AuthorizationMiddleware</code>'s global-role check."
+  };
+
+  const pipeline = document.getElementById('pipeline');
+  const stepDetail = document.getElementById('stepDetail');
+  pipeline.querySelectorAll('.step').forEach(step => {
+    step.addEventListener('click', () => {
+      clearScenarioButtons();
+      pipeline.querySelectorAll('.step').forEach(s => s.classList.remove('on','dim','deny','warn','allow'));
+      step.classList.add('on');
+      stepDetail.innerHTML = stepInfo[step.dataset.step];
+      document.getElementById('outcomeBox').innerHTML = '';
+    });
+  });
+
+  // ---- flow tab: scenarios ----
+  const scenarios = {
+    deny: {
+      path: ['authn','vaultres','policy-step1'],
+      cls: {'policy-step1':'deny'},
+      outcome: {status:'critical', icon:'✕', text:'403 Forbidden — denied by explicit policy',
+        detail:'AccessPolicyService.CheckAccess found a Deny row (vault-specific or global) for this (principal, resourceType, operation). Deny always wins — role assignments are never even consulted.'}
+    },
+    granted: {
+      path: ['authn','vaultres','policy-step1','policy-step2'],
+      cls: {'policy-step2':'allow'},
+      outcome: {status:'good', icon:'✓', text:'200 OK — allowed by role assignment',
+        detail:'No deny row matched, so the check fell back to step 2. The route is a vault data-plane route, and HasDataAction found a role_assignments row in this vault (e.g. Key Vault Secrets Officer) granting the mapped data action.'}
+    },
+    noassignment: {
+      path: ['authn','vaultres','policy-step1','policy-step2'],
+      cls: {'policy-step2':'deny'},
+      outcome: {status:'critical', icon:'✕', text:'403 Forbidden — deny-by-default',
+        detail:'No deny row existed, but no role_assignments row in this vault grants the mapped data action either. Vault data-plane routes are deny-by-default since the P2 inversion: silence is refusal, not access.'}
+    },
+    mgmt: {
+      path: ['authn','vaultres','policy-step1','policy-step3'],
+      cls: {'policy-step3':'warn'},
+      outcome: {status:'warning', icon:'…', text:'Pass-through — authorized inside the handler',
+        detail:"This route isn't vault data-plane (e.g. vault create/delete, role-assignment management, users, audit), so step 2 is skipped entirely. PolicyMiddleware passes the request on; CanManageVault / CanManageRoleAssignments or AuthorizationMiddleware's global-role check makes the real decision."}
+    }
+  };
+
+  const scenarioBtns = document.querySelectorAll('.scenario-btn');
+  function clearScenarioButtons() {
+    scenarioBtns.forEach(b => b.setAttribute('aria-pressed', 'false'));
+  }
+  scenarioBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      clearScenarioButtons();
+      btn.setAttribute('aria-pressed', 'true');
+      const scn = scenarios[btn.dataset.scn];
+      const allSteps = ['authn','vaultres','policy-step1','policy-step2','policy-step3'];
+      pipeline.querySelectorAll('.step').forEach(s => {
+        const key = s.dataset.step;
+        s.classList.remove('on','dim','deny','warn','allow');
+        if (scn.path.includes(key)) {
+          s.classList.add('on');
+          if (scn.cls[key]) s.classList.add(scn.cls[key]);
+        } else {
+          s.classList.add('dim');
+        }
+      });
+      const o = scn.outcome;
+      document.getElementById('outcomeBox').innerHTML =
+        '<div class="outcome ' + o.status + '">' +
+          '<div class="outcome-icon">' + o.icon + '</div>' +
+          '<div class="outcome-text"><strong>' + o.text + '</strong><span>' + o.detail + '</span></div>' +
+        '</div>';
+      stepDetail.innerHTML = stepInfo[scn.path[scn.path.length - 1]];
+    });
+  });
+
+  // ---- debug helper: ?tab=scope&theme=light&scn=granted for headless screenshots ----
+  (function () {
+    const params = new URLSearchParams(location.search);
+    const t = params.get('theme');
+    if (t === 'light' || t === 'dark') { root.setAttribute('data-theme', t); applyThemeLabel(); }
+    const tab = params.get('tab');
+    if (tab) {
+      const b = document.querySelector('nav.tabs button[data-tab="' + tab + '"]');
+      if (b) b.click();
+    }
+    const scn = params.get('scn');
+    if (scn) {
+      const sb = document.querySelector('.scenario-btn[data-scn="' + scn + '"]');
+      if (sb) sb.click();
+    }
+  })();
+</script>
+</body>
+</html>

@@ -76,6 +76,6 @@ token label and slot actually changed.
 
 - Never commit a PIN — real or placeholder — into any tracked file. The
   previous PIN (`1234`) was committed in `.rocketvault.yaml` for 5+ months
-  (`.claude/known-bugs.md` § B10) and must be treated as permanently
+  (`docs/known-bugs.md` § B10) and must be treated as permanently
   compromised even after this rotation.
 - Never reuse an old, possibly-compromised PIN as the "new" PIN.

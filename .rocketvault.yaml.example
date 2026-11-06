@@ -8,8 +8,8 @@
 #   openssl rand -base64 32
 #
 # NEVER commit .rocketvault.yaml to version control — it is already in
-# .gitignore. See .claude/known-bugs.md (search "B10") and
-# .claude/security-incident-2026-03-07.md for what happens when a config file
+# .gitignore. See docs/known-bugs.md (search "B10") and
+# docs/security/security-incident-2026-03-07.md for what happens when a config file
 # like this one gets committed anyway.
 
 # Development Environment Configuration

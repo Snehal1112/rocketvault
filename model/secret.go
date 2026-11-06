@@ -125,7 +125,7 @@ type SecretVersion struct {
 // before 2026-08-20 that route returned model.SecretVersion with every
 // historical plaintext decrypted into it, so the least-privileged built-in
 // role could read every value of every secret in its vault
-// (.claude/known-bugs.md § B30). Reading an actual value goes through
+// (docs/known-bugs.md § B30). Reading an actual value goes through
 // GET /secrets/{id}/versions/{n}, which requires ActionSecretsGet.
 //
 // Do not add a Value field. Callers that legitimately need plaintext -- backup

@@ -736,7 +736,7 @@ func (s *keyService) GetKeyVersion(ctx context.Context, keyID uuid.UUID, version
 // KeyRepository.Create). api/keys.go used to call
 // crypto.ExtractPublicComponents(key.Value, ...) directly and discard the
 // error, so pem.Decode saw base64 ciphertext, returned a nil block, and all
-// four components came back empty on every response -- .claude/known-bugs.md
+// four components came back empty on every response -- docs/known-bugs.md
 // § B34. Decryption belongs in this layer; the handler just copies the result.
 func (s *keyService) GetPublicJWK(ctx context.Context, keyID uuid.UUID, version int, scope model.Scope) (*model.PublicJWK, error) {
 	// The scoped read is the authorization for the version rows below.

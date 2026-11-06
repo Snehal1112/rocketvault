@@ -6,10 +6,10 @@ Step-by-step walkthrough for exercising every feature by hand. Complements
 the *reference*.
 
 Each section: **Setup** (if any) → **Steps** → **Expected** → **Watch for**
-(known gotchas pulled from `.claude/known-bugs.md` and prior test sessions).
+(known gotchas pulled from `docs/known-bugs.md` and prior test sessions).
 Check items off as `[x]` while you go.
 
-**Last reconciled 2026-09-04** against `.claude/azure-keyvault-parity.md` and the
+**Last reconciled 2026-09-04** against `docs/architecture/azure-keyvault-parity.md` and the
 code. Added since the previous pass: key import (JWK) and key-version
 addressability in §8.1; per-vault webhook configuration in §5; per-vault rate
 limiting as §11.1; the MCP server as §19 (Configuration Reference moved to §20).
@@ -22,7 +22,7 @@ This pass added two §5 worked examples for self-service provisioning —
 quotas and what a soft-delete costs you, and what a provisioning grantee
 cannot do — both captured live, in sequence, against one shared scratch
 instance. The run surfaced two previously unrecorded bugs, now filed as
-`.claude/known-bugs.md` § B57 (the `secrets` CLI's legacy global-role gate,
+`docs/known-bugs.md` § B57 (the `secrets` CLI's legacy global-role gate,
 which contradicts a vault's own role assignments) and § B58 (four
 service-layer call sites writing audit rows with an empty actor, including
 `delete_vault` and `purge_vault`).
@@ -35,7 +35,7 @@ service-layer call sites writing audit rows with an empty actor, including
 
 - [ ] **Use an isolated config + DB, not your working `.rocketvault.yaml` directly.**
       That file is *not* checked in — it is gitignored and generated per clone
-      from `.rocketvault.yaml.example` (see `.claude/known-bugs.md` § B10), so
+      from `.rocketvault.yaml.example` (see `docs/known-bugs.md` § B10), so
       what it contains varies per machine. On this development machine it has
       `hsm.enabled: true` (SoftHSM2) and `oidc.enabled: true` against
       a real, reachable internal OIDC issuer — starting the server with it
@@ -660,8 +660,8 @@ There is **no HTTP route** for this — `POST /api/v1/users/admin` does not exis
   server's) — read it out of your own `.rocketvault.yaml` (or scratch config) at
   test time. **Do not paste the literal value back into this file.** An earlier
   revision of this document quoted a then-live token inline; that token has since
-  been rotated and `.rocketvault.yaml` is no longer git-tracked (`.claude/known-bugs.md`
-  § B10, `.claude/security-incident-2026-03-07.md`). Reproducing a real secret in a
+  been rotated and `.rocketvault.yaml` is no longer git-tracked (`docs/known-bugs.md`
+  § B10, `docs/security/security-incident-2026-03-07.md`). Reproducing a real secret in a
   doc is the incident, not a convenience. See gotcha #3.
 - `sqlite3` (steps 4 and 6 inspect the DB directly) and `jq` (step 5).
 - The server does **not** need to be running for steps 1-4 and 6-9. Step 5
@@ -1294,7 +1294,7 @@ All six are real, verified-against-source behaviors, not hypotheticals.
    `// Non-existent session is considered revoked`. Any JWT whose `jti`
    matches no `user_sessions` row is rejected with `session revoked` → 401,
    even though nothing was ever revoked. This is the exact mechanism
-   behind **B3** in `.claude/known-bugs.md` (pre-upgrade JWTs carrying a
+   behind **B3** in `docs/known-bugs.md` (pre-upgrade JWTs carrying a
    random, non-session `jti`). Nothing in production ever calls
    `DeleteExpiredSessions` — the only callers are tests — so rows are never
    purged; step 11 forces this state with a manual `DELETE`.
@@ -3165,7 +3165,7 @@ everywhere (release 2, not yet shipped, narrows that). Design:
       refuses a protected vault.
 - [ ] Grantee has full rights over its own vault (read/write secrets, manage
       role assignments) but **403 on a vault it did not create** — check both
-      CLI and HTTP. CLI secret writes blocked per `.claude/known-bugs.md` § B57.
+      CLI and HTTP. CLI secret writes blocked per `docs/known-bugs.md` § B57.
 - [ ] Grantee tries to raise its own quota via
       `PUT /api/v1/vault-provisioning-grants/{own_id}` → `403`. This tier is
       admin-only and deliberately non-delegable — there is no access-policy
@@ -3716,7 +3716,7 @@ sessions — not inferred from the code, and not a fresh instance.
 create.** Four HTTP attempts, then the same four probes over the CLI. The
 CLI's cross-vault read probe deliberately uses `secrets list` (a read), not
 one of the five `secrets` write commands — those carry an unrelated legacy
-global-role gate (`.claude/known-bugs.md` § B57) that refuses `msp-bot` for a
+global-role gate (`docs/known-bugs.md` § B57) that refuses `msp-bot` for a
 reason having nothing to do with the vault boundary being tested here; using
 one would have made the refusal ambiguous. `1d` and `1d-cli`, a grantee
 attempting to grant *itself* a role in a vault it does not own, is the single
@@ -3948,7 +3948,7 @@ sqlite3 -readonly /tmp/rv-prov/rv.db "select rowid, action, user_id from audit_l
 Both rows carry an **empty `user_id`**, even though the CLI session that ran
 them was `admin`, fully authenticated, in the same run that stamped
 `create_vault` and `issue_provisioning_grant` correctly. This is the finding
-now recorded as `.claude/known-bugs.md` § B58: `DeleteVault`, `RecoverVault`,
+now recorded as `docs/known-bugs.md` § B58: `DeleteVault`, `RecoverVault`,
 and `PurgeVault` (`internal/services/vaults/vault_service.go:638`, `:690`,
 `:770`) and `RevokeRoleAssignment`
 (`internal/services/authorization/role_assignment_service.go:203`) all
@@ -4043,7 +4043,7 @@ ID                                    Name     Enabled  PurgeProtection  Retenti
    boundaries apart at all.
 5. **The CLI cross-vault probes in step 1 deliberately used a `secrets`
    *read* command, not a write.** `secrets create/update/delete/import/export`
-   carry an unrelated legacy global-role gate (`.claude/known-bugs.md` §
+   carry an unrelated legacy global-role gate (`docs/known-bugs.md` §
    B57) that refuses `msp-bot` regardless of the vault boundary being
    tested, since its global account role is plain `user`. `secrets get`
    (`cmd/secrets/get.go`) carries no such gate, so it isolates the vault
@@ -4926,7 +4926,7 @@ Same flat-vs-vault-scoped duplication note as §7 applies here.
         rocketvault keys wrap --key-id <uuid> --key-material <base64> ...
         rocketvault keys unwrap --key-id <uuid> --wrapped-key <base64-from-above> ...
         ```
-- [ ] **Version addressability across a rotation** (fixed 2026-08-19, `.claude/known-bugs.md`
+- [ ] **Version addressability across a rotation** (fixed 2026-08-19, `docs/known-bugs.md`
       § B26 — before that fix, `RotateKey` overwrote `keys.value` in place and every
       pre-rotation ciphertext and signature became permanently unusable). This is the
       check that proves the fix, so do it in this order:
@@ -5033,7 +5033,7 @@ PY
 2. **Re-importing an existing name returns `500`, not `409`, and leaks the SQL
    constraint.** A name collision is a client error; this reports it as a server
    fault and exposes `UNIQUE constraint failed: keys.vault_id, keys.name` plus
-   the schema. Reproduced live — file it under `.claude/known-bugs.md` if it is
+   the schema. Reproduced live — file it under `docs/known-bugs.md` if it is
    not already there.
 3. **`sign` returns the signature under `value`, and `verify` also takes a
    `value` — but they mean different things.** On sign, `value` is the
@@ -5155,7 +5155,7 @@ curl -s -o /dev/null -X DELETE $BASE/vaults/default/deleted/keys/$KID/purge -H "
 > surfaces: `--curve P-256K` (secp256k1, the Bitcoin/Ethereum curve) is fully
 > implemented and reachable **today**, in software mode, even though neither
 > `--curve`'s nor `--type`'s help text mentions it, and
-> `.claude/roadmap-azure-parity-and-beyond.md`'s line about P-256K reads —
+> `docs/roadmap/azure-parity-and-beyond.md`'s line about P-256K reads —
 > easy to misread — like the whole feature is unimplemented, when it's
 > actually only the **HSM** side of it that's an open gap.
 
@@ -5253,7 +5253,7 @@ curl -s -o /dev/null -X DELETE $BASE/vaults/default/deleted/keys/$KID/purge -H "
    backend-agnostic (it accepts all four curve values before ever calling
    the provider), so this rejection happens one layer down, only when HSM is
    actually on. Already tracked as a deferred gap in
-   `.claude/roadmap-azure-parity-and-beyond.md` — this walkthrough
+   `docs/roadmap/azure-parity-and-beyond.md` — this walkthrough
    reproduces it directly against a real SoftHSM2 token.
 8. **Operational trap (source-only — not reproduced live in this pass): a
    software-created P-256K key becomes permanently un-rotatable if its
@@ -5717,7 +5717,7 @@ Same flat-vs-vault-scoped duplication as §7/§8.
 > role. Read access doesn't have this problem at all, which makes the split
 > easy to miss until you specifically try a write with a "real-role-only"
 > user. This is the same class of divergence flagged elsewhere in this doc
-> (`.claude/e2e-manual-testing-guide.md`'s "Finding 8"); the worked example
+> (`docs/internal/archive/e2e-manual-testing-guide.md`'s "Finding 8"); the worked example
 > below demonstrates it concretely for certificates.
 
 #### Worked example: `docs-tls` vault — self-signed root, CA-signed leaf, and the legacy-role authorization gap
@@ -6057,7 +6057,7 @@ Already partially covered in §6's deny-override test. Additionally:
 > role grant produces a `201` on creation and then silently changes nothing:
 > the subsequent role check still fails and the request still `403`s. This
 > worked example builds on §6's already-proven deny-override mechanic
-> (`.claude/manual-testing-plan.md:2658-2663`) rather than re-deriving it,
+> (`docs/testing/manual-testing-plan.md:2658-2663`) rather than re-deriving it,
 > and instead fills in the request/response shapes §6 skips, plus this
 > inert-allow finding.
 
@@ -6069,7 +6069,7 @@ Already partially covered in §6's deny-override test. Additionally:
 - Admin bootstrapped, `ROCKETVAULT_TOTP_SECRET` exported (**§2 Admin
   Bootstrap**).
 - Familiarity with §3.5's vault-create + self-grant + admin-token pattern
-  (`.claude/manual-testing-plan.md:2105-2154`) and §6's deny-override test —
+  (`docs/testing/manual-testing-plan.md:2105-2154`) and §6's deny-override test —
   this example reuses both rather than re-explaining them.
 - `curl` and `jq`. **No CLI command group exists for access policies at
   all** — every access-policy call below is `curl`; only vault creation,
@@ -6132,7 +6132,7 @@ if you don't know about them going in.
 ##### Setup
 
 Vault creation, self-grant, and admin-token retrieval follow §3.5 steps
-1-2 and 4 exactly (`.claude/manual-testing-plan.md:2105-2154`):
+1-2 and 4 exactly (`docs/testing/manual-testing-plan.md:2105-2154`):
 
 ```bash
 BASE=http://localhost:8774/api/v1
@@ -6179,7 +6179,7 @@ curl -s -o /dev/null -w "%{http_code}\n" $BASE/vaults/policy-demo/secrets \
 Expect `200`.
 
 **2. Deny-effect policy overrides the role grant — brief, since §6 already
-proves this mechanic (`.claude/manual-testing-plan.md:2658-2663`):**
+proves this mechanic (`docs/testing/manual-testing-plan.md:2658-2663`):**
 ```bash
 POLICY=$(curl -s -X POST $BASE/access-policies \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
@@ -6645,7 +6645,7 @@ its report).
 - [ ] Watch for: **the server startup guard only gates `serve`, not CLI
       write-path commands.** `secrets create`/`keys create` run against
       whatever `master_key` is currently configured, even a weak one — this
-      is a known, documented gap (`.claude/known-bugs.md` § B12), not
+      is a known, documented gap (`docs/known-bugs.md` § B12), not
       something rotation itself is expected to catch.
 
 #### Worked example: rotating a scratch instance's master key, and the four ways it goes sideways
@@ -6891,7 +6891,7 @@ rocketvault --config "$CFG" users login --username admin --password admin123 --t
 
 **9. Gotcha #3 — the weak-key guard rejects the known-compromised default
 before touching a row.** This is the same placeholder every fresh clone's
-`.rocketvault.yaml.example` warns about (`.claude/known-bugs.md` § B12):
+`.rocketvault.yaml.example` warns about (`docs/known-bugs.md` § B12):
 ```bash
 export WEAK_KEY="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="   # base64 of "0123456789abcdef0123456789abcdef"
 rocketvault --config "$CFG" master-key rotate --new-key-env WEAK_KEY --dry-run
@@ -6980,7 +6980,7 @@ vault to an MCP host such as Claude Code or Claude Desktop. Guide:
 default).
 
 This has no Azure Key Vault counterpart, so it is not a row in
-`.claude/azure-keyvault-parity.md` — but it is a real, authenticated surface onto
+`docs/architecture/azure-keyvault-parity.md` — but it is a real, authenticated surface onto
 every resource type, so it belongs in a plan that claims to cover every feature.
 
 **The thing to internalise before testing:** capability gating is *structural*.
@@ -7127,7 +7127,7 @@ during first-time setup (see the project README / CLAUDE.md). **Never use
 the live `.rocketvault.yaml`** as a reference source for a doc like this —
 it holds real, currently-active secret values (`master_key`,
 `bootstrap_token`) once a real instance is bootstrapped, and copying those
-into a tracked file is exactly the incident `.claude/known-bugs.md` § B10
+into a tracked file is exactly the incident `docs/known-bugs.md` § B10
 describes.
 
 This block is a point-in-time copy for quick reference; if it looks out of
@@ -7146,8 +7146,8 @@ refresh this copy from it.
 #   openssl rand -base64 32
 #
 # NEVER commit .rocketvault.yaml to version control — it is already in
-# .gitignore. See .claude/known-bugs.md (search "B10") and
-# .claude/security-incident-2026-03-07.md for what happens when a config file
+# .gitignore. See docs/known-bugs.md (search "B10") and
+# docs/security/security-incident-2026-03-07.md for what happens when a config file
 # like this one gets committed anyway.
 
 # Development Environment Configuration
@@ -7489,7 +7489,7 @@ mcp:
 - [ ] Re-run `go test ./...` once more after manual testing — manual testing
       shouldn't have needed any code changes, but if you touched code to work
       around something, confirm you didn't break the suite.
-- [ ] File anything unexpected in `.claude/known-bugs.md` following its existing
+- [ ] File anything unexpected in `docs/known-bugs.md` following its existing
       format (Status/Severity/File/root-cause/fix-recipe) rather than a scratch
       note — that file is the living source of truth for bug status.
 - [ ] Delete the scratch config/DB (`/tmp/rv-test.yaml`, `/tmp/rv-test.db`,

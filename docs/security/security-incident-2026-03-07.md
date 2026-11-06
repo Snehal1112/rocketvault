@@ -63,7 +63,7 @@ The `.gitignore` entry added by this incident's fix
 introduced a new `.rocketvault.yaml` that this pattern didn't match. It stayed
 tracked and unrotated for over five months until a 2026-08-16 penetration test
 found it again. Full root-cause and fix:
-`.claude/known-bugs.md` § B10,
+`docs/known-bugs.md` § B10,
 `docs/superpowers/specs/2026-08-16-secrets-in-git-remediation-design.md`.
 
 The lesson that fix draws from this one: a `.gitignore` pattern change with no

@@ -333,7 +333,7 @@ or an unusable key; <code>404</code> for a missing key or CA certificate. <code>
 database fault, but a few CA refusals are still plain errors that answer <code>500</code>
 on both this route and renew: a CA certificate that cannot sign (for example
 one without the keyCertSign usage), a CA that disappears mid-request, and a CA
-that cannot be inspected (B78 limitations in <code>.claude/known-bugs.md</code>).</p>
+that cannot be inspected (B78 limitations in <code>docs/known-bugs.md</code>).</p>
 <h4 id="renew-a-certificate">Renew a Certificate</h4>
 <div class="codewrap"><div class="code-hd"><span class="code-lang">http</span><button class="copy-btn">Copy</button></div><pre class="code with-hd">POST /api/v1/certificates/{certificate_id}/renew
 Authorization: Bearer &lt;token&gt;

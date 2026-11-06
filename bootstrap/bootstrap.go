@@ -443,7 +443,7 @@ func (b *bootstrap) initializeAPI(cfg *Config, app *app.App) error {
 	)
 
 	// Refuse to serve a route whose authorization nobody classified. See
-	// api.VerifyRouteAuthorization and B80 in .claude/known-bugs.md.
+	// api.VerifyRouteAuthorization and B80 in docs/known-bugs.md.
 	if err := api.VerifyRouteAuthorization(app.GetRouter(), cfg.BasePath); err != nil {
 		return fmt.Errorf("refusing to start: %w", err)
 	}

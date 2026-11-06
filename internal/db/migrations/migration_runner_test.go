@@ -100,7 +100,7 @@ func allRealVersions(t *testing.T, runner *MigrationRunner) []string {
 }
 
 // TestMigrateUp_NormallyBootstrappedDatabase is the headline B47 regression
-// test: reproduces the exact repro from .claude/known-bugs.md § B47 by
+// test: reproduces the exact repro from docs/known-bugs.md § B47 by
 // seeding an in-memory database through the same SetupSchema path a normal
 // `serve` boot uses (which never populates schema_migrations), then running
 // MigrateUp against it. Before the fix this failed on the first ALTER TABLE

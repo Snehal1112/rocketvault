@@ -12,7 +12,7 @@ import (
 // that command, or inherited from an ancestor. Help text that invents a flag is
 // worse than no help at all, since the reader copies it and gets an error.
 //
-// See .claude/cli-help-conventions.md for the wider house style this guards.
+// See docs/contributing/cli-help-conventions.md for the wider house style this guards.
 
 // joinContinuations merges backslash-continued lines into single logical lines
 // so that a wrapped invocation is validated as one command.
@@ -166,7 +166,7 @@ func TestLeafExamplesDoNotShowCredentials(t *testing.T) {
 			long, _ := flagNames(strings.Fields(line))
 			for _, name := range long {
 				if slices.Contains(credFlags, name) {
-					t.Errorf("%s: leaf example shows --%s; sessions are cached, see .claude/cli-help-conventions.md\n  line: %s",
+					t.Errorf("%s: leaf example shows --%s; sessions are cached, see docs/contributing/cli-help-conventions.md\n  line: %s",
 						cmd.CommandPath(), name, line)
 				}
 			}
