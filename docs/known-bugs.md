@@ -6119,7 +6119,7 @@ email is stored in the new nullable `users.email` column.
 
 ---
 
-### B102 — A `GetLastHash` error silently reset the audit hash chain and the compliance report showed a false integrity break
+### B104 — A `GetLastHash` error silently reset the audit hash chain and the compliance report showed a false integrity break
 
 **Status**: Fixed 2026-11-06 (GitHub: to be filed)
 **Severity**: Medium — a transient database error corrupted the tamper-evidence
@@ -6142,11 +6142,11 @@ fails the write instead of resetting the chain, and critical events refuse the
 operation (HTTP 503 `audit unavailable`). Failures are counted in
 `rocketvault_audit_write_failures_total{action}`.
 
-**Related**: § B103.
+**Related**: § B105.
 
 ---
 
-### B103 — The audit hash chain forked when more than one replica wrote to it
+### B105 — The audit hash chain forked when more than one replica wrote to it
 
 **Status**: Fixed 2026-11-06 (GitHub: to be filed)
 **Severity**: Medium — with two or more replicas the chain could not be
@@ -6176,11 +6176,11 @@ must be `seq` 1. Verification reports the first break as
 **Tests**: `TestAuditChain_ConcurrentWriters`
 (`internal/services/audit/audit_chain_concurrency_test.go`).
 
-**Related**: § B102.
+**Related**: § B104.
 
 ---
 
-### B104 — Filtered audit queries are reported as a broken hash chain
+### B106 — Filtered audit queries are reported as a broken hash chain
 
 **Status**: Open (GitHub: to be filed)
 **Severity**: Low to Medium — false tamper warnings; the data is intact, but an
@@ -6207,7 +6207,7 @@ Add tests for each filter on a valid chain.
 
 ---
 
-### B105 — First-boot `os_store` signing-key generation is not written to the audit chain
+### B107 — First-boot `os_store` signing-key generation is not written to the audit chain
 
 **Status**: Open (GitHub: to be filed)
 **Severity**: Low — a signing key is created with no audit row. The
@@ -6230,7 +6230,7 @@ write should fail startup rather than hand out the key unaudited.
 
 ---
 
-### B106 — SOC 2 and GDPR report counts double counted critical operations
+### B108 — SOC 2 and GDPR report counts double counted critical operations
 
 **Status**: Fixed 2026-11-06 (GitHub: to be filed)
 **Severity**: Low — report numbers are inflated; no data is lost.
@@ -6267,7 +6267,7 @@ are kept), so it is exact whatever page the attempt rows would fall on.
 
 ---
 
-### B107 — Account-level authorization changes are not fail-closed critical audit events
+### B109 — Account-level authorization changes are not fail-closed critical audit events
 
 **Status**: Open (GitHub: to be filed)
 **Severity**: Medium — an escalation can succeed with no audit row when the
@@ -6310,7 +6310,7 @@ caller.
 
 ---
 
-### B108 — Unfiltered audit queries sort the whole `audit_logs` table
+### B110 — Unfiltered audit queries sort the whole `audit_logs` table
 
 **Status**: Open (GitHub: to be filed)
 **Severity**: Low to Medium — performance only; grows with the trail.

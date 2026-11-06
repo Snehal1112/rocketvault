@@ -27,7 +27,7 @@
 </blockquote>
 <p>The audit log now fails closed for critical operations, keeps one hash chain
 across any number of replicas, and names the row where verification fails. It
-fixes § B98 (GitHub #64), § B102, § B103 and § B106.</p>
+fixes § B98 (GitHub #64), § B104, § B105 and § B108.</p>
 <h2 id="breaking-changes">Breaking changes</h2>
 <ol>
 <li><strong>Critical operations are refused when their audit row cannot be written.</strong>
@@ -54,13 +54,13 @@ unchanged.</li>
 index) and a new single-row <code>audit_chain_head</code> table holds the last <code>seq</code>
 and hash. Each write locks the head row, assigns the next <code>seq</code> and inserts
 in one transaction, so replicas no longer fork the chain and a failed read
-no longer resets it (§ B102, § B103). <code>GetLastHash</code> and the in-process mutex
+no longer resets it (§ B104, § B105). <code>GetLastHash</code> and the in-process mutex
 are removed.</li>
 <li><strong>New integrity fields.</strong> <code>GET /api/v1/audit/logs</code>, the CLI and the MCP
 <code>query_audit_log</code> tool report <code>integrity_break_seq</code> and
 <code>integrity_break_reason</code> (<code>gap</code> or <code>hash_mismatch</code>) when <code>integrity_ok</code> is
 <code>false</code>. Both fields are absent while the chain verifies. A filtered query
-can still report a false break (§ B104).</li>
+can still report a false break (§ B106).</li>
 <li><strong>New metric.</strong> <code>rocketvault_audit_write_failures_total{action}</code> counts audit
 rows that could not be written. Suggested alert:
 <code>increase(rocketvault_audit_write_failures_total[5m]) &gt; 0</code>.</li>
@@ -72,7 +72,7 @@ fixes the workaround in the v4.11.0 upgrade notes.</li>
 name the deleted user as the actor. It now names the admin or user who
 deleted the account, and <code>resource_id</code> is the deleted user.</li>
 <li><strong>SOC 2 and GDPR reports</strong> skip <code>attempt</code> rows, so critical operations are
-counted once (§ B106). Listings still show them.</li>
+counted once (§ B108). Listings still show them.</li>
 <li><strong>Scheduled secret rotation</strong> records <code>system</code> as the actor.</li>
 </ul>
 <h2 id="upgrade-procedure">Upgrade procedure</h2>
@@ -120,8 +120,8 @@ export or a large report, or a burst of writes, can make audit writes wait
 for the lock. If the wait runs out, a critical operation returns <code>503</code>
 <code>audit unavailable</code> and does not run, instead of running with its audit row
 silently dropped.</li>
-<li><strong>Open follow-ups</strong> are tracked in <code>docs/known-bugs.md</code>: § B104, § B105,
-§ B107 and § B108 (see Known issues below).</li>
+<li><strong>Open follow-ups</strong> are tracked in <code>docs/known-bugs.md</code>: § B106, § B107,
+§ B109 and § B110 (see Known issues below).</li>
 </ul>
 <h2 id="what-did-not-change">What did not change</h2>
 <ul>
@@ -131,14 +131,14 @@ silently dropped.</li>
 </ul>
 <h2 id="known-issues">Known issues</h2>
 <ul>
-<li><strong>B104</strong>: queries filtered by action, outcome, user or resource can report
+<li><strong>B106</strong>: queries filtered by action, outcome, user or resource can report
 <code>gap</code> or <code>hash_mismatch</code> on a valid chain.</li>
-<li><strong>B105</strong>: first-boot signing-key generation under the default
+<li><strong>B107</strong>: first-boot signing-key generation under the default
 <code>jwt.key_source: os_store</code> is not written to the audit chain.</li>
-<li><strong>B107</strong>: account-level authorization changes (user create and update,
+<li><strong>B109</strong>: account-level authorization changes (user create and update,
 explicit-deny policies, provisioning grants) are still best-effort audit
 events, not fail-closed critical ones.</li>
-<li><strong>B108</strong>: an unfiltered audit query sorts the whole <code>audit_logs</code> table,
+<li><strong>B110</strong>: an unfiltered audit query sorts the whole <code>audit_logs</code> table,
 because its <code>seq</code> ordering cannot use an index.</li>
 </ul>
 
