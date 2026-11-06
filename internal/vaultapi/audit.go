@@ -112,10 +112,9 @@ func (c *Client) QueryAuditLogs(ctx context.Context, filter AuditFilter) (*Audit
 	}
 
 	return &AuditPage{
-		Entries:     entries,
-		Total:       response.Total,
-		IntegrityOK: response.IntegrityOK,
-
+		Entries:              entries,
+		Total:                response.Total,
+		IntegrityOK:          response.IntegrityOK,
 		IntegrityBreakSeq:    response.IntegrityBreakSeq,
 		IntegrityBreakReason: response.IntegrityBreakReason,
 		Truncated:            truncated,

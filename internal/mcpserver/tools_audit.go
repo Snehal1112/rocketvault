@@ -99,10 +99,9 @@ func (s *Server) handleQueryAuditLog(ctx context.Context, _ *mcp.CallToolRequest
 	}
 
 	result := queryAuditLogResult{
-		Entries:     entries,
-		Total:       page.Total,
-		IntegrityOK: page.IntegrityOK,
-
+		Entries:              entries,
+		Total:                page.Total,
+		IntegrityOK:          page.IntegrityOK,
 		IntegrityBreakSeq:    page.IntegrityBreakSeq,
 		IntegrityBreakReason: page.IntegrityBreakReason,
 		Truncated:            page.Truncated,

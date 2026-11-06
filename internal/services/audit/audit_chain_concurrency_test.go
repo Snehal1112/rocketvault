@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	rvdb "rocketvault/internal/db"
@@ -59,7 +59,13 @@ func assertChainIntact(t *testing.T, repo repositories.AuditRepositoryExtended, 
 	require.NoError(t, err)
 	require.Equal(t, int64(want), total)
 	require.Len(t, logs, want)
-	assert.True(t, res.OK, "break: %v %s", res.BreakSeq, res.BreakReason)
+	if !res.OK {
+		breakSeq := "none"
+		if res.BreakSeq != nil {
+			breakSeq = strconv.FormatInt(*res.BreakSeq, 10)
+		}
+		t.Errorf("chain break at seq %s: %s", breakSeq, res.BreakReason)
+	}
 
 	// Rows come back newest-first, so walk them from the oldest.
 	prev := ""

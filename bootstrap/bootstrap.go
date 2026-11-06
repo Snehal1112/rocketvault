@@ -452,8 +452,6 @@ func (b *bootstrap) initializeAPI(cfg *Config, app *app.App) error {
 	return nil
 }
 
-// Shutdown performs graceful application shutdown.
-// This method follows SRP by handling only shutdown concerns.
 // newPurgeScheduler builds the soft-delete purge scheduler from sc: vaults
 // are purged through its vault service, and every table purge is audited
 // first through its audit service.
@@ -461,6 +459,8 @@ func newPurgeScheduler(conn db.DB, cfg config.SoftDeleteConfig, log *logging.Log
 	return softdelete.NewPurgeScheduler(conn, cfg, log, sc.GetVaultService(), sc.GetAuditService())
 }
 
+// Shutdown performs graceful application shutdown.
+// This method follows SRP by handling only shutdown concerns.
 func (b *bootstrap) Shutdown(ctx context.Context) error {
 	logrus.Info("Starting application shutdown")
 

@@ -127,7 +127,7 @@ func init() {
 	logsCmd.Flags().String("to", "", "End of time range (RFC3339 or YYYY-MM-DD)")
 	logsCmd.Flags().String("user-id", "", "Filter by user ID")
 	logsCmd.Flags().String("action", "", "Filter by action name")
-	logsCmd.Flags().String("outcome", "", "Filter by outcome (success|failure|warning)")
+	logsCmd.Flags().String("outcome", "", "Filter by outcome (success|failure|warning|denied|attempt)")
 	logsCmd.Flags().String("resource-type", "", "Filter by resource type (secret|key|certificate)")
 	logsCmd.Flags().Int("limit", 100, "Maximum number of log entries to return")
 }
