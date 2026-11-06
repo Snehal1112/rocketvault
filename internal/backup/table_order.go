@@ -27,6 +27,7 @@ var tableDependencies = map[string][]string{
 	"oauth2_clients":            {},
 	"vault_provisioning_grants": {},
 	"audit_config":              {},
+	"audit_chain_head":          {},
 	"login_failures":            {},
 	"secrets":                   {},
 	"keys":                      {},
