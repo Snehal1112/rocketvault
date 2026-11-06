@@ -233,6 +233,24 @@ jobs:
       - name: MCP integration suite
         run: go test -tags=integration ./internal/mcpserver/ -v -timeout 10m
 
+  postgres-integration:
+    name: Postgres Integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Runs the audit chain, repository and backup suites against a real
+      # Postgres started by testcontainers on the runner's Docker. The
+      # default test run uses SQLite only, so engine-specific locking,
+      # snapshot and constraint behavior is checked here.
+      - name: Postgres integration suite
+        run: go test -tags=integration ./internal/services/audit/ ./internal/repositories/ ./internal/backup/... -v -timeout 15m
+
   security:
     name: Security Scan
     # Temporarily disabled — flip `if` back to remove this line to re-enable.
