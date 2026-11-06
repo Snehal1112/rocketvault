@@ -23,6 +23,7 @@ THE SOFTWARE.
 package backup
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -93,8 +94,17 @@ func NewManager(sqlDB *sql.DB, dialect db.Dialect, logger *logging.Logger) *Mana
 func (m *Manager) CreateBackup(outputPath string, encrypt bool) error {
 	m.logger.Info("Starting database backup")
 
+	// Read every table in one transaction so the export is one consistent
+	// snapshot. Otherwise audit_chain_head and audit_logs can disagree.
+	ctx := context.Background()
+	tx, err := m.db.BeginTx(ctx, m.snapshotTxOptions())
+	if err != nil {
+		return fmt.Errorf("failed to begin backup read transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
 	// Get all table names
-	tables, err := m.getTableNames()
+	tables, err := m.getTableNames(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("failed to get table names: %w", err)
 	}
@@ -113,7 +123,7 @@ func (m *Manager) CreateBackup(outputPath string, encrypt bool) error {
 
 	// Export data from each table
 	for _, tableName := range tables {
-		tableData, err := m.exportTableData(tableName)
+		tableData, err := m.exportTableData(ctx, tx, tableName)
 		if err != nil {
 			return fmt.Errorf("failed to export table %s: %w", tableName, err)
 		}
@@ -121,6 +131,11 @@ func (m *Manager) CreateBackup(outputPath string, encrypt bool) error {
 		backupData.Tables = append(backupData.Tables, *tableData)
 		totalRecords += tableData.RowCount
 		m.logger.WithField("table", tableName).WithField("records", tableData.RowCount).Info("Exported table")
+	}
+
+	// End the read transaction before the slow file write.
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to end backup read transaction: %w", err)
 	}
 
 	backupData.Metadata.RecordCount = totalRecords
@@ -171,7 +186,8 @@ func (m *Manager) RestoreBackup(backupPath string, encrypted bool) error {
 	}
 
 	// Begin transaction for restore
-	tx, err := m.db.Begin()
+	ctx := context.Background()
+	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
@@ -197,6 +213,12 @@ func (m *Manager) RestoreBackup(backupPath string, encrypted bool) error {
 		}
 		totalRecords += tableData.RowCount
 		m.logger.WithField("table", tableData.Name).WithField("records", tableData.RowCount).Info("Restored table")
+	}
+
+	// The restored audit_logs may not match the restored or the live chain
+	// head, so recompute the head from the rows in the same transaction.
+	if err := m.resetAuditChainHead(ctx, tx); err != nil {
+		return fmt.Errorf("failed to recompute audit chain head: %w", err)
 	}
 
 	// Commit transaction
@@ -237,8 +259,40 @@ func (m *Manager) ListBackups(backupDir string) ([]BackupMetadata, error) {
 	return backups, nil
 }
 
+// snapshotTxOptions returns the options for the backup read transaction.
+// Postgres gets a read-only REPEATABLE READ snapshot. SQLite keeps the
+// default, because one SQLite transaction already reads a single snapshot.
+func (m *Manager) snapshotTxOptions() *sql.TxOptions {
+	if m.dialect == db.Postgres {
+		return &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}
+	}
+	return nil
+}
+
+// resetAuditChainHead recomputes audit_chain_head from the restored
+// audit_logs rows. It does nothing when the database has no chain tables.
+func (m *Manager) resetAuditChainHead(ctx context.Context, tx *sql.Tx) error {
+	tables, err := m.getTableNames(ctx, tx)
+	if err != nil {
+		return err
+	}
+	var hasLogs, hasHead bool
+	for _, name := range tables {
+		switch name {
+		case "audit_logs":
+			hasLogs = true
+		case "audit_chain_head":
+			hasHead = true
+		}
+	}
+	if !hasLogs || !hasHead {
+		return nil
+	}
+	return db.ResetAuditChainHead(ctx, tx, m.dialect)
+}
+
 // getTableNames retrieves all table names from the database
-func (m *Manager) getTableNames() ([]string, error) {
+func (m *Manager) getTableNames(ctx context.Context, q db.DBTX) ([]string, error) {
 	query := `
 		SELECT name FROM sqlite_master
 		WHERE type='table' AND name NOT LIKE 'sqlite_%'
@@ -251,7 +305,7 @@ func (m *Manager) getTableNames() ([]string, error) {
 			ORDER BY table_name
 		`
 	}
-	rows, err := m.db.Query(query)
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -270,16 +324,16 @@ func (m *Manager) getTableNames() ([]string, error) {
 }
 
 // exportTableData exports all data from a specific table
-func (m *Manager) exportTableData(tableName string) (*TableData, error) {
+func (m *Manager) exportTableData(ctx context.Context, q db.DBTX, tableName string) (*TableData, error) {
 	// Get column information
-	columns, err := m.getTableColumns(tableName)
+	columns, err := m.getTableColumns(ctx, q, tableName)
 	if err != nil {
 		return nil, err
 	}
 
 	// Query all data from the table
 	query := fmt.Sprintf("SELECT * FROM %s", tableName)
-	rows, err := m.db.Query(query)
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -318,13 +372,13 @@ func (m *Manager) exportTableData(tableName string) (*TableData, error) {
 }
 
 // getTableColumns gets column names for a table
-func (m *Manager) getTableColumns(tableName string) ([]string, error) {
+func (m *Manager) getTableColumns(ctx context.Context, q db.DBTX, tableName string) ([]string, error) {
 	if m.dialect == db.Postgres {
-		return m.getTableColumnsPostgres(tableName)
+		return m.getTableColumnsPostgres(ctx, q, tableName)
 	}
 
 	query := fmt.Sprintf("PRAGMA table_info(%s)", tableName)
-	rows, err := m.db.Query(query)
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -347,8 +401,8 @@ func (m *Manager) getTableColumns(tableName string) ([]string, error) {
 }
 
 // getTableColumnsPostgres lists columns via information_schema for PostgreSQL.
-func (m *Manager) getTableColumnsPostgres(tableName string) ([]string, error) {
-	rows, err := m.db.Query(
+func (m *Manager) getTableColumnsPostgres(ctx context.Context, q db.DBTX, tableName string) ([]string, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT column_name FROM information_schema.columns
 		 WHERE table_schema = 'public' AND table_name = $1
 		 ORDER BY ordinal_position`,

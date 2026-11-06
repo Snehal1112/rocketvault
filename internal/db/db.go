@@ -7,7 +7,6 @@ package db
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -1473,24 +1472,16 @@ func (d *DBRepository) seedAuditConfig(db *sql.DB) error {
 	return nil
 }
 
-// seedAuditChainHead creates the single audit_chain_head row if it is absent.
-// The hash comes from the newest legacy audit row, so the chain continues
-// across the upgrade. The sequence starts at 0. Safe to call on every startup.
+// seedAuditChainHead creates the single audit_chain_head row if it is absent
+// and then advances a head that lags behind the highest chained row. On an
+// upgrade the hash comes from the newest legacy audit row, so the chain
+// continues and the sequence starts at 0. Safe to call on every startup.
 func (d *DBRepository) seedAuditChainHead(db *sql.DB) error {
-	var lastHash string
-	err := db.QueryRow(
-		"SELECT COALESCE(prev_hash, '') FROM audit_logs ORDER BY timestamp DESC, id DESC LIMIT 1",
-	).Scan(&lastHash)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("failed to read newest audit row: %w", err)
+	ctx := context.Background()
+	if err := SeedAuditChainHead(ctx, db, d.dialect); err != nil {
+		return err
 	}
-	insertSQL := d.dialect.Rebind(d.dialect.UpsertIgnore(
-		"audit_chain_head", "id, last_seq, last_hash", "?, ?, ?", "id",
-	))
-	if _, err := db.Exec(insertSQL, 1, 0, lastHash); err != nil {
-		return fmt.Errorf("failed to seed audit_chain_head: %w", err)
-	}
-	return nil
+	return ReconcileAuditChainHead(ctx, db, d.dialect)
 }
 
 // seedDefaultVault inserts the default vault if it is absent. It is idempotent.

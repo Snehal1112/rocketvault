@@ -125,3 +125,49 @@ func TestPostgres_BackupRestore_RoundTrip(t *testing.T) {
 
 	require.NoError(t, os.Remove(backupPath))
 }
+
+// TestPostgres_Restore_RecomputesAuditChainHead runs the chain head restore
+// scenarios against Postgres. Each scenario starts from an empty trail.
+func TestPostgres_Restore_RecomputesAuditChainHead(t *testing.T) {
+	sqlDB, dialect, cleanup := newBackupPostgresDB(t)
+	defer cleanup()
+
+	scenarios := map[string]func(*testing.T, *auditChainFixture){
+		"lagging_head":    scenarioRestoreLaggingHead,
+		"pre_v412_legacy": scenarioRestorePreV412Legacy,
+		"pre_v412_empty":  scenarioRestorePreV412Empty,
+		"round_trip_head": scenarioRoundTripWithHead,
+	}
+	for name, run := range scenarios {
+		t.Run(name, func(t *testing.T) {
+			_, err := sqlDB.Exec(`DELETE FROM audit_logs`)
+			require.NoError(t, err)
+			_, err = sqlDB.Exec(`UPDATE audit_chain_head SET last_seq = 0, last_hash = '' WHERE id = 1`)
+			require.NoError(t, err)
+			run(t, newAuditChainFixture(sqlDB, dialect))
+		})
+	}
+
+	// The startup reconcile advances a lagging head and never moves it back.
+	t.Run("startup_reconcile", func(t *testing.T) {
+		_, err := sqlDB.Exec(`DELETE FROM audit_logs`)
+		require.NoError(t, err)
+		_, err = sqlDB.Exec(`UPDATE audit_chain_head SET last_seq = 0, last_hash = '' WHERE id = 1`)
+		require.NoError(t, err)
+		f := newAuditChainFixture(sqlDB, dialect)
+		f.record(t, 4)
+		f.setHead(t, 2, f.hashOfSeq(t, 2))
+
+		repo := rvdb.NewRepository(logging.InitLogger())
+		require.NoError(t, repo.SetupSchema(sqlDB, rvdb.Postgres))
+		seq, hash := f.head(t)
+		require.Equal(t, int64(4), seq)
+		require.Equal(t, f.hashOfSeq(t, 4), hash)
+
+		f.setHead(t, 9, "ahead")
+		require.NoError(t, repo.SetupSchema(sqlDB, rvdb.Postgres))
+		seq, hash = f.head(t)
+		require.Equal(t, int64(9), seq)
+		require.Equal(t, "ahead", hash)
+	})
+}
