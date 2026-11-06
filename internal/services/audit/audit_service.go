@@ -24,7 +24,7 @@ type AuditEvent struct {
 	ResourceType string
 	ResourceID   string
 	IPAddress    string
-	Outcome      string // "success" | "failure" | "warning" | "attempt"
+	Outcome      string // "success" | "failure" | "denied" | "warning" | "attempt"
 	Source       string // "api" | "cli" | "system"
 }
 
@@ -145,6 +145,8 @@ func outcomeFromDetails(details string) string {
 			return "success"
 		case "failure", "failed", "error":
 			return "failure"
+		case "denied":
+			return "denied"
 		default:
 			return "warning"
 		}

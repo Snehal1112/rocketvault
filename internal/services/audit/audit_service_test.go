@@ -150,7 +150,7 @@ func TestPersistAudit_SetsSourceAndOutcome(t *testing.T) {
 		{"failure", "failure"},
 		{"error", "failure"},
 		{"failed", "failure"},
-		{"denied", "warning"},
+		{"denied", "denied"},
 		{"info", "warning"},
 	}
 	for _, tc := range cases {
