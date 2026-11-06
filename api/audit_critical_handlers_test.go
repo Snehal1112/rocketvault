@@ -23,6 +23,7 @@ import (
 
 	"rocketvault/app"
 	auditServices "rocketvault/internal/services/audit"
+	authServices "rocketvault/internal/services/auth"
 	oauth2Services "rocketvault/internal/services/oauth2"
 	"rocketvault/internal/testutils"
 	"rocketvault/model"
@@ -280,4 +281,53 @@ func TestRotateSASecret_AuditUnavailable_DoesNotRotate(t *testing.T) {
 	assertAuditUnavailableBody(t, w)
 	assert.NotContains(t, w.Body.String(), "client_secret")
 	svc.AssertNotCalled(t, "RotateSecret", mock.Anything, mock.Anything)
+}
+
+// realAuditUnavailableErr builds the error a service returns when the
+// attempt row cannot be written.
+func realAuditUnavailableErr(t *testing.T) error {
+	t.Helper()
+	err := auditServices.WithCritical(context.Background(), failingCriticalAudit(),
+		auditServices.AuditEvent{Action: "test"}, func(context.Context) error { return nil })
+	require.ErrorIs(t, err, auditServices.ErrAuditUnavailable)
+	return err
+}
+
+func TestRefreshToken_AuditUnavailable_Returns503(t *testing.T) {
+	authSvc := &mockAuthService{}
+	authSvc.On("RefreshAccessToken", mock.Anything, "validtoken").Return(nil, realAuditUnavailableErr(t))
+	c := newUserCtx(nil, authSvc, RequestClaims{})
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/users/refresh", encodeBody(map[string]string{
+		"refresh_token": "validtoken",
+	}))
+
+	refreshToken(c, w, r)
+	if c.Err != nil {
+		writeError(w, c)
+	}
+
+	assertAuditUnavailableBody(t, w)
+	assert.NotContains(t, w.Body.String(), "token\"")
+}
+
+func TestOIDCCallback_AuditUnavailable_Returns503(t *testing.T) {
+	identity := &authServices.OIDCIdentity{Subject: "sub-1", PreferredUsername: "jdoe"}
+	oidcSvc := &mockOIDCService{}
+	oidcSvc.On("HandleCallback", mock.Anything, "auth-code", "nonce-1").Return(identity, nil)
+	user := &model.User{ID: uuid.New(), Username: "jdoe", Roles: []string{model.RoleUser}}
+	userSvc := &mockUserServiceForOIDC{}
+	userSvc.On("FindOrCreateExternalUser", mock.Anything, mock.Anything).Return(user, nil)
+	authSvc := &mockAuthServiceForOIDC{}
+	authSvc.On("IssueSessionForUser", mock.Anything, user).Return(nil, realAuditUnavailableErr(t))
+	api := newOIDCHAPI(oidcSvc, userSvc, authSvc)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/oidc/callback?state=expected&code=auth-code", nil)
+	r.AddCookie(&http.Cookie{Name: "oidc_state", Value: "expected"})
+	r.AddCookie(&http.Cookie{Name: "oidc_nonce", Value: "nonce-1"})
+
+	api.oidcCallbackHandler(w, r)
+
+	assertAuditUnavailableBody(t, w)
+	assert.NotContains(t, w.Body.String(), "token")
 }

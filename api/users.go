@@ -495,6 +495,11 @@ func refreshToken(c *Context, w http.ResponseWriter, r *http.Request) {
 	result, err := authSvc.RefreshAccessToken(r.Context(), req.RefreshToken)
 	if err != nil {
 		c.Logger.Printf("Token refresh failed: %v", err)
+		// The refresh token may be valid, but no access token was issued.
+		if errors.Is(err, auditServices.ErrAuditUnavailable) {
+			c.SetAuditUnavailable(err)
+			return
+		}
 		c.SetPermissionError("token refresh failed")
 		return
 	}

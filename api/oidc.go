@@ -12,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"golang.org/x/oauth2"
 
+	auditServices "rocketvault/internal/services/audit"
 	userServices "rocketvault/internal/services/users"
 	"rocketvault/model"
 )
@@ -186,6 +187,11 @@ func (api *API) oidcCallbackHandler(w http.ResponseWriter, r *http.Request) {
 	result, err := authSvc.IssueSessionForUser(r.Context(), user)
 	if err != nil {
 		logBypassError(r, "issue_session", err)
+		// The identity was valid, but no session exists without its audit row.
+		if errors.Is(err, auditServices.ErrAuditUnavailable) {
+			http.Error(w, auditUnavailableMessage, http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
