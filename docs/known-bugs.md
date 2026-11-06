@@ -6121,7 +6121,7 @@ email is stored in the new nullable `users.email` column.
 
 ### B104 — A `GetLastHash` error silently reset the audit hash chain and the compliance report showed a false integrity break
 
-**Status**: Fixed 2026-11-06 (GitHub: to be filed)
+**Status**: Fixed 2026-11-06 (GitHub #72)
 **Severity**: Medium — a transient database error corrupted the tamper-evidence
 chain, and the compliance report then reported a break that was not an attack.
 **Files**: `internal/services/audit/audit_service.go` (`RecordEvent`),
@@ -6148,7 +6148,7 @@ operation (HTTP 503 `audit unavailable`). Failures are counted in
 
 ### B105 — The audit hash chain forked when more than one replica wrote to it
 
-**Status**: Fixed 2026-11-06 (GitHub: to be filed)
+**Status**: Fixed 2026-11-06 (GitHub #73)
 **Severity**: Medium — with two or more replicas the chain could not be
 verified, so tamper evidence failed exactly where high availability is used.
 **Files**: `internal/services/audit/audit_service.go` (`RecordEvent`),
@@ -6182,7 +6182,7 @@ must be `seq` 1. Verification reports the first break as
 
 ### B106 — Filtered audit queries are reported as a broken hash chain
 
-**Status**: Open (GitHub: to be filed)
+**Status**: Open (GitHub #74)
 **Severity**: Low to Medium — false tamper warnings; the data is intact, but an
 operator can be told the log may have been tampered with.
 **Files**: `internal/services/audit/compliance_report_service.go`
@@ -6209,7 +6209,7 @@ Add tests for each filter on a valid chain.
 
 ### B107 — First-boot `os_store` signing-key generation is not written to the audit chain
 
-**Status**: Open (GitHub: to be filed)
+**Status**: Open (GitHub #75)
 **Severity**: Low — a signing key is created with no audit row. The
 `self_pki` provider is covered.
 **Files**: `internal/signing/os_store.go`, `internal/container/service_container.go`
@@ -6232,7 +6232,7 @@ write should fail startup rather than hand out the key unaudited.
 
 ### B108 — SOC 2 and GDPR report counts double counted critical operations
 
-**Status**: Fixed 2026-11-06 (GitHub: to be filed)
+**Status**: Fixed 2026-11-06 (GitHub #76)
 **Severity**: Low — report numbers are inflated; no data is lost.
 **Files**: `internal/services/audit/compliance_report_service.go`
 (`GenerateSOC2Report`, `GenerateGDPRReport`), `internal/services/audit/critical.go`,
@@ -6269,7 +6269,7 @@ are kept), so it is exact whatever page the attempt rows would fall on.
 
 ### B109 — Account-level authorization changes are not fail-closed critical audit events
 
-**Status**: Open (GitHub: to be filed)
+**Status**: Open (GitHub #77)
 **Severity**: Medium — an escalation can succeed with no audit row when the
 audit store is down, and some rows name the wrong actor.
 **Files**: `internal/services/users/user_service.go` (`CreateUser`,
@@ -6312,7 +6312,7 @@ caller.
 
 ### B110 — Unfiltered audit queries sort the whole `audit_logs` table
 
-**Status**: Open (GitHub: to be filed)
+**Status**: Open (GitHub #78)
 **Severity**: Low to Medium — performance only; grows with the trail.
 **Files**: `internal/repositories/audit_repository.go` (`QueryAuditLogs`),
 `internal/db/db.go` (audit indexes)
