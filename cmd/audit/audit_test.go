@@ -23,12 +23,20 @@ type MockComplianceReportService struct {
 	mock.Mock
 }
 
-func (m *MockComplianceReportService) QueryLogs(ctx context.Context, filter repositories.AuditFilter) ([]repositories.AuditLog, int64, bool, error) {
+func (m *MockComplianceReportService) QueryLogs(ctx context.Context, filter repositories.AuditFilter) ([]repositories.AuditLog, int64, auditServices.IntegrityResult, error) {
 	args := m.Called(ctx, filter)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Bool(2), args.Error(3)
+	// Tests may return a bare bool for the integrity result.
+	var res auditServices.IntegrityResult
+	switch v := args.Get(2).(type) {
+	case auditServices.IntegrityResult:
+		res = v
+	case bool:
+		res = auditServices.IntegrityResult{OK: v}
 	}
-	return args.Get(0).([]repositories.AuditLog), args.Get(1).(int64), args.Bool(2), args.Error(3)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), res, args.Error(3)
+	}
+	return args.Get(0).([]repositories.AuditLog), args.Get(1).(int64), res, args.Error(3)
 }
 
 func (m *MockComplianceReportService) GenerateSOC2Report(ctx context.Context, from, to time.Time) (*auditServices.SOC2Report, error) {
@@ -98,11 +106,11 @@ func TestAuditLogsDefaultFilter(t *testing.T) {
 			limit, _ := cmd.Flags().GetInt("limit")
 			filter := repositories.AuditFilter{Limit: limit}
 
-			logs, total, integrityOK, err := mockSvc.QueryLogs(ctx, filter)
+			logs, total, integrity, err := mockSvc.QueryLogs(ctx, filter)
 			if err != nil {
 				return fmt.Errorf("failed to query audit logs: %w", err)
 			}
-			if !integrityOK {
+			if !integrity.OK {
 				fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: hash chain integrity check failed") //nolint:errcheck
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Total matching: %d\n", total) //nolint:errcheck

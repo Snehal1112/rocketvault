@@ -88,13 +88,13 @@ no --vault scoping.`,
 		}
 
 		svc := sc.GetComplianceReportService()
-		logs, total, integrityOK, err := svc.QueryLogs(ctx, filter)
+		logs, total, integrity, err := svc.QueryLogs(ctx, filter)
 		if err != nil {
 			return fmt.Errorf("failed to query audit logs: %w", err)
 		}
 
-		if !integrityOK {
-			fmt.Fprintln(cmd.ErrOrStderr(), "WARNING: hash chain integrity check failed — audit log may have been tampered with") //nolint:errcheck
+		if !integrity.OK {
+			fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: hash chain integrity check failed (%s) — audit log may have been tampered with\n", integrity.BreakReason) //nolint:errcheck
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "Total matching: %d\n", total) //nolint:errcheck

@@ -74,6 +74,10 @@ type AuditPage struct {
 	// IntegrityOK reports whether the hash chain verified. A false value
 	// means the log may have been tampered with and must reach the caller.
 	IntegrityOK bool `json:"integrity_ok"`
+	// IntegrityBreakSeq is the seq of the first broken row, when known.
+	IntegrityBreakSeq *int64 `json:"integrity_break_seq,omitempty"`
+	// IntegrityBreakReason is "gap" or "hash_mismatch" when the chain failed.
+	IntegrityBreakReason string `json:"integrity_break_reason,omitempty"`
 	// Truncated reports that Entries was cut to the requested limit.
 	Truncated bool `json:"truncated"`
 }
@@ -93,6 +97,9 @@ func (c *Client) QueryAuditLogs(ctx context.Context, filter AuditFilter) (*Audit
 		Logs        []AuditEntry `json:"logs"`
 		Total       int          `json:"total"`
 		IntegrityOK bool         `json:"integrity_ok"`
+
+		IntegrityBreakSeq    *int64 `json:"integrity_break_seq"`
+		IntegrityBreakReason string `json:"integrity_break_reason"`
 	}
 	if err := c.Do(ctx, http.MethodGet, path, nil, &response); err != nil {
 		return nil, err
@@ -108,6 +115,9 @@ func (c *Client) QueryAuditLogs(ctx context.Context, filter AuditFilter) (*Audit
 		Entries:     entries,
 		Total:       response.Total,
 		IntegrityOK: response.IntegrityOK,
-		Truncated:   truncated,
+
+		IntegrityBreakSeq:    response.IntegrityBreakSeq,
+		IntegrityBreakReason: response.IntegrityBreakReason,
+		Truncated:            truncated,
 	}, nil
 }

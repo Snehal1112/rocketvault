@@ -47,7 +47,7 @@ type GDPRReport struct {
 
 // ComplianceReportServiceInterface is the read-path contract.
 type ComplianceReportServiceInterface interface {
-	QueryLogs(ctx context.Context, filter model.AuditFilter) ([]repositories.AuditLog, int64, bool, error)
+	QueryLogs(ctx context.Context, filter model.AuditFilter) ([]repositories.AuditLog, int64, IntegrityResult, error)
 	GenerateSOC2Report(ctx context.Context, from, to time.Time) (*SOC2Report, error)
 	GenerateSOC2CSV(ctx context.Context, from, to time.Time) (string, error)
 	GenerateGDPRReport(ctx context.Context, from, to time.Time, subjectID string) (*GDPRReport, error)
@@ -67,15 +67,14 @@ func NewComplianceReportService(repo repositories.AuditRepositoryExtended) Compl
 	return &ComplianceReportService{repo: repo}
 }
 
-// QueryLogs returns paginated audit logs and an integrity flag.
-// integrityOK is false if any hash chain break is detected in the returned page.
-func (s *ComplianceReportService) QueryLogs(ctx context.Context, filter model.AuditFilter) ([]repositories.AuditLog, int64, bool, error) {
+// QueryLogs returns paginated audit logs and the integrity result.
+// The result reports the first hash chain break found in the returned page.
+func (s *ComplianceReportService) QueryLogs(ctx context.Context, filter model.AuditFilter) ([]repositories.AuditLog, int64, IntegrityResult, error) {
 	logs, total, err := s.repo.QueryAuditLogs(ctx, filter)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 0, IntegrityResult{}, err
 	}
-	integrityOK := verifyChain(logs)
-	return logs, total, integrityOK, nil
+	return logs, total, verifyChain(logs), nil
 }
 
 // GenerateSOC2Report builds aggregated SOC 2 metrics for the given time range.
@@ -247,16 +246,28 @@ func (s *ComplianceReportService) SetRetentionDays(ctx context.Context, days int
 	return s.repo.SetAuditConfig(ctx, "retention_days", strconv.Itoa(days))
 }
 
-// verifyChain walks logs (newest-first) and verifies the hash chain.
-// Returns false if a chain break is detected. Rows with empty PrevHash are skipped.
-func verifyChain(logs []repositories.AuditLog) bool {
+// Break reasons reported by verifyChain.
+const (
+	breakReasonGap          = "gap"
+	breakReasonHashMismatch = "hash_mismatch"
+)
+
+// IntegrityResult is the outcome of verifying the hash chain of a page.
+// BreakSeq is set only when the broken row is a chained row.
+type IntegrityResult struct {
+	OK          bool
+	BreakSeq    *int64
+	BreakReason string
+}
+
+// verifyChain walks logs (newest-first) and reports the first break found.
+// A chained row (Seq set) is checked against the row below it: the seq must
+// follow, and the hash must match. The oldest row of a page is not checked,
+// so a pruned prefix stays valid. Legacy rows (no seq) use the old formula.
+func verifyChain(logs []repositories.AuditLog) IntegrityResult {
 	for i := 0; i < len(logs)-1; i++ {
 		newer := logs[i]
 		older := logs[i+1]
-		if newer.PrevHash == "" {
-			// Pre-dates hash chaining — skip.
-			continue
-		}
 		ev := AuditEvent{
 			UserID:       newer.UserID,
 			Action:       newer.Action,
@@ -265,16 +276,28 @@ func verifyChain(logs []repositories.AuditLog) bool {
 			ResourceID:   newer.ResourceID,
 			Outcome:      newer.Outcome,
 		}
-		// Chained rows hash their seq; legacy rows use the old formula.
-		var expected string
-		if newer.Seq != nil {
-			expected = computeChainHash(older.PrevHash, *newer.Seq, newer.Timestamp, ev)
-		} else {
-			expected = computeHash(older.PrevHash, newer.Timestamp, ev)
+		if newer.Seq == nil {
+			// Pre-dates hash chaining when the hash is empty, so skip it.
+			if newer.PrevHash == "" {
+				continue
+			}
+			if newer.PrevHash != computeHash(older.PrevHash, newer.Timestamp, ev) {
+				return IntegrityResult{BreakReason: breakReasonHashMismatch}
+			}
+			continue
 		}
-		if newer.PrevHash != expected {
-			return false
+		seq := *newer.Seq
+		// The first chained row follows the legacy rows, so it must be seq 1.
+		wantSeq := int64(1)
+		if older.Seq != nil {
+			wantSeq = *older.Seq + 1
+		}
+		if seq != wantSeq {
+			return IntegrityResult{BreakSeq: &seq, BreakReason: breakReasonGap}
+		}
+		if newer.PrevHash != computeChainHash(older.PrevHash, seq, newer.Timestamp, ev) {
+			return IntegrityResult{BreakSeq: &seq, BreakReason: breakReasonHashMismatch}
 		}
 	}
-	return true
+	return IntegrityResult{OK: true}
 }

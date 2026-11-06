@@ -51,6 +51,31 @@ func TestGetAuditLogs_Returns200(t *testing.T) {
 	assert.Equal(t, true, resp["integrity_ok"])
 }
 
+// TestGetAuditLogs_IntegrityBreakFields verifies the break seq and reason reach the JSON.
+func TestGetAuditLogs_IntegrityBreakFields(t *testing.T) {
+	seq := int64(7)
+	mockCRS := &testutils.MockComplianceReportService{}
+	mockContainer := &testutils.MockServiceContainer{}
+	mockContainer.On("GetComplianceReportService").Return(mockCRS)
+	mockCRS.On("QueryLogs", mock.Anything, mock.Anything).Return(
+		[]repositories.AuditLog{}, int64(0),
+		auditSvc.IntegrityResult{BreakSeq: &seq, BreakReason: "gap"}, nil,
+	)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/audit/logs", nil)
+	c := &Context{App: &app.App{ServiceContainer: mockContainer}, Claims: adminClaims()}
+
+	getAuditLogs(c, w, r)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, false, resp["integrity_ok"])
+	assert.Equal(t, float64(7), resp["integrity_break_seq"])
+	assert.Equal(t, "gap", resp["integrity_break_reason"])
+}
+
 // TestGetSOC2Report_Returns200 verifies that SOC2 report generation returns 200.
 func TestGetSOC2Report_Returns200(t *testing.T) {
 	mockCRS := &testutils.MockComplianceReportService{}

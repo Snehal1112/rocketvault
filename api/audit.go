@@ -76,17 +76,19 @@ func getAuditLogs(c *Context, w http.ResponseWriter, r *http.Request) {
 
 	filter := parseAuditFilter(r)
 
-	logs, total, integrityOK, err := svc.QueryLogs(r.Context(), filter)
+	logs, total, integrity, err := svc.QueryLogs(r.Context(), filter)
 	if err != nil {
 		c.SetInternalError(err)
 		return
 	}
 
 	writeJSON(w, auditLogsResponse{
-		IntegrityOK: integrityOK,
-		Logs:        logs,
-		NextCursor:  "",
-		Total:       total,
+		IntegrityOK:          integrity.OK,
+		IntegrityBreakSeq:    integrity.BreakSeq,
+		IntegrityBreakReason: integrity.BreakReason,
+		Logs:                 logs,
+		NextCursor:           "",
+		Total:                total,
 	})
 }
 
@@ -95,12 +97,15 @@ func getAuditLogs(c *Context, w http.ResponseWriter, r *http.Request) {
 // Fields are declared in the alphabetical order the map[string]any this
 // replaces encoded them in, so the JSON byte order is unchanged. No field is
 // omitempty: the map always emitted all four keys, and next_cursor in
-// particular is always the empty string today.
+// particular is always the empty string today. The two integrity break
+// fields are omitted while the chain verifies.
 type auditLogsResponse struct {
-	IntegrityOK bool             `json:"integrity_ok"`
-	Logs        []model.AuditLog `json:"logs"`
-	NextCursor  string           `json:"next_cursor"`
-	Total       int64            `json:"total"`
+	IntegrityBreakReason string           `json:"integrity_break_reason,omitempty"`
+	IntegrityBreakSeq    *int64           `json:"integrity_break_seq,omitempty"`
+	IntegrityOK          bool             `json:"integrity_ok"`
+	Logs                 []model.AuditLog `json:"logs"`
+	NextCursor           string           `json:"next_cursor"`
+	Total                int64            `json:"total"`
 }
 
 // getSOC2Report handles GET /audit/reports/soc2.

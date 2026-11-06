@@ -119,9 +119,9 @@ func TestComplianceReportService_QueryLogs_IntegrityCheck(t *testing.T) {
 
 	from := time.Now().UTC().Add(-1 * time.Hour)
 	to := time.Now().UTC().Add(1 * time.Hour)
-	_, _, integrityOK, err := compSvc.QueryLogs(context.Background(), repositories.AuditFilter{From: &from, To: &to, Limit: 10})
+	_, _, integrity, err := compSvc.QueryLogs(context.Background(), repositories.AuditFilter{From: &from, To: &to, Limit: 10})
 	require.NoError(t, err)
-	assert.True(t, integrityOK, "hash chain should be valid for events recorded by AuditService")
+	assert.True(t, integrity.OK, "hash chain should be valid for events recorded by AuditService")
 }
 
 func TestComplianceReportService_PurgeExpiredLogs(t *testing.T) {

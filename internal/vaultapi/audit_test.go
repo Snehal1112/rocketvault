@@ -2,6 +2,7 @@ package vaultapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -94,6 +95,33 @@ func TestQueryAuditLogs_TruncatesClientSideAndReportsIt(t *testing.T) {
 	require.Len(t, got.Entries, 2)
 	require.True(t, got.Truncated,
 		"an unbounded audit query would otherwise pour thousands of rows into a model's context")
+}
+
+func TestAuditHandler_IntegrityBreakFields(t *testing.T) {
+	broken := `{"logs":[],"total":0,"integrity_ok":false,"integrity_break_seq":7,"integrity_break_reason":"gap"}`
+	ok := `{"logs":[],"total":0,"integrity_ok":true}`
+
+	for name, body := range map[string]string{"broken": broken, "ok": ok} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		}))
+		got, err := newClientForTest(t, srv).QueryAuditLogs(context.Background(), AuditFilter{})
+		srv.Close()
+		require.NoError(t, err, name)
+
+		raw, err := json.Marshal(got)
+		require.NoError(t, err)
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(raw, &m))
+		if name == "broken" {
+			require.Equal(t, float64(7), m["integrity_break_seq"])
+			require.Equal(t, "gap", m["integrity_break_reason"])
+		} else {
+			require.NotContains(t, m, "integrity_break_seq")
+			require.NotContains(t, m, "integrity_break_reason")
+		}
+	}
 }
 
 func TestQueryAuditLogs_SurfacesIntegrityFailure(t *testing.T) {

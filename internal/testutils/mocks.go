@@ -500,12 +500,20 @@ type MockComplianceReportService struct {
 	mock.Mock
 }
 
-func (m *MockComplianceReportService) QueryLogs(ctx context.Context, filter repositories.AuditFilter) ([]repositories.AuditLog, int64, bool, error) {
+func (m *MockComplianceReportService) QueryLogs(ctx context.Context, filter repositories.AuditFilter) ([]repositories.AuditLog, int64, auditSvc.IntegrityResult, error) {
 	args := m.Called(ctx, filter)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Bool(2), args.Error(3)
+	// Tests may return a bare bool for the integrity result.
+	var res auditSvc.IntegrityResult
+	switch v := args.Get(2).(type) {
+	case auditSvc.IntegrityResult:
+		res = v
+	case bool:
+		res = auditSvc.IntegrityResult{OK: v}
 	}
-	return args.Get(0).([]repositories.AuditLog), args.Get(1).(int64), args.Bool(2), args.Error(3)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), res, args.Error(3)
+	}
+	return args.Get(0).([]repositories.AuditLog), args.Get(1).(int64), res, args.Error(3)
 }
 
 func (m *MockComplianceReportService) GenerateSOC2Report(ctx context.Context, from, to time.Time) (*auditSvc.SOC2Report, error) {

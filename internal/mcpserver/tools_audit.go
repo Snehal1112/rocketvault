@@ -42,6 +42,10 @@ type queryAuditLogResult struct {
 	Total   int                `json:"total"`
 	// IntegrityOK reports whether the audit log's hash chain verified.
 	IntegrityOK bool `json:"integrity_ok"`
+	// IntegrityBreakSeq is the seq of the first broken row, when known.
+	IntegrityBreakSeq *int64 `json:"integrity_break_seq,omitempty"`
+	// IntegrityBreakReason is "gap" or "hash_mismatch" when the chain failed.
+	IntegrityBreakReason string `json:"integrity_break_reason,omitempty"`
 	// IntegrityWarning is set only when the chain failed. Tampering is the
 	// single most important thing this tool can report, so it is stated
 	// rather than left as a boolean the caller might not read.
@@ -98,8 +102,11 @@ func (s *Server) handleQueryAuditLog(ctx context.Context, _ *mcp.CallToolRequest
 		Entries:     entries,
 		Total:       page.Total,
 		IntegrityOK: page.IntegrityOK,
-		Truncated:   page.Truncated,
-		Note:        truncationNote(page.Truncated, limit),
+
+		IntegrityBreakSeq:    page.IntegrityBreakSeq,
+		IntegrityBreakReason: page.IntegrityBreakReason,
+		Truncated:            page.Truncated,
+		Note:                 truncationNote(page.Truncated, limit),
 	}
 	if !page.IntegrityOK {
 		result.IntegrityWarning = "The audit log's hash chain did not verify. " +
