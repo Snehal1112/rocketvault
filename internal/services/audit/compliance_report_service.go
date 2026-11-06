@@ -157,18 +157,25 @@ func (s *ComplianceReportService) GenerateSOC2CSV(ctx context.Context, from, to 
 
 // GenerateGDPRReport returns all events for a specific data subject.
 func (s *ComplianceReportService) GenerateGDPRReport(ctx context.Context, from, to time.Time, subjectID string) (*GDPRReport, error) {
-	logs, total, err := s.repo.QueryAuditLogs(ctx, repositories.AuditFilter{
+	logs, _, err := s.repo.QueryAuditLogs(ctx, repositories.AuditFilter{
 		From: &from, To: &to, UserID: &subjectID, Limit: 1000,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("gdpr report query: %w", err)
+	}
+	// The total leaves out attempt rows, whichever page they fall on.
+	attempt := outcomeAttempt
+	_, total, err := s.repo.QueryAuditLogs(ctx, repositories.AuditFilter{
+		From: &from, To: &to, UserID: &subjectID, ExcludeOutcome: &attempt, Limit: 1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gdpr report total: %w", err)
 	}
 
 	report := &GDPRReport{SubjectID: subjectID, From: from, To: to, TotalEvents: total, Events: logs}
 	for _, l := range logs {
 		// Attempt rows stay in Events but are not counted twice.
 		if l.Outcome == outcomeAttempt {
-			report.TotalEvents--
 			continue
 		}
 		switch {

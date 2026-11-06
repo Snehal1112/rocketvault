@@ -293,6 +293,10 @@ func buildAuditWhere(f AuditFilter) (string, []interface{}) {
 		clauses = append(clauses, "outcome = ?")
 		args = append(args, *f.Outcome)
 	}
+	if f.ExcludeOutcome != nil {
+		clauses = append(clauses, "(outcome IS NULL OR outcome <> ?)")
+		args = append(args, *f.ExcludeOutcome)
+	}
 	if f.ResourceType != nil {
 		clauses = append(clauses, "resource_type = ?")
 		args = append(args, *f.ResourceType)

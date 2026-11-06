@@ -34,15 +34,17 @@ type CertificateFilter struct {
 // AuditFilter specifies query constraints for QueryAuditLogs.
 // Nil pointer fields are ignored (not filtered).
 type AuditFilter struct {
-	From         *time.Time
-	To           *time.Time
-	UserID       *string
-	Action       *string
-	Outcome      *string
-	ResourceType *string
-	ResourceID   *string
-	Source       *string
-	Limit        int // 0 defaults to 100; max 1000
+	From    *time.Time
+	To      *time.Time
+	UserID  *string
+	Action  *string
+	Outcome *string
+	// ExcludeOutcome drops rows with this outcome. Rows with no outcome stay.
+	ExcludeOutcome *string
+	ResourceType   *string
+	ResourceID     *string
+	Source         *string
+	Limit          int // 0 defaults to 100; max 1000
 }
 
 // ErrSecretPurgeProtected is returned when PurgeSecret refuses to act because
